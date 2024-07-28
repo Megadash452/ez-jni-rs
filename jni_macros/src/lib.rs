@@ -107,8 +107,8 @@ pub fn jni_fn(attr_args: TokenStream, input: TokenStream) -> TokenStream {
     // Add 'local lifetime
     input.sig.generics.params.push(GenericParam::Lifetime(syn::parse_quote!('local)));
     // Add env and _class arguments
-    input.sig.inputs.push(syn::FnArg::Typed(syn::parse_quote!(mut env: ::jni::JNIEnv<'local>)));
-    input.sig.inputs.push(syn::FnArg::Typed(syn::parse_quote!(_class: ::jni::objects::JClass<'local>)));
+    input.sig.inputs.insert(0, syn::FnArg::Typed(syn::parse_quote!(mut env: ::jni::JNIEnv<'local>)));
+    input.sig.inputs.insert(1, syn::FnArg::Typed(syn::parse_quote!(_class: ::jni::objects::JClass<'local>)));
 
     quote! { #input }.into()
 
