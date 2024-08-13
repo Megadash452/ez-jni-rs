@@ -1,8 +1,12 @@
 use std::sync::RwLock;
+use call::{MethodCall, ObjectMethod, Return, StaticMethod, Type};
+use either::Either;
 use proc_macro2::Span;
 use quote::{quote, quote_spanned, ToTokens};
 use syn::{spanned::Spanned, GenericParam, Ident, ItemFn, LitStr};
 use proc_macro::TokenStream;
+
+mod call;
 
 static PACKAGE_NAME: RwLock<Option<String>> = RwLock::new(None);
 
@@ -25,13 +29,14 @@ pub fn package(input: TokenStream) -> TokenStream {
 /// 
 /// ### Example
 /// ```
+/// # use jni_macros::{package, jni_fn};
 /// package!("me.author.packagename")
 /// 
 /// #[jni_fn("MyClass")]
 /// pub fn hello_world(s: JString) {
 ///     // body
 /// }
-/// ``````
+/// ```
 /// expands to
 /// 
 /// ```
@@ -111,19 +116,174 @@ pub fn jni_fn(attr_args: TokenStream, input: TokenStream) -> TokenStream {
     input.sig.inputs.insert(1, syn::FnArg::Typed(syn::parse_quote!(_class: ::jni::objects::JClass<'local>)));
 
     quote! { #input }.into()
+}
 
-    // let fn_name = format!("Java__DavSyncRs_");
-    // let fn_generics = input.sig.generics.params.into_iter();
-    // let fn_args = input.sig.inputs.into_iter();
-    // let fn_return = input.sig.output;
-    // let fn_where_clause = input.sig.generics.where_clause;
-    // let fn_body = input.block;
-    // quote! {
-    //     #[no_mangle]
-    //     pub extern "system" fn #fn_name<'local, #(#fn_generics),*>(mut env: JNIEnv<'local>, _class: JClass<'local>, #(#fn_args),*) -> #fn_return
-    //     #fn_where_clause
-    //     #fn_body
-    // }.into()
+/// A macro that helps make JNI Method calls less verbose and easier to use in Rust.
+/// 
+/// Can be used to call **`static methods`** on Java classes:
+/// ```text
+/// call!(static me.author.ClassName::methodName(int(arg1), java.lang.String(arg2)) -> int)
+///                 Primitive type parameter --->\_______/  \____________________/     \_/
+///                   Object type parameter --------------------------^                 |
+///                      Return type        --------------------------------------------^
+/// ```
+/// Or to call **object methods**:
+/// ```no_run
+/// call!(object.methodName() -> void)
+/// ```
+/// 
+/// # Syntax
+/// 
+/// To use the **static method** call, prepend the call with `static`, then the path to the *class name*,
+/// and finally a *PathSeparator* (`::`) to separate the class from the method name.
+/// ```nor_run
+/// call!(static me.author.ClassName::methodName() -> void)
+/// ```
+/// 
+/// To use an **object method** call, simply put a *variable name* that is of type `JObject` (or put an *expression* that resolves to a `JObject` in parentheses).
+/// For example, the *object* in the following line could be `my_object`, or `(something.object())`:
+/// ```no_run
+/// call!(object.myMethod() -> void)
+/// ```
+/// 
+/// ## Parameters
+/// 
+/// The parameters of the method call are placed inside perentheses after the method name,
+/// and can be *primitive values*, *object values*, or *arrays of either* (type wrapped in brackets).
+/// 
+/// All parameters have a **type**, and a **value** (wrapped in parenthesis).
+/// The value goes in parenthesis after the parameter type, and is any expression that resolves to the right type.
+/// For *arrays*, the value could be one of the `JPrimitiveArray`s or `JObjectArray`, or an array literal of either.
+/// 
+/// ```no_run
+/// int(2 + 2) // primitive
+/// me.author.ClassName(value) // object
+/// [bool]([true, false]) // primitive array
+/// [java.lang.String](value) // object array
+/// ```
+/// 
+/// ## Return
+/// 
+/// The parameters are followed by a *return arrow* `->` and the *return type*.
+/// The return type may be concrete *primitive or Class*, an [`Option`] of a nullable Class, or a [`Result`] of a *primitive or Class*.
+/// 
+/// - Use the **concrete type** when the Java method being called can't return *`NULL`* or throw an *exception*,
+///   such as when it is marked with `@NonNull`.
+/// - Use **`Option`** when the method can return a *`NULL`* value.
+/// - Use **`Result`** when the method can throw an *exception*, e.g. `void method() throws Exception { ... }`
+///
+/// Here are some examples of return types:
+/// ```no_run
+/// -> int OR java.lang.String
+/// -> Option<java.lang.String>
+/// -> Result<int, String> OR Result<java.lang.String, String>
+/// ```
+/// Note that `Option` can't be used with *primitive types* because those can't be `NULL` in Java.
+/// 
+/// For now, the `Err` of the [`Result`] can only be of type String,
+/// but this will change in the future to allow any type that implements `FromThrowable` (a trait that doesn't yet exist).
+#[proc_macro]
+pub fn call(input: TokenStream) -> TokenStream {
+    let call = syn::parse_macro_input!(input as MethodCall);
+    
+    let name = call.method_name.to_string();
+    let signature = {
+        let mut buf = String::from("(");
+        for param in &call.parameters {
+            // Array types in signature have an opening bracket prepended to the type
+            if param.is_array() {
+                buf.push('[');
+            }
+            buf.push_str(&param.ty().sig_type());
+        }
+        buf.push(')');
+        buf.push_str(&match &call.return_type {
+            Return::Assertive(ty) | Return::Result(ty, _) => ty.sig_type(),
+            Return::Option(class) => class.sig_type()
+        });
+        LitStr::new(&buf, call.parameters.span())
+    };
+    let parameters = {
+        let params = call.parameters.iter();
+        quote!{ &[ #(#params),* ] }
+    };
+    // Extra function calls, such as .l() to make the result into a JObject.
+    let extras = {
+        let mut tt = quote!{};
+        
+        // Induce panic when fails to call method
+        let call_failed_msg = match &call.call_type {
+            Either::Left(StaticMethod(path)) => format!("Failed to call static method {name}() on {path}: {{err}}"),
+            Either::Right(ObjectMethod(_)) => format!("Failed to call {name}(): {{err}}")
+        };
+        tt = quote!{ #tt .inspect_err(|err| panic!(#call_failed_msg)).unwrap() };
+        // Induce panic when the returned value is not the expected type
+        let incorrect_type_msg = match &call.return_type {
+            Return::Assertive(Type::Object(class))
+            | Return::Result(Type::Object(class), _)
+            | Return::Option(class) => format!("Expected {name}() to return {class}: {{err}}"),
+            Return::Assertive(ty)
+            | Return::Result(ty, _) => format!("Expected {name}() to return {ty}: {{err}}")
+        };
+        let sig_char = match &call.return_type {
+            Return::Assertive(ty) | Return::Result(ty, _) => Ident::new(ty.sig_char().to_string().as_str(), ty.span()),
+            Return::Option(class) => Ident::new("l", class.span()),
+        };
+        tt = quote!{ #tt .#sig_char().inspect_err(|err| panic!(#incorrect_type_msg)).unwrap() };
+        tt
+    };
+    
+    // Build the macro function call
+    let jni_call = match call.call_type {
+        Either::Left(StaticMethod(class)) => {
+            let class = LitStr::new(&class.to_string(), class.span());
+            quote! {
+                env.call_static_method(#class, #name, #signature, #parameters)
+                    #extras
+            }
+        },
+        Either::Right(ObjectMethod(object)) => quote! {
+            env.call_method(&(#object), #name, #signature, #parameters)
+                #extras
+        },
+    };
+    
+    let non_null_msg = format!("Expected Object returned by {name}() to not be NULL");
+    let null_check = quote! { if __call_result.is_null() { panic!(#non_null_msg) } };
+    match call.return_type {
+        // Move the result of the method call to an Option if the caller expects that the returned Object could be NULL.
+        Return::Option(_) => quote!{ {
+            // TODO: type object??
+            let __call_result = #jni_call;
+            if __call_result.is_null() {
+                None
+            } else {
+                Some(__call_result)
+            }
+        } },
+        Return::Assertive(ty) => {
+            match ty {
+                Type::Object(_) => quote!{ {
+                    let __call_result = #jni_call;
+                    #null_check;
+                    __call_result
+                } },
+                _ => jni_call
+            }
+        },
+        // Move the result of the method call to a Result if the caller expects that the method could throw.
+        Return::Result(ty, _) => {
+            let null_check = match ty {
+                Type::Object(_) => null_check,
+                _ => quote!{ }
+            };
+            quote!{ {
+                let __call_result = #jni_call;
+                #null_check;
+                crate::utils::catch_exception(env).map(|_| __call_result)
+            } }
+        },
+    }.into()
 }
 
 fn error(err: impl AsRef<str>) -> proc_macro2::TokenStream {
