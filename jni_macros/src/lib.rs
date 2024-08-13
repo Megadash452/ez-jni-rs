@@ -253,7 +253,6 @@ pub fn call(input: TokenStream) -> TokenStream {
     match call.return_type {
         // Move the result of the method call to an Option if the caller expects that the returned Object could be NULL.
         Return::Option(_) => quote!{ {
-            // TODO: type object??
             let __call_result = #jni_call;
             if __call_result.is_null() {
                 None

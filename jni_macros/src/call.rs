@@ -4,7 +4,7 @@ use either::Either;
 use itertools::Itertools;
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
-use syn::{braced, bracketed, parenthesized, parse::{discouraged::Speculative, Parse}, punctuated::{Pair, Punctuated}, spanned::Spanned, Expr, Ident, LitStr, Token};
+use syn::{braced, bracketed, parenthesized, parse::{discouraged::Speculative, Parse}, punctuated::{Pair, Punctuated}, spanned::Spanned, Expr, Ident, LitInt, LitStr, Token};
 
 /// Define a JNI call to a Java method with parameters with expected types, and an expected return type.
 /// 
@@ -262,7 +262,7 @@ impl Parse for Parameter {
             if value_tokens.lookahead1().peek(syn::token::Bracket) {
                 Self::ArrayLiteral { ty, array: {
                     let inner;
-                    bracketed!(inner in input);
+                    bracketed!(inner in value_tokens);
                     Punctuated::parse_terminated(&inner)?
                 } }
             } else {
@@ -292,14 +292,18 @@ impl ToTokens for Parameter {
             Self::Single { ty, value } =>  {
                 match ty {
                     Type::Void(_) => panic!("Unreachable"),
-                    Type::Byte(ident) | Type::Bool(ident)
-                    | Type::Char(ident) | Type::Short(ident)  | Type::Int(ident)   
-                    | Type::Long(ident) | Type::Float(ident)
-                    | Type::Double(ident) => {
-                        let ty = Ident::new(&first_char_uppercase(ty.to_string()), ident.span());
-                        tokens.append_all(quote_spanned! {ident.span()=> ::jni::objects::JValue::#ty });
+                    Type::Byte(ident) | Type::Char(ident)
+                    | Type::Bool(ident) | Type::Short(ident)
+                    | Type::Int(ident) | Type::Long(ident)
+                    | Type::Float(ident) | Type::Double(ident) => {
+                        let variant = Ident::new(&first_char_uppercase(ty.to_string()), ident.span());
+                        tokens.append_all(quote_spanned! {ident.span()=> ::jni::objects::JValue::#variant });
                         // Parameters of primitive types can be passed in as copy
-                        tokens.append_all(quote_spanned! {value.span()=> (#value) })
+                        // Bool must be cast to u8
+                        tokens.append_all(match ty {
+                            Type::Bool(_) => quote_spanned! {value.span()=> (#value as u8) },
+                            _ => quote_spanned! {value.span()=> (#value) }
+                        })
                     },
                     Type::Object(class) => {
                         tokens.append_all(quote_spanned! {class.span()=> ::jni::objects::JValue::Object });
@@ -316,30 +320,42 @@ impl ToTokens for Parameter {
             Self::ArrayLiteral { ty, array } => {
                 tokens.append_all(quote_spanned! {ty.span()=> ::jni::objects::JValue::Object });
                 // Parameters of type object need to be passed in as reference
-                let len = array.iter().count();
+                let len = LitInt::new(&array.iter().count().to_string(), array.span());
                 match ty {
                     Type::Void(_) => panic!("Unreachable"),
                     Type::Byte(ident) | Type::Bool(ident)
-                    | Type::Char(ident) | Type::Short(ident)  | Type::Int(ident)   
-                    | Type::Long(ident) | Type::Float(ident)
-                    | Type::Double(ident) => {
+                    | Type::Char(ident) | Type::Short(ident)
+                    | Type::Int(ident) | Type::Long(ident)
+                    | Type::Float(ident) | Type::Double(ident) => {
+                        // Bool must be changed to boolean
+                        let ident = match ty {
+                            Type::Bool(ident) => &Ident::new("boolean", ident.span()),
+                            _ => ident
+                        };
+                        // Values of Boolean array must be cast to u8
+                        let values = array.iter();
+                        let values = match ty {
+                            Type::Bool(_) => quote! { #(#values as u8),* },
+                            _ => quote! { #(#values),* }
+                        };
                         let new_array_fn = Ident::new(&format!("new_{ident}_array"), array.span());
                         let new_array_err = LitStr::new(&format!("Failed to create Java {ident} array: {{err}}"), array.span());
                         let fill_array_fn = Ident::new(&format!("set_{ident}_array_region"), array.span());
                         let fill_array_err = LitStr::new(&format!("Error filling {ident} array: {{err}}"), array.span());
+                        // Create a Java array Object from the array literal
                         tokens.append_all(quote_spanned! {array.span()=> (&{
                             let array = env.#new_array_fn(#len)
                                 .inspect_err(|err| println!(#new_array_err)).unwrap();
-                            env.#fill_array_fn(&array, 0, [#array])
+                            env.#fill_array_fn(&array, 0, &[ #values ])
                                 .inspect_err(|err| println!(#fill_array_err)).unwrap();
-                            array
+                            ::jni::objects::JObject::from(array)
                         }) })
                     },
                     Type::Object(class) => {
                         let new_array_err = LitStr::new(&format!("Failed to create Java Object \"{class}\" array: {{err}}"), array.span());
                         let set_val_err = LitStr::new(&format!("Failed to set the value of Object array at index {{i}}: {{err}}"), array.span());
                         let class_path = LitStr::new(&class.to_string(), array.span());
-                        // Create teh array
+                        // Create the array
                         let mut tt = quote! {
                             let array = env.new_object_array(#len, #class_path, unsafe { ::jni::objects::JObject::from_raw(::std::ptr::null_mut()) } )
                                 .inspect_err(|err| println!(#new_array_err)).unwrap();
@@ -352,7 +368,7 @@ impl ToTokens for Parameter {
                             }
                         }
                         // Return the array
-                        tt = quote! { #tt array };
+                        tt = quote! { #tt ::jni::objects::JObject::from(array) };
                         tokens.append_all(quote_spanned! {array.span()=> (&{ #tt }) })
                     }
                 }
@@ -391,7 +407,7 @@ impl Parse for Return {
                         let r = if ident == "Option" {
                             match input.parse::<Type>()? {
                                 Type::Object(path) => Self::Option(path),
-                                _ => return Err(input.error("Option cannot be used with primitives, only Classes."))
+                                t => return Err(syn::Error::new(t.span(), "Option cannot be used with primitives, only Classes."))
                             }
                         } else { // Result
                             let ok_type = input.parse()?;
@@ -399,7 +415,7 @@ impl Parse for Return {
                                 .map_err(|err| input.error(format!("Result takes 2 generic arguments; {err}")))?;
                             let err_type = input.parse::<syn::Path>()?;
                             if !err_type.is_ident("String") {
-                                return Err(input.error("For now, only 'String' is suppoerted as the Error type of the Result.\nLater, you could use any Type that implements FromException (doesn't exist yet)."))
+                                return Err(syn::Error::new(err_type.span(), "For now, only 'String' is suppoerted as the Error type of the Result.\nLater, you could use any Type that implements FromException (doesn't exist yet)."))
                             }
                             Self::Result(ok_type, ()/*err_type*/)
                         };
