@@ -380,51 +380,80 @@ impl ToTokens for Parameter {
 /// The return type of a JNI method call.
 /// 
 /// The caller of the macro can assert that the JNI method call will result in one of the following:
-/// 1. [`Type`] (e.g. `bool` or `java.lang.String`).
+/// 1. [`Type`] if the function being called can't return `NULL` or throw an `exception` (e.g. `bool` or `java.lang.String`).
 /// 2. `Option<ClassPath>` if the return type is an [`Object`][Type::Object] that could be **NULL**.
 ///    Java *does not allow* primitive types (i.e. not Object) to be **NULL**, so [Self::Option] can only be used with a [ClassPath].
-/// 3. `Result<Type, String>` if the method call can throw an **Exception**.
+/// 3. `Result<Type | Option<ClassPath>, String>` if the method call can throw an **Exception**.
 /// TODO: might change to `impl FromException`
 pub enum Return {
     Assertive(Type),
     Option(ClassPath),
-    /// Holds the Rust type of the error
-    Result(Type, ()/*syn::Path*/)
+    /// Holds the Ok Type (a Type or Option), and the Err Type (String for now).
+    Result(ResultType, ()/*syn::Path*/)
+}
+impl Return {
+    // Helper function that parses the content of the option variant.
+    // Helps avoid code repetition.
+    fn parse_option(input: syn::parse::ParseStream, fork: syn::parse::ParseStream) -> syn::Result<ClassPath> {
+        input.advance_to(&fork);
+        // Parse generic arguement
+        input.parse::<Token![<]>()
+            .map_err(|err| input.error(format!("Option takes generic arguments; {err}")))?;
+        let class = match input.parse::<Type>()? {
+            Type::Object(path) => path,
+            t => return Err(syn::Error::new(t.span(), "Option cannot be used with primitives, only Classes."))
+        };
+        input.parse::<Token![>]>()
+            .map_err(|err| input.error(format!("Option takes only 1 generic argument; {err}")))?;
+        Ok(class)
+    }
 }
 impl Parse for Return {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let fork = input.fork();
         // Check if caller uses Option or Result as the return type
         Ok(match fork.parse::<Ident>() {
-            Ok(ident) => {
-                let ident = ident.to_string();
-                match ident.as_str() {
-                    "Option" | "Result" => {
+            Ok(ident) =>
+                match ident.to_string().as_str() {
+                    "Option" => Self::Option(Self::parse_option(input, &fork)?),
+                    "Result" => {
                         input.advance_to(&fork);
-                        // Parse generic arguements, 1 for Option, and 2 for Result
+                        // Parse generic arguements
                         input.parse::<Token![<]>()
-                            .map_err(|err| input.error(format!("'{ident}' takes generic arguments; {err}")))?;
-                        let r = if ident == "Option" {
-                            match input.parse::<Type>()? {
-                                Type::Object(path) => Self::Option(path),
-                                t => return Err(syn::Error::new(t.span(), "Option cannot be used with primitives, only Classes."))
-                            }
-                        } else { // Result
-                            let ok_type = input.parse()?;
-                            input.parse::<Token![,]>()
-                                .map_err(|err| input.error(format!("Result takes 2 generic arguments; {err}")))?;
-                            let err_type = input.parse::<syn::Path>()?;
-                            if !err_type.is_ident("String") {
-                                return Err(syn::Error::new(err_type.span(), "For now, only 'String' is suppoerted as the Error type of the Result.\nLater, you could use any Type that implements FromException (doesn't exist yet)."))
-                            }
-                            Self::Result(ok_type, ()/*err_type*/)
-                        };
+                            .map_err(|err| input.error(format!("Result takes generic arguments; {err}")))?;
+                        let ok_type = input.parse()?;
+                        input.parse::<Token![,]>()
+                            .map_err(|err| input.error(format!("Result takes 2 generic arguments; {err}")))?;
+                        let err_type = input.parse::<syn::Path>()?;
+                        if !err_type.is_ident("String") {
+                            return Err(syn::Error::new(err_type.span(), "For now, only 'String' is suppoerted as the Error type of the Result.\nLater, you could use any Type that implements FromException (doesn't exist yet)."))
+                        }
                         input.parse::<Token![>]>()?;
-                        r
+                        Self::Result(ok_type, ()/*err_type*/)
                     },
                     _ => Self::Assertive(input.parse()?),
-                }
-            },
+                },
+            // The return type did not start with Ident... weird, but let's continue
+            Err(_) => Self::Assertive(input.parse()?),
+        })
+    }
+}
+
+/// The `Ok` Type of a [`Return::Result`] could be a regular type ([`Assertive`][ResultType::Assertive]), or nullable [`Option`]
+pub enum ResultType {
+    Assertive(Type),
+    Option(ClassPath)
+}
+impl Parse for ResultType {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let fork = input.fork();
+        Ok(match fork.parse::<Ident>() {
+            Ok(ident) =>
+                match ident.to_string().as_str() {
+                    "Option" => Self::Option(Return::parse_option(input, &fork)?),
+                    "Result" => return Err(syn::Error::new(ident.span(), "Can't nest a Result within a Result")),
+                    _ => Self::Assertive(input.parse()?),
+                },
             // The return type did not start with Ident... weird, but let's continue
             Err(_) => Self::Assertive(input.parse()?),
         })

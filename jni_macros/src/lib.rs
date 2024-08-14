@@ -1,5 +1,5 @@
 use std::sync::RwLock;
-use call::{MethodCall, ObjectMethod, Return, StaticMethod, Type};
+use call::{MethodCall, ObjectMethod, ResultType, Return, StaticMethod, Type};
 use either::Either;
 use proc_macro2::Span;
 use quote::{quote, quote_spanned, ToTokens};
@@ -141,9 +141,10 @@ pub fn jni_fn(attr_args: TokenStream, input: TokenStream) -> TokenStream {
 /// ```
 /// 
 /// To use an **object method** call, simply put a *variable name* that is of type `JObject` (or put an *expression* that resolves to a `JObject` in parentheses).
-/// For example, the *object* in the following line could be `my_object`, or `(something.object())`:
+/// Example:
 /// ```no_run
-/// call!(object.myMethod() -> void)
+/// call!(my_object.myMethod() -> void)
+/// call!((getObject()).myMethod() -> void)
 /// ```
 /// 
 /// ## Parameters
@@ -165,18 +166,20 @@ pub fn jni_fn(attr_args: TokenStream, input: TokenStream) -> TokenStream {
 /// ## Return
 /// 
 /// The parameters are followed by a *return arrow* `->` and the *return type*.
-/// The return type may be concrete *primitive or Class*, an [`Option`] of a nullable Class, or a [`Result`] of a *primitive or Class*.
+/// The return type may be concrete *primitive or Class*, an [`Option`] of a nullable Class, or a [`Result`] of one of the previous choices.
 /// 
-/// - Use the **concrete type** when the Java method being called can't return *`NULL`* or throw an *exception*,
+/// - Use the **concrete type** when the Java method being called *can't return `NULL`* or throw an *exception*,
 ///   such as when it is marked with `@NonNull`.
-/// - Use **`Option`** when the method can return a *`NULL`* value.
-/// - Use **`Result`** when the method can throw an *exception*, e.g. `void method() throws Exception { ... }`
+/// - Use **`Option`** when the method *can return a `NULL`* value.
+/// - Use **`Result<Type>`** when the method can throw an *exception*, e.g. `void method() throws Exception { ... }`, and the return value *can't be `NULL`*.
+/// - Use **`Result<Option>`** when the method can throw, and the return value *can be `NULL`*.
 ///
 /// Here are some examples of return types:
 /// ```no_run
 /// -> int OR java.lang.String
 /// -> Option<java.lang.String>
 /// -> Result<int, String> OR Result<java.lang.String, String>
+/// -> Result<Option<java.lang.String>, String>
 /// ```
 /// Note that `Option` can't be used with *primitive types* because those can't be `NULL` in Java.
 /// 
@@ -198,8 +201,10 @@ pub fn call(input: TokenStream) -> TokenStream {
         }
         buf.push(')');
         buf.push_str(&match &call.return_type {
-            Return::Assertive(ty) | Return::Result(ty, _) => ty.sig_type(),
-            Return::Option(class) => class.sig_type()
+            Return::Assertive(ty)
+            | Return::Result(ResultType::Assertive(ty), _) => ty.sig_type(),
+            Return::Option(class)
+            | Return::Result(ResultType::Option(class), _) => class.sig_type()
         });
         LitStr::new(&buf, call.parameters.span())
     };
@@ -220,20 +225,25 @@ pub fn call(input: TokenStream) -> TokenStream {
         // Induce panic when the returned value is not the expected type
         let incorrect_type_msg = match &call.return_type {
             Return::Assertive(Type::Object(class))
-            | Return::Result(Type::Object(class), _)
+            | Return::Result(ResultType::Assertive(Type::Object(class)), _)
+            | Return::Result(ResultType::Option(class), _)
             | Return::Option(class) => format!("Expected {name}() to return {class}: {{err}}"),
             Return::Assertive(ty)
-            | Return::Result(ty, _) => format!("Expected {name}() to return {ty}: {{err}}")
+            | Return::Result(ResultType::Assertive(ty), _) => format!("Expected {name}() to return {ty}: {{err}}")
         };
         let sig_char = match &call.return_type {
-            Return::Assertive(ty) | Return::Result(ty, _) => Ident::new(ty.sig_char().to_string().as_str(), ty.span()),
-            Return::Option(class) => Ident::new("l", class.span()),
+            Return::Assertive(ty)
+            | Return::Result(ResultType::Assertive(ty), _) => Ident::new(ty.sig_char().to_string().as_str(), ty.span()),
+            Return::Option(class)
+            | Return::Result(ResultType::Option(class), _) => Ident::new("l", class.span()),
+            
         };
         tt = quote!{ #tt .#sig_char().inspect_err(|err| panic!(#incorrect_type_msg)).unwrap() };
         tt
     };
     
     // Build the macro function call
+    // ! TODO: create a variable before the JNI call for each argument to mitigate borrowing env as mutable
     let jni_call = match call.call_type {
         Either::Left(StaticMethod(class)) => {
             let class = LitStr::new(&class.to_string(), class.span());
@@ -249,9 +259,19 @@ pub fn call(input: TokenStream) -> TokenStream {
     };
     
     let non_null_msg = format!("Expected Object returned by {name}() to not be NULL");
-    let null_check = quote! { if __call_result.is_null() { panic!(#non_null_msg) } };
     match call.return_type {
         // Move the result of the method call to an Option if the caller expects that the returned Object could be NULL.
+        Return::Assertive(ty) => {
+            match ty {
+                // Additional check that Object is not NULL
+                Type::Object(_) => quote!{ {
+                    let __call_result = #jni_call;
+                    if __call_result.is_null() { panic!(#non_null_msg) }
+                    __call_result
+                } },
+                _ => jni_call
+            }
+        },
         Return::Option(_) => quote!{ {
             let __call_result = #jni_call;
             if __call_result.is_null() {
@@ -260,28 +280,29 @@ pub fn call(input: TokenStream) -> TokenStream {
                 Some(__call_result)
             }
         } },
-        Return::Assertive(ty) => {
-            match ty {
-                Type::Object(_) => quote!{ {
-                    let __call_result = #jni_call;
-                    #null_check;
-                    __call_result
-                } },
-                _ => jni_call
-            }
-        },
         // Move the result of the method call to a Result if the caller expects that the method could throw.
-        Return::Result(ty, _) => {
-            let null_check = match ty {
-                Type::Object(_) => null_check,
-                _ => quote!{ }
+        Return::Result(ResultType::Assertive(ty), _) => {
+            let call = match ty {
+                // Additional check that Object is not NULL
+                Type::Object(_) => quote!{
+                    let __call_result = #jni_call;
+                    if __call_result.is_null() { panic!(#non_null_msg) }
+                },
+                _ => quote! { let __call_result = #jni_call; }
             };
             quote!{ {
-                let __call_result = #jni_call;
-                #null_check;
+                #call
                 crate::utils::catch_exception(env).map(|_| __call_result)
             } }
         },
+        Return::Result(ResultType::Option(_), _) => quote!{ {
+            let __call_result = #jni_call;
+            crate::utils::catch_exception(env).map(|_| if __call_result.is_null() {
+                None
+            } else {
+                Some(__call_result)
+            })
+        } }
     }.into()
 }
 
