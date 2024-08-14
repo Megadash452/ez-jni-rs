@@ -243,83 +243,22 @@ impl Parameter {
             Self::Array { .. } | Self::ArrayLiteral { .. } => true
         }
     }
-}
-impl Parse for Parameter {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        // Check if the Type is wrapped in Brackets (Array)
-        Ok(if input.lookahead1().peek(syn::token::Bracket) {
-            let ty = {
-                let inner;
-                bracketed!(inner in input);
-                inner.parse::<Type>()?
-            };
-            if ty.is_void() {
-                return Err(syn::Error::new(ty.span(), "Parameters can't have type Void"))
-            }
-            let value_tokens;
-            parenthesized!(value_tokens in input);
-            // Check if the Value is wrapped in Brackets (ArrayLiteral)
-            if value_tokens.lookahead1().peek(syn::token::Bracket) {
-                Self::ArrayLiteral { ty, array: {
-                    let inner;
-                    bracketed!(inner in value_tokens);
-                    Punctuated::parse_terminated(&inner)?
-                } }
-            } else {
-                Self::Array { ty, value: value_tokens.parse::<TokenStream>()? }
-            }
-        } else {
-            Self::Single {
-                ty: {
-                    let ty = input.parse::<Type>()?;
-                    if ty.is_void() {
-                        return Err(syn::Error::new(ty.span(), "Parameters can't have type Void"))
-                    }
-                    ty
-                },
-                value: {
-                    let value_tokens;
-                    parenthesized!(value_tokens in input);
-                    value_tokens.parse::<TokenStream>()?
-                },
-            }
-        })
-    }
-}
-impl ToTokens for Parameter {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
+    /// Returns the expression that will be put inside the `JValue::Variant(&(expr))` in the parameter list, a.k.a the *parameter's value*.
+    pub fn value(&self) -> TokenStream {
         match self {
-            Self::Single { ty, value } =>  {
+            Self::Single { ty, value } =>
                 match ty {
                     Type::Void(_) => panic!("Unreachable"),
-                    Type::Byte(ident) | Type::Char(ident)
-                    | Type::Bool(ident) | Type::Short(ident)
-                    | Type::Int(ident) | Type::Long(ident)
-                    | Type::Float(ident) | Type::Double(ident) => {
-                        let variant = Ident::new(&first_char_uppercase(ty.to_string()), ident.span());
-                        tokens.append_all(quote_spanned! {ident.span()=> ::jni::objects::JValue::#variant });
-                        // Parameters of primitive types can be passed in as copy
-                        // Bool must be cast to u8
-                        tokens.append_all(match ty {
-                            Type::Bool(_) => quote_spanned! {value.span()=> (#value as u8) },
-                            _ => quote_spanned! {value.span()=> (#value) }
-                        })
-                    },
-                    Type::Object(class) => {
-                        tokens.append_all(quote_spanned! {class.span()=> ::jni::objects::JValue::Object });
-                        // Parameters of type object need to be passed in as reference
-                        tokens.append_all(quote_spanned! {value.span()=> (&(#value)) })
-                    },
-                }
-            },
-            Self::Array { ty, value } => {
-                tokens.append_all(quote_spanned! {ty.span()=> ::jni::objects::JValue::Object });
-                // Parameters of type object need to be passed in as reference
-                tokens.append_all(quote_spanned! {value.span()=> (&(#value)) })
-            },
+                    Type::Byte(_) | Type::Char(_)
+                    | Type::Short(_) | Type::Int(_)
+                    | Type::Long(_) | Type::Float(_)
+                    | Type::Double(_) | Type::Object(_) => value.clone(),
+                    // Bool must be cast to u8
+                    Type::Bool(_)=> quote_spanned! {value.span()=> #value as u8 },
+                },
+            Self::Array { value, .. } => value.clone(),
+            // Create an Java Array from a Rust array literal
             Self::ArrayLiteral { ty, array } => {
-                tokens.append_all(quote_spanned! {ty.span()=> ::jni::objects::JValue::Object });
-                // Parameters of type object need to be passed in as reference
                 let len = LitInt::new(&array.iter().count().to_string(), array.span());
                 match ty {
                     Type::Void(_) => panic!("Unreachable"),
@@ -343,37 +282,121 @@ impl ToTokens for Parameter {
                         let fill_array_fn = Ident::new(&format!("set_{ident}_array_region"), array.span());
                         let fill_array_err = LitStr::new(&format!("Error filling {ident} array: {{err}}"), array.span());
                         // Create a Java array Object from the array literal
-                        tokens.append_all(quote_spanned! {array.span()=> (&{
+                        quote_spanned! {array.span()=> {
                             let array = env.#new_array_fn(#len)
                                 .inspect_err(|err| println!(#new_array_err)).unwrap();
                             env.#fill_array_fn(&array, 0, &[ #values ])
                                 .inspect_err(|err| println!(#fill_array_err)).unwrap();
                             ::jni::objects::JObject::from(array)
-                        }) })
+                        } }
                     },
                     Type::Object(class) => {
                         let new_array_err = LitStr::new(&format!("Failed to create Java Object \"{class}\" array: {{err}}"), array.span());
                         let set_val_err = LitStr::new(&format!("Failed to set the value of Object array at index {{i}}: {{err}}"), array.span());
                         let class_path = LitStr::new(&class.to_string(), array.span());
-                        // Create the array
-                        let mut tt = quote! {
-                            let array = env.new_object_array(#len, #class_path, unsafe { ::jni::objects::JObject::from_raw(::std::ptr::null_mut()) } )
-                                .inspect_err(|err| println!(#new_array_err)).unwrap();
-                        };
                         // Fill the array
+                        let mut elements = quote! { };
                         for (i, element) in array.iter().enumerate() {
-                            tt = quote! { #tt
+                            elements = quote! { #elements
                                 env.set_object_array_element(&array, #i, #element)
                                     .inspect_err(|err| println!(#set_val_err)).unwrap();
                             }
                         }
                         // Return the array
-                        tt = quote! { #tt ::jni::objects::JObject::from(array) };
-                        tokens.append_all(quote_spanned! {array.span()=> (&{ #tt }) })
+                        quote_spanned! {array.span()=> {
+                            let array = env.new_object_array(#len, #class_path, unsafe { ::jni::objects::JObject::from_raw(::std::ptr::null_mut()) } )
+                                .inspect_err(|err| println!(#new_array_err)).unwrap();
+                            #elements
+                            ::jni::objects::JObject::from(array)
+                        } }
                     }
                 }
             }
         }
+    }
+    /// Conver the parameter to a `Jvalue` enum variant that will be used in the JNI call parameter list.
+    /// The variant will have one of the parameter variables as the inner value.
+    pub fn variant(&self, var_name: Ident) -> TokenStream {
+        match self {
+            Self::Single { ty, .. } =>
+                match ty {
+                    // Parameters of primitive types are passed by copy
+                    Type::Void(_) => panic!("Unreachable"),
+                    Type::Byte(ident) | Type::Char(ident)
+                    | Type::Bool(ident) | Type::Short(ident)
+                    | Type::Int(ident) | Type::Long(ident)
+                    | Type::Float(ident) | Type::Double(ident) => {
+                        let variant = Ident::new(&first_char_uppercase(ty.to_string()), ident.span());
+                        let mut tt = quote! {};
+                        tt.append_all(quote_spanned! {ident.span()=> ::jni::objects::JValue::#variant });
+                        tt.append_all(quote_spanned! {var_name.span()=> (#var_name) });
+                        tt
+                    },
+                    // Parameters of type object are passed by reference
+                    Type::Object(class) => {
+                        let mut tt = quote! {};
+                        tt.append_all(quote_spanned! {class.span()=> ::jni::objects::JValue::Object });
+                        tt.append_all(quote_spanned! {var_name.span()=> (&(#var_name)) });
+                        tt
+                    }
+                },
+            // Array paramters are objects, so are passed by reference
+            Self::Array { ty, .. }
+            | Self::ArrayLiteral { ty, .. } =>{
+                let mut tt = quote! {};
+                tt.append_all(quote_spanned! {ty.span()=> ::jni::objects::JValue::Object });
+                tt.append_all(quote_spanned! {var_name.span()=> (&(#var_name)) });
+                tt
+            }
+        }
+    }
+}
+impl Parse for Parameter {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        // Check if the Type is wrapped in Brackets (Array)
+        Ok(if input.lookahead1().peek(syn::token::Bracket) {
+            let ty = {
+                let inner;
+                bracketed!(inner in input);
+                inner.parse::<Type>()?
+            };
+            if ty.is_void() {
+                return Err(syn::Error::new(ty.span(), "Parameters can't have type Void"))
+            }
+            let value_tokens;
+            parenthesized!(value_tokens in input);
+            if value_tokens.is_empty() {
+                return Err(value_tokens.error("Must provide a parameter value"))
+            }
+            // Check if the Value is wrapped in Brackets (ArrayLiteral)
+            if value_tokens.lookahead1().peek(syn::token::Bracket) {
+                Self::ArrayLiteral { ty, array: {
+                    let inner;
+                    bracketed!(inner in value_tokens);
+                    Punctuated::parse_terminated(&inner)?
+                } }
+            } else {
+                Self::Array { ty, value: value_tokens.parse::<TokenStream>()? }
+            }
+        } else {
+            Self::Single {
+                ty: {
+                    let ty = input.parse::<Type>()?;
+                    if ty.is_void() {
+                        return Err(syn::Error::new(ty.span(), "Parameters can't have type Void"))
+                    }
+                    ty
+                },
+                value: {
+                    let value_tokens;
+                    parenthesized!(value_tokens in input);
+                    if value_tokens.is_empty() {
+                        return Err(value_tokens.error("Must provide a parameter value"))
+                    }
+                    value_tokens.parse::<TokenStream>()?
+                },
+            }
+        })
     }
 }
 

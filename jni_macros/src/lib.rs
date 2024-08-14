@@ -2,7 +2,7 @@ use std::sync::RwLock;
 use call::{MethodCall, ObjectMethod, ResultType, Return, StaticMethod, Type};
 use either::Either;
 use proc_macro2::Span;
-use quote::{quote, quote_spanned, ToTokens};
+use quote::{format_ident, quote, quote_spanned, ToTokens, TokenStreamExt};
 use syn::{spanned::Spanned, GenericParam, Ident, ItemFn, LitStr};
 use proc_macro::TokenStream;
 
@@ -190,6 +190,7 @@ pub fn call(input: TokenStream) -> TokenStream {
     let call = syn::parse_macro_input!(input as MethodCall);
     
     let name = call.method_name.to_string();
+    
     let signature = {
         let mut buf = String::from("(");
         for param in &call.parameters {
@@ -206,12 +207,29 @@ pub fn call(input: TokenStream) -> TokenStream {
             Return::Option(class)
             | Return::Result(ResultType::Option(class), _) => class.sig_type()
         });
-        LitStr::new(&buf, call.parameters.span())
+        LitStr::new(&buf, Span::call_site())
     };
+    
+    // Put the Value of the parameters in variables to prevent them being dropped (since JValue takes references),
+    // and to mitigate borrow checker error if the param value borrows env (since the call itself borrows &mut env).
+    let param_vars = call.parameters.iter()
+        .map(|param| param.value())
+        .enumerate()
+        .map(|(i, value)| {
+            let var_name = Ident::new(&format!("__param_{i}"), value.span());
+            quote_spanned! {value.span()=> let #var_name = #value; }
+        })
+        .collect::<proc_macro2::TokenStream>();
+    // Parameters are just the variable names
     let parameters = {
-        let params = call.parameters.iter();
-        quote!{ &[ #(#params),* ] }
+        let params = call.parameters.iter()
+            .enumerate()
+            .map(|(i, param)| {
+                param.variant(Ident::new(&format!("__param_{i}"), param.value().span()))
+            });
+        quote! { &[ #( #params ),* ] }
     };
+    
     // Extra function calls, such as .l() to make the result into a JObject.
     let extras = {
         let mut tt = quote!{};
@@ -236,14 +254,12 @@ pub fn call(input: TokenStream) -> TokenStream {
             | Return::Result(ResultType::Assertive(ty), _) => Ident::new(ty.sig_char().to_string().as_str(), ty.span()),
             Return::Option(class)
             | Return::Result(ResultType::Option(class), _) => Ident::new("l", class.span()),
-            
         };
         tt = quote!{ #tt .#sig_char().inspect_err(|err| panic!(#incorrect_type_msg)).unwrap() };
         tt
     };
     
     // Build the macro function call
-    // ! TODO: create a variable before the JNI call for each argument to mitigate borrowing env as mutable
     let jni_call = match call.call_type {
         Either::Left(StaticMethod(class)) => {
             let class = LitStr::new(&class.to_string(), class.span());
@@ -265,14 +281,19 @@ pub fn call(input: TokenStream) -> TokenStream {
             match ty {
                 // Additional check that Object is not NULL
                 Type::Object(_) => quote!{ {
+                    #param_vars
                     let __call_result = #jni_call;
                     if __call_result.is_null() { panic!(#non_null_msg) }
                     __call_result
                 } },
-                _ => jni_call
+                _ => quote! { {
+                    #param_vars
+                    #jni_call
+                } }
             }
         },
         Return::Option(_) => quote!{ {
+            #param_vars
             let __call_result = #jni_call;
             if __call_result.is_null() {
                 None
@@ -291,11 +312,13 @@ pub fn call(input: TokenStream) -> TokenStream {
                 _ => quote! { let __call_result = #jni_call; }
             };
             quote!{ {
+                #param_vars
                 #call
                 crate::utils::catch_exception(env).map(|_| __call_result)
             } }
         },
         Return::Result(ResultType::Option(_), _) => quote!{ {
+            #param_vars
             let __call_result = #jni_call;
             crate::utils::catch_exception(env).map(|_| if __call_result.is_null() {
                 None
