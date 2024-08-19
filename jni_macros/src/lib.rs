@@ -262,70 +262,81 @@ pub fn call(input: TokenStream) -> TokenStream {
     };
     
     // Build the macro function call
-    let jni_call = match call.call_type {
+    let jni_call = match &call.call_type {
         Either::Left(StaticMethod(class)) => {
             let class = LitStr::new(&class.to_string(), class.span());
-            quote! {
-                env.call_static_method(#class, #name, #signature, #parameters)
-                    #extras
-            }
+            quote! { env.call_static_method(#class, #name, #signature, #parameters) }
         },
         Either::Right(ObjectMethod(object)) => quote! {
             env.call_method(&(#object), #name, #signature, #parameters)
-                #extras
         },
     };
     
     let non_null_msg = format!("Expected Object returned by {name}() to not be NULL");
+    // Check for exception is thrown, even if caller does not expect it, so that it could panic!
+    let unexpected_exception = {
+        let msg = format!("Encountered an uncaught Java Exception after calling {}.{}(): {{err}}", match &call.call_type {
+            Either::Left(StaticMethod(class)) => class.to_string(),
+            Either::Right(ObjectMethod(_)) => "<Object>".to_string()
+        }, call.method_name);
+        quote!{
+            crate::utils::catch_exception(env)
+                .inspect_err(|err| panic!(#msg)).unwrap()
+        }
+    };
     match call.return_type {
+        // Additional check that Object is not NULL
+        Return::Assertive(Type::Object(_)) => quote!{ {
+            #param_vars
+            let __call = #jni_call;
+            #unexpected_exception;
+            let __result = __call #extras;
+            if __result.is_null() { panic!(#non_null_msg) }
+            __result
+        } },
+        Return::Assertive(_) => quote! { {
+            #param_vars
+            let __call = #jni_call;
+            #unexpected_exception;
+            __call #extras
+        } },
         // Move the result of the method call to an Option if the caller expects that the returned Object could be NULL.
-        Return::Assertive(ty) => {
-            match ty {
-                // Additional check that Object is not NULL
-                Type::Object(_) => quote!{ {
-                    #param_vars
-                    let __call_result = #jni_call;
-                    if __call_result.is_null() { panic!(#non_null_msg) }
-                    __call_result
-                } },
-                _ => quote! { {
-                    #param_vars
-                    #jni_call
-                } }
-            }
-        },
         Return::Option(_) => quote!{ {
             #param_vars
-            let __call_result = #jni_call;
-            if __call_result.is_null() {
+            let __call = #jni_call;
+            #unexpected_exception;
+            let __result = __call #extras;
+            if __result.is_null() {
                 None
             } else {
-                Some(__call_result)
+                Some(_result)
             }
         } },
         // Move the result of the method call to a Result if the caller expects that the method could throw.
-        Return::Result(ResultType::Assertive(ty), _) => {
-            let call = match ty {
-                // Additional check that Object is not NULL
-                Type::Object(_) => quote!{
-                    let __call_result = #jni_call;
-                    if __call_result.is_null() { panic!(#non_null_msg) }
-                },
-                _ => quote! { let __call_result = #jni_call; }
-            };
-            quote!{ {
-                #param_vars
-                #call
-                crate::utils::catch_exception(env).map(|_| __call_result)
-            } }
-        },
+        Return::Result(ResultType::Assertive(Type::Object(_)), _) => quote!{ {
+            #param_vars
+            let __call = #jni_call;
+            crate::utils::catch_exception(env).map(|_| {
+                let __result = __call #extras;
+                if __result.is_null() { panic!(#non_null_msg) }
+                __result
+            })
+        } },
+        Return::Result(ResultType::Assertive(_), _) => quote! { {
+            #param_vars
+            let __call = #jni_call;
+            crate::utils::catch_exception(env).map(|_| __call #extras)
+        } },
         Return::Result(ResultType::Option(_), _) => quote!{ {
             #param_vars
-            let __call_result = #jni_call;
-            crate::utils::catch_exception(env).map(|_| if __call_result.is_null() {
-                None
-            } else {
-                Some(__call_result)
+            let __call = #jni_call;
+            crate::utils::catch_exception(env).map(|_| {
+                let __result = __call #extras;
+                if __result.is_null() {
+                    None
+                } else {
+                    Some(__result)
+                }
             })
         } }
     }.into()
