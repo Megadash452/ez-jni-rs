@@ -2,7 +2,7 @@ use std::sync::RwLock;
 use call::{MethodCall, ObjectMethod, ResultType, Return, StaticMethod, Type};
 use either::Either;
 use proc_macro2::Span;
-use quote::{format_ident, quote, quote_spanned, ToTokens, TokenStreamExt};
+use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
 use syn::{spanned::Spanned, GenericParam, Ident, ItemFn, LitStr};
 use proc_macro::TokenStream;
 
@@ -23,7 +23,7 @@ pub fn package(input: TokenStream) -> TokenStream {
 }
 
 /// Changes a function's signature so that it can be called from external Java code.
-/// Requires that the function be defined with `pub` visibility, no generic types, no lifetime named "local", and no arguments named "env" or "_class".
+/// Requires that the function be defined with `pub` visibility, exactly *one lifetime* (named "local"), no generic constants or types, and no arguments named "env" or "_class".
 /// 
 /// Also takes the name of a Java Class or extra package data where this function is defined in the Java side.
 /// 
@@ -33,7 +33,7 @@ pub fn package(input: TokenStream) -> TokenStream {
 /// package!("me.author.packagename")
 /// 
 /// #[jni_fn("MyClass")]
-/// pub fn hello_world(s: JString) {
+/// pub fn hello_world<'local>(s: JString<'local>) {
 ///     // body
 /// }
 /// ```
@@ -43,7 +43,7 @@ pub fn package(input: TokenStream) -> TokenStream {
 /// #[no_mangle]
 /// pub extern "system" fn Java_me_author_packagename_myClass_hello_1world<'local>(
 ///     mut env: ::jni::JNIEnv<'local>, _class: ::jni::objects::JClass<'local>,
-///     s: JString
+///     s: JString<'local>
 /// ) {
 ///     // body
 /// }
@@ -51,6 +51,7 @@ pub fn package(input: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn jni_fn(attr_args: TokenStream, input: TokenStream) -> TokenStream {
     let mut input = syn::parse_macro_input!(input as ItemFn);
+    let mut errors = quote! {};
     let extra_package_data = if attr_args.is_empty() { None } else {
         Some(syn::parse_macro_input!(attr_args as LitStr).value())
     };
@@ -58,42 +59,45 @@ pub fn jni_fn(attr_args: TokenStream, input: TokenStream) -> TokenStream {
     // Function must have 'pub' visibility
     match input.vis {
         syn::Visibility::Public(_) => {},
-        _ => return error_spanned(input.sig.span(), "Function must have 'pub' visibility").into()
+        _ => errors.append_all(error_spanned(input.sig.span(), "Function must have 'pub' visibility"))
     }
 
-    // Function can't have a lifetime named "local"
-    if let Some(lifetime) = input.sig.generics.params.iter()
-        .filter_map(|g| match g {
-            GenericParam::Lifetime(lifetime) => Some(lifetime), _ => None
-        })
-        .find(|&lifetime| lifetime.lifetime.ident.to_string() == "local")
-    {
-        return error_spanned(lifetime.lifetime.span(), "Function can't have a lifetime named \"local\"").into()
+    // Function must have one lifetime (named "local") (accumulate errors)
+    let lifetimes = input.sig.generics
+        .lifetimes()
+        .collect::<Box<[_]>>();
+    if lifetimes.len() != 1 {
+        errors.append_all(error_spanned(input.sig.ident.span(), "Function must have one and only one lifetime, named \"local\""))
+    }
+    if let Some(lifetime) = lifetimes.get(0) {
+        if lifetime.lifetime.ident.to_string() != "local" {
+            errors.append_all(error_spanned(lifetimes[0].span(), "The lifetime must be named \"local\""))
+        }
     }
 
-    // Function can't have generic types
-    let generic_types = input.sig.generics.params.iter()
+    // Function can't have generic types (accumulate errors)
+    input.sig.generics.params.iter()
         .filter(|g| match g {
-            GenericParam::Type(_) | GenericParam::Const(_) => true,
+            GenericParam::Const(_) | GenericParam::Type(_) => true,
             _ => false
         })
-        .map(|g| error_spanned(g.span(), "Function can't have generic types"))
-        .fold(quote!{}, |acc, next| quote! { #acc #next }.into());
-    if !generic_types.is_empty() {
-        return generic_types.into()
-    }
+        .for_each(|generic| {
+            errors.append_all(error_spanned(generic.span(), "Function can't have generic constants or types"));
+        });
 
-    // Function can't have arguments named "env" or "_class"
-    let bad_arguments = input.sig.inputs.iter()
+    // Function can't have arguments named "env" or "_class" (accumulate errors)
+    input.sig.inputs.iter()
         .filter_map(|arg| match arg {
             syn::FnArg::Typed(arg) => Some(arg),
             _ => None
         })
         .filter(|&arg| ["env", "_class"].contains(&arg.pat.to_token_stream().to_string().as_str()))
-        .map(|arg| error_spanned(arg.span(), format!("Function can't have an argument named \"{}\"", arg.pat.to_token_stream())))
-        .fold(quote!{}, |acc, next| quote! { #acc #next }.into());
-    if !bad_arguments.is_empty() {
-        return bad_arguments.into()
+        .for_each(|arg| {
+            errors.append_all(error_spanned(arg.span(), format!("Function can't have an argument named {:?}", arg.pat.to_token_stream().to_string())));
+        });
+    
+    if !errors.is_empty() {
+        return errors.into()
     }
 
     // Change name of function
@@ -109,8 +113,6 @@ pub fn jni_fn(attr_args: TokenStream, input: TokenStream) -> TokenStream {
     // Convert to system ABI
     input.attrs.push(syn::parse_quote!(#[no_mangle]));
     input.sig.abi = Some(syn::parse_quote!(extern "system"));
-    // Add 'local lifetime
-    input.sig.generics.params.push(GenericParam::Lifetime(syn::parse_quote!('local)));
     // Add env and _class arguments
     input.sig.inputs.insert(0, syn::FnArg::Typed(syn::parse_quote!(mut env: ::jni::JNIEnv<'local>)));
     input.sig.inputs.insert(1, syn::FnArg::Typed(syn::parse_quote!(_class: ::jni::objects::JClass<'local>)));
