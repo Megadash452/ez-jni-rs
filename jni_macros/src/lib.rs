@@ -308,7 +308,7 @@ pub fn call(input: TokenStream) -> TokenStream {
             if __result.is_null() {
                 None
             } else {
-                Some(_result)
+                Some(__result)
             }
         } },
         // Move the result of the method call to a Result if the caller expects that the method could throw.
