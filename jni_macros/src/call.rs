@@ -336,7 +336,7 @@ impl Parameter {
                     Type::Object(class) => {
                         let mut tt = quote! {};
                         tt.append_all(quote_spanned! {class.span()=> ::jni::objects::JValue::Object });
-                        tt.append_all(quote_spanned! {var_name.span()=> (&(#var_name)) });
+                        tt.append_all(quote_spanned! {var_name.span()=> (&#var_name) });
                         tt
                     }
                 },
@@ -345,7 +345,7 @@ impl Parameter {
             | Self::ArrayLiteral { ty, .. } =>{
                 let mut tt = quote! {};
                 tt.append_all(quote_spanned! {ty.span()=> ::jni::objects::JValue::Object });
-                tt.append_all(quote_spanned! {var_name.span()=> (&(#var_name)) });
+                tt.append_all(quote_spanned! {var_name.span()=> (&#var_name) });
                 tt
             }
         }

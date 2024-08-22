@@ -273,38 +273,37 @@ pub fn call(input: TokenStream) -> TokenStream {
     };
     
     let non_null_msg = format!("Expected Object returned by {name}() to not be NULL");
-    // Check for exception is thrown, even if caller does not expect it, so that it could panic!
-    let unexpected_exception = {
-        let msg = format!("Encountered an uncaught Java Exception after calling {}.{}(): {{err}}", match &call.call_type {
-            Either::Left(StaticMethod(class)) => class.to_string(),
-            Either::Right(ObjectMethod(_)) => "<Object>".to_string()
-        }, call.method_name);
-        quote!{
-            crate::utils::catch_exception(env)
-                .inspect_err(|err| panic!(#msg)).unwrap()
-        }
+    // The class or object that the method is being called on. Used for panic message.
+    let target = match call.call_type {
+        Either::Left(StaticMethod(class)) => {
+            let class = class.to_string();
+            quote! { ::either::Either::Left(#class) }
+        },
+        Either::Right(ObjectMethod(obj)) => quote! { ::either::Either::Right(&(#obj)) }
+    };
+    let initial = quote! {
+        use ::std::borrow::BorrowMut as _;
+        #param_vars
+        let __call = #jni_call;
     };
     match call.return_type {
         // Additional check that Object is not NULL
         Return::Assertive(Type::Object(_)) => quote!{ {
-            #param_vars
-            let __call = #jni_call;
-            #unexpected_exception;
+            #initial
+            crate::throw::__panic_uncaught_exception(env.borrow_mut(), #target, #name);
             let __result = __call #extras;
             if __result.is_null() { panic!(#non_null_msg) }
             __result
         } },
         Return::Assertive(_) => quote! { {
-            #param_vars
-            let __call = #jni_call;
-            #unexpected_exception;
+            #initial
+            crate::throw::__panic_uncaught_exception(env.borrow_mut(), #target, #name);
             __call #extras
         } },
         // Move the result of the method call to an Option if the caller expects that the returned Object could be NULL.
         Return::Option(_) => quote!{ {
-            #param_vars
-            let __call = #jni_call;
-            #unexpected_exception;
+            #initial
+            crate::throw::__panic_uncaught_exception(env.borrow_mut(), #target, #name);
             let __result = __call #extras;
             if __result.is_null() {
                 None
@@ -314,23 +313,20 @@ pub fn call(input: TokenStream) -> TokenStream {
         } },
         // Move the result of the method call to a Result if the caller expects that the method could throw.
         Return::Result(ResultType::Assertive(Type::Object(_)), _) => quote!{ {
-            #param_vars
-            let __call = #jni_call;
-            crate::utils::catch_exception(env).map(|_| {
+            #initial
+            crate::throw::__catch_exception(env.borrow_mut()).map(|_| {
                 let __result = __call #extras;
                 if __result.is_null() { panic!(#non_null_msg) }
                 __result
             })
         } },
         Return::Result(ResultType::Assertive(_), _) => quote! { {
-            #param_vars
-            let __call = #jni_call;
-            crate::utils::catch_exception(env).map(|_| __call #extras)
+            #initial
+            crate::throw::__catch_exception(env.borrow_mut()).map(|_| __call #extras)
         } },
         Return::Result(ResultType::Option(_), _) => quote!{ {
-            #param_vars
-            let __call = #jni_call;
-            crate::utils::catch_exception(env).map(|_| {
+            #initial
+            crate::throw::__catch_exception(env.borrow_mut()).map(|_| {
                 let __result = __call #extras;
                 if __result.is_null() {
                     None
