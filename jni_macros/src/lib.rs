@@ -27,6 +27,9 @@ pub fn package(input: TokenStream) -> TokenStream {
 /// 
 /// Also takes the name of a Java Class or extra package data where this function is defined in the Java side.
 /// 
+/// Also puts the *block* of the function inside a function that catches `panics!` and throws a Java `Exception` with the panic message.
+/// The *return value* should only be a type with *integer representation*, such as a pointer (*const T or *mut T), an enum using *repr(T)*, i32, bool, etc.
+/// 
 /// ### Example
 /// ```
 /// # use jni_macros::{package, jni_fn};
@@ -45,7 +48,9 @@ pub fn package(input: TokenStream) -> TokenStream {
 ///     mut env: ::jni::JNIEnv<'local>, _class: ::jni::objects::JClass<'local>,
 ///     s: JString<'local>
 /// ) {
-///     // body
+///     __catch_throw(&mut env, move |env| {
+///         // body
+///     })
 /// }
 /// ```
 #[proc_macro_attribute]
@@ -116,6 +121,15 @@ pub fn jni_fn(attr_args: TokenStream, input: TokenStream) -> TokenStream {
     // Add env and _class arguments
     input.sig.inputs.insert(0, syn::FnArg::Typed(syn::parse_quote!(mut env: ::jni::JNIEnv<'local>)));
     input.sig.inputs.insert(1, syn::FnArg::Typed(syn::parse_quote!(_class: ::jni::objects::JClass<'local>)));
+    // Wrap the block in a panic catcher
+    let unwrapped_block = *input.block;
+    let wrapped_block = quote_spanned! {unwrapped_block.span()=> {
+        crate::throw::__catch_throw(&mut env, move |env| #unwrapped_block)
+    } };
+    input.block = Box::new(match syn::parse2(wrapped_block) {
+        Ok(block) => block,
+        Err(err) => return error_spanned(err.span(), format!("Error wrapping function block with panic catcher: {err}")).into()
+    });
 
     quote! { #input }.into()
 }

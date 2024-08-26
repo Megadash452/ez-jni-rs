@@ -19,38 +19,13 @@ impl std::fmt::Display for PanicLocation {
 }
 static PANIC_LOCATION: RwLock<Option<PanicLocation>> = RwLock::new(None);
 
-/// Runs a Rust function, and returns its value if successful.
-/// If the function panics, the panic is caught and a Java Exception will be thrown and [None] will be returned.
-pub fn catch_throw<R>(env: &mut JNIEnv, f: impl FnOnce() -> R) -> Option<R> {
-    __set_panic_hook();
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
-        Ok(r) => Some(r),
-        Err(payload) => {
-            __throw_panic(env, payload);
-            None
-        }
-    }
-}
-// Macro is necessary to prevent mutable borrow of env (in throw) while also borriwing it in the closure.
-/// Runs a Rust function, and returns its value if successful.
-/// If the function panics, the panic is caught and a Java Exception will be thrown and [None] will be returned.
-#[macro_export]
-macro_rules! catch_throw {
-    ($env:expr, $f:expr) => { {
-        crate::throw::__set_panic_hook();
-        match std::panic::catch_unwind(::std::panic::AssertUnwindSafe($f)) {
-            Ok(r) => Some(r),
-            Err(payload) => {
-                crate::throw::__throw_panic($env, payload);
-                None
-            }
-        }
-    } };
-}
-
-/// Set a Panic hook that will be called before the panic is caught, so that it can collect panic data (i.e. location)
+/// Runs a Rust function and returns its value, catching any `panics!` and throwing them as Java Exceptions.
+/// 
+/// Returns the [`Zeroed`][std::mem::zeroed()] representation of the return type.
+/// This means that this function should only return directly to Java,
+/// or `R` should only be a type like a *pointer* or an *integer*.
 #[doc(hidden)]
-pub fn __set_panic_hook() {
+pub fn __catch_throw<'local, R>(env: &mut JNIEnv<'local>, f: impl FnOnce(&mut JNIEnv<'local>) -> R) -> R {
     std::panic::set_hook(Box::new(|info| {
         if let Ok(mut panic_location) = PANIC_LOCATION.write() {
             if let Some(location) = info.location() {
@@ -58,10 +33,17 @@ pub fn __set_panic_hook() {
             }
         }
     }));
+    
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(env))) {
+        Ok(r) => r,
+        Err(payload) => {
+            throw_panic(env, payload);
+            unsafe { std::mem::zeroed() }
+        }
+    }
 }
 
-#[doc(hidden)]
-pub fn __throw_panic(env: &mut JNIEnv, payload: Box<dyn Any + Send>) {
+fn throw_panic(env: &mut JNIEnv, payload: Box<dyn Any + Send>) {
     let panic_msg = match payload.downcast::<&'static str>() {
         Ok(msg) => Some(msg.as_ref().to_string()),
         Err(payload) => match payload.downcast::<String>() {
@@ -80,15 +62,7 @@ pub fn __throw_panic(env: &mut JNIEnv, payload: Box<dyn Any + Send>) {
         (None, Some(info)) => format!("Rust panicked at {info}, but could not obtain message"),
         (None, None) => "Rust had a panic! but could not obtain any panic data".to_string()
     };
-    let exception_obj = env.new_string(msg)
-        .map(JObject::from)
-        .and_then(|msg| env.new_object("me/marti/calprovexample/jni/RustPanic", format!("(Ljava/lang/String;)V"), &[
-            JValue::Object(&msg)
-        ]));
-    match exception_obj {
-        Ok(obj) => env.throw(JThrowable::from(obj)).unwrap(),
-        Err(err) => env.throw(format!("Failed to construct RustPanic object: {err}")).unwrap()
-    }
+    env.throw_new("java/lang/Exception", msg);
 }
 
 /// Chekcs if an exception has been thrown from a previous JNI function call,
