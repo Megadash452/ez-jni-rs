@@ -1,8 +1,12 @@
-use std::fmt::Display;
 use itertools::Itertools;
-use proc_macro2::{TokenStream, Span};
+use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt as _};
-use syn::{parse::Parse, punctuated::{Pair, Punctuated}, spanned::Spanned as _, Ident, Token};
+use syn::{
+    parse::Parse,
+    punctuated::{Pair, Punctuated},
+    spanned::Spanned as _,
+    Ident, Token,
+};
 
 /// Create an error from a **msg** to return in a proc_macro.
 pub fn error(err: impl AsRef<str>) -> TokenStream {
@@ -21,7 +25,7 @@ pub fn error_spanned(span: Span, err: impl AsRef<str>) -> TokenStream {
 ///
 /// Parsed as [`Punctuated`] Tokens of [`Ident`]s and `Dot`s, disallowing trailing Dots.
 /// Must have *at least one* package ident, so it will need at least 2 idents in total.
-/// 
+///
 /// Example: `MyClass`, `java.lang.` are not allowed.
 pub struct ClassPath {
     pub packages: Vec<(Ident, Token![.])>,
@@ -39,7 +43,7 @@ impl ClassPath {
         tt.append_all(self.class.to_token_stream());
         tt.span()
     }
-    
+
     /// Converts the [`ClassPath`] to a string of its components, where each component is separated by a slash.
     /// e.g. `java/lang/String`.
     pub fn to_string_with_slashes(&self) -> String {
@@ -67,7 +71,7 @@ impl Parse for ClassPath {
                 None => None, // Skips the last pair, because it will not have punct
             })
             .collect::<Vec<_>>();
-        
+
         if packages.is_empty() {
             return Err(syn::Error::new(span, "Java Class Path must have at least one component for the packages"))
         }

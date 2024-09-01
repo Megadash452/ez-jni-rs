@@ -2,12 +2,12 @@ mod call;
 mod exception;
 mod utils;
 
+use call::MethodCall;
 use proc_macro::TokenStream;
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
 use std::sync::RwLock;
 use syn::{spanned::Spanned, GenericParam, Ident, ItemFn, LitStr};
 use utils::{error, error_spanned};
-use call::MethodCall;
 
 static PACKAGE_NAME: RwLock<Option<String>> = RwLock::new(None);
 
@@ -241,14 +241,14 @@ pub fn jni_fn(attr_args: TokenStream, input: TokenStream) -> TokenStream {
 /// Note that `Option` can't be used with *primitive types* because those can't be `NULL` in Java.
 ///
 /// ### Exceptions
-/// 
+///
 /// The **`E`** in the `Result` type can be any Rust type that *implements [`FromException`]*
 /// (usually an [Error Enum](https://docs.rs/thiserror/latest/thiserror/)).
 /// See also the derive macro for [`FromException`][from_exception].
-/// 
+///
 /// If the Exception can't be converted to an `E`, the Exception will not be caught and the program will `panic!`.
 /// This is similar to how in Java, if the exception is not of any type of the *catch blocks*, the exception will not be caught.
-/// 
+///
 /// When `E` is [`String`], it will catch any Exception.
 #[proc_macro]
 pub fn call(input: TokenStream) -> TokenStream {
@@ -261,13 +261,26 @@ pub fn from_exception(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     match input.data {
         syn::Data::Struct(st) => exception::from_exception_struct(syn::ItemStruct {
-            attrs: input.attrs, vis: input.vis, ident: input.ident, generics: input.generics, struct_token: st.struct_token, fields: st.fields, semi_token: st.semi_token
+            attrs: input.attrs,
+            vis: input.vis,
+            ident: input.ident,
+            generics: input.generics,
+            struct_token: st.struct_token,
+            fields: st.fields,
+            semi_token: st.semi_token,
         })
-            .unwrap_or_else(|err| err.to_compile_error()),
+        .unwrap_or_else(|err| err.to_compile_error()),
         syn::Data::Enum(enm) => exception::from_exception_enum(syn::ItemEnum {
-            attrs: input.attrs, vis: input.vis, ident: input.ident, generics: input.generics, enum_token: enm.enum_token, brace_token: enm.brace_token, variants: enm.variants
+            attrs: input.attrs,
+            vis: input.vis,
+            ident: input.ident,
+            generics: input.generics,
+            enum_token: enm.enum_token,
+            brace_token: enm.brace_token,
+            variants: enm.variants,
         })
-            .unwrap_or_else(|err| err.to_compile_error()),
+        .unwrap_or_else(|err| err.to_compile_error()),
         syn::Data::Union(_) => error("Unions not supported"),
-    }.into()
+    }
+    .into()
 }

@@ -1,7 +1,7 @@
-use std::fmt::Display;
 use either::Either;
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
+use std::{fmt::Display, str::FromStr};
 use syn::{
     braced, bracketed, parenthesized,
     parse::{discouraged::Speculative, Parse},
@@ -59,34 +59,49 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
         quote! { &[ #( #params ),* ] }
     };
 
-    // Extra function calls, such as .l() to make the result into a JObject.
-    let extras = {
-        let mut tt = quote! {};
-
+    // Common checks done by all Return variants, such as .l() to make the result into a JObject.
+    let common = {
         // Induce panic when fails to call method
         let call_failed_msg = match &call.call_type {
-            Either::Left(StaticMethod(path)) => {
-                format!("Failed to call static method {name}() on {}: {{err}}", path.to_token_stream())
-            }
+            Either::Left(StaticMethod(path))
+                => format!("Failed to call static method {name}() on {}: {{err}}", path.to_token_stream()),
             Either::Right(ObjectMethod(_)) => format!("Failed to call {name}(): {{err}}"),
         };
-        tt = quote! { #tt .unwrap_or_else(|err| panic!(#call_failed_msg)) };
         // Induce panic when the returned value is not the expected type
-        let incorrect_type_msg =
-            format!("Expected {name}() to return {}: {{err}}", call.return_type);
-        let sig_char = match &call.return_type {
-            Return::Result(ResultType::Void(ident), _) | Return::Void(ident) => {
-                Ident::new("v", ident.span())
-            }
-            Return::Assertive(ty) | Return::Result(ResultType::Assertive(ty), _) => {
-                Ident::new(ty.sig_char().to_string().as_str(), ty.span())
-            }
-            Return::Option(class) | Return::Result(ResultType::Option(class), _) => {
-                Ident::new("l", class.span())
-            }
+        let incorrect_type_msg = format!("Expected {name}() to return {}: {{err}}", call.return_type.inner_type());
+        let sig_char = Ident::new(&call.return_type.sig_char().to_string(), call.return_type.span());
+        // Some primitive types need to be converted to the type the caller requested.
+        let conversion = match &call.return_type {
+            // Transmute to the unsigned type
+            Return::Assertive(Type::RustPrimitive { ty, ident })
+            | Return::Result(ResultType::Assertive(Type::RustPrimitive { ty, ident }), _)
+                if ty.is_unsigned()
+                => quote! { .map(|v| unsafe { ::std::mem::transmute::<_, #ident>(v) }) },
+            // Decode UTF-16
+            Return::Assertive(Type::RustPrimitive {
+                ty: RustPrimitive::Char,
+                ..
+            })
+            | Return::Result(
+                ResultType::Assertive(Type::RustPrimitive {
+                    ty: RustPrimitive::Char,
+                    ..
+                }),
+                _,
+            ) => quote! {
+                .map(|v|
+                    char::decode_utf16(Some(v))
+                        .next().unwrap()
+                        .unwrap_or(char::REPLACEMENT_CHARACTER)
+                )
+            },
+            _ => quote!(),
         };
-        tt = quote! { #tt .#sig_char().unwrap_or_else(|err| panic!(#incorrect_type_msg)) };
-        tt
+        quote! {
+            .unwrap_or_else(|err| panic!(#call_failed_msg))
+            .#sig_char() #conversion
+            .unwrap_or_else(|err| panic!(#incorrect_type_msg))
+        }
     };
 
     // Build the macro function call
@@ -109,6 +124,7 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
         }
         Either::Right(ObjectMethod(obj)) => quote! { ::either::Either::Right(&(#obj)) },
     };
+    // The Initial JNI call, before any types or errors are checked
     let initial = quote! {
         use ::std::borrow::BorrowMut as _;
         #param_vars
@@ -119,20 +135,20 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
         Return::Assertive(Type::Object(_)) => quote! { {
             #initial
             crate::throw::__panic_uncaught_exception(env.borrow_mut(), #target, #name);
-            let __result = __call #extras;
+            let __result = __call #common;
             if __result.is_null() { panic!(#non_null_msg) }
             __result
         } },
         Return::Assertive(_) | Return::Void(_) => quote! { {
             #initial
             crate::throw::__panic_uncaught_exception(env.borrow_mut(), #target, #name);
-            __call #extras
+            __call #common
         } },
         // Move the result of the method call to an Option if the caller expects that the returned Object could be NULL.
         Return::Option(_) => quote! { {
             #initial
             crate::throw::__panic_uncaught_exception(env.borrow_mut(), #target, #name);
-            let __result = __call #extras;
+            let __result = __call #common;
             if __result.is_null() {
                 None
             } else {
@@ -143,19 +159,20 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
         Return::Result(ResultType::Assertive(Type::Object(_)), err) => quote! { {
             #initial
             crate::throw::__catch_exception::<#err>(env.borrow_mut()).map(|_| {
-                let __result = __call #extras;
+                let __result = __call #common;
                 if __result.is_null() { panic!(#non_null_msg) }
                 __result
             })
         } },
         Return::Result(ResultType::Assertive(_) | ResultType::Void(_), err) => quote! { {
             #initial
-            crate::throw::__catch_exception::<#err>(env.borrow_mut()).map(|_| __call #extras)
+            crate::throw::__catch_exception::<#err>(env.borrow_mut())
+                .map(|_| __call #common)
         } },
         Return::Result(ResultType::Option(_), err) => quote! { {
             #initial
             crate::throw::__catch_exception::<#err>(env.borrow_mut()).map(|_| {
-                let __result = __call #extras;
+                let __result = __call #common;
                 if __result.is_null() {
                     None
                 } else {
@@ -233,29 +250,128 @@ impl Parse for ObjectMethod {
     }
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum RustPrimitive {
+    Bool, Char,
+    U8, U16, U32, U64,
+    I8, I16, I32, I64,
+    F32, F64
+}
+impl RustPrimitive {
+    pub fn is_unsigned(self) -> bool {
+        match self {
+            Self::U8 | Self::U16 | Self::U32 | Self::U64 => true,
+            _ => false,
+        }
+    }
+}
+impl FromStr for RustPrimitive {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "bool" => Ok(Self::Bool),
+            "char" => Ok(Self::Char),
+            "u8"   => Ok(Self::U8),
+            "i8"   => Ok(Self::I8),
+            "u16"  => Ok(Self::U16),
+            "i16"  => Ok(Self::I16),
+            "u32"  => Ok(Self::U32),
+            "i32"  => Ok(Self::I32),
+            "u64"  => Ok(Self::U64),
+            "i64"  => Ok(Self::I64),
+            "f32"  => Ok(Self::F32),
+            "f64"  => Ok(Self::F64),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum JavaPrimitive {
+    Byte, Bool, Char,
+    Short, Int, Long,
+    Float, Double
+}
+impl JavaPrimitive {
+    /// Returns the character/letter (lowercase) that is used to convert from JValue to a concrete type.
+    pub fn sig_char(self) -> char {
+        match self {
+            Self::Byte   => 'b',
+            Self::Bool   => 'z',
+            Self::Char   => 'c',
+            Self::Short  => 's',
+            Self::Int    => 'i',
+            Self::Long   => 'j',
+            Self::Float  => 'f',
+            Self::Double => 'd',
+        }
+    }
+}
+impl FromStr for JavaPrimitive {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "byte"   => Ok(Self::Byte),
+            "bool"   => Ok(Self::Bool),
+            "char"   => Ok(Self::Char),
+            "short"  => Ok(Self::Short),
+            "int"    => Ok(Self::Int),
+            "long"   => Ok(Self::Long),
+            "float"  => Ok(Self::Float),
+            "double" => Ok(Self::Double),
+            _ => Err(()),
+        }
+    }
+}
+impl Display for JavaPrimitive {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Byte   => "byte",
+            Self::Bool   => "bool",
+            Self::Char   => "char",
+            Self::Short  => "short",
+            Self::Int    => "int",
+            Self::Long   => "long",
+            Self::Float  => "float",
+            Self::Double => "double",
+        })
+    }
+}
+impl From<RustPrimitive> for JavaPrimitive {
+    fn from(value: RustPrimitive) -> Self {
+        match value {
+            RustPrimitive::Bool => JavaPrimitive::Bool,
+            RustPrimitive::Char => JavaPrimitive::Char,
+            RustPrimitive::U8   => JavaPrimitive::Byte,
+            RustPrimitive::I8   => JavaPrimitive::Byte,
+            RustPrimitive::U16  => JavaPrimitive::Short,
+            RustPrimitive::I16  => JavaPrimitive::Short,
+            RustPrimitive::U32  => JavaPrimitive::Int,
+            RustPrimitive::I32  => JavaPrimitive::Int,
+            RustPrimitive::U64  => JavaPrimitive::Long,
+            RustPrimitive::I64  => JavaPrimitive::Long,
+            RustPrimitive::F32  => JavaPrimitive::Float,
+            RustPrimitive::F64  => JavaPrimitive::Double,
+        }
+    }
+}
+
 /// A Type is an [`Ident`] of one of the following Variants in lowercase, or a [`Type::Object`].
 ///
 /// Note that `Void` isn't a variant here.
 /// Since [`Type`] is used by both [`Parameter`] and [`Return`],
 /// and [`Paramter`] can't be void, the void variant was moved to [`Return`] (and by extension [`ResultType`]).
 pub enum Type {
-    Byte(Ident), Bool(Ident), Char(Ident),
-    Short(Ident), Int(Ident), Long(Ident),
-    Float(Ident), Double(Ident),
-    Object(ClassPath)
+    JavaPrimitive { ident: Ident, ty: JavaPrimitive },
+    RustPrimitive { ident: Ident, ty: RustPrimitive },
+    Object(ClassPath),
 }
 impl Type {
-    /// Returns the character/letter (lowercase) that is used to convert from JValue to a concrete type.
+    /// See [JavaPrimitive::sig_char()].
     pub fn sig_char(&self) -> char {
         match self {
-            Self::Byte(_)   => 'b',
-            Self::Bool(_)   => 'z',
-            Self::Char(_)   => 'c',
-            Self::Short(_)  => 's',
-            Self::Int(_)    => 'i',
-            Self::Long(_)   => 'j',
-            Self::Float(_)  => 'f',
-            Self::Double(_) => 'd',
+            Self::JavaPrimitive { ty, .. } => ty.sig_char(),
+            Self::RustPrimitive { ty, .. } => JavaPrimitive::from(*ty).sig_char(),
             Self::Object(_) => 'l',
         }
     }
@@ -268,10 +384,7 @@ impl Type {
     }
     pub fn span(&self) -> Span {
         match self {
-            Self::Byte(ident) | Self::Bool(ident)
-            | Self::Char(ident) | Self::Short(ident)
-            | Self::Int(ident) | Self::Long(ident)
-            | Self::Float(ident) | Self::Double(ident) => ident.span(),
+            Self::JavaPrimitive { ident, .. } | Self::RustPrimitive { ident, .. } => ident.span(),
             Self::Object(class) => class.span(),
         }
     }
@@ -280,37 +393,32 @@ impl Parse for Type {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let fork = input.fork();
         let ident = fork.parse::<Ident>()?;
-        let variant = match ident.to_string().as_str() {
-            "byte"   => Self::Byte(ident),
-            "bool"   => Self::Bool(ident),
-            "char"   => Self::Char(ident),
-            "short"  => Self::Short(ident),
-            "int"    => Self::Int(ident),
-            "long"   => Self::Long(ident),
-            "float"  => Self::Float(ident),
-            "double" => Self::Double(ident),
-            // Return early to prevent advancing the original ParseStream to the fork
-            _ => return Ok(Self::Object(input.parse()?)),
-        };
-        input.advance_to(&fork);
-
-        Ok(variant)
+        let ident_str = ident.to_string();
+        match RustPrimitive::from_str(&ident_str).ok() {
+            Some(ty) => {
+                input.advance_to(&fork);
+                Ok(Self::RustPrimitive { ident, ty })
+            },
+            // JavaPrimitive::Char and Bool will never be constructued here because the RustPrimitive takes priority
+            None => match JavaPrimitive::from_str(&ident_str).ok() {
+                Some(ty) => {
+                    input.advance_to(&fork);
+                    Ok(Self::JavaPrimitive { ident, ty })
+                }
+                None => return Ok(Self::Object(input.parse()?)),
+            },
+        }
     }
 }
 impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
-            Self::Byte(_)   => "byte",
-            Self::Bool(_)   => "bool",
-            Self::Char(_)   => "char",
-            Self::Short(_)  => "short",
-            Self::Int(_)    => "int",
-            Self::Long(_)   => "long",
-            Self::Float(_)  => "float",
-            Self::Double(_) => "double",
-            Self::Object(class) => &format!("Object({})", class.to_string_with_slashes()),
+            Self::JavaPrimitive { ty, .. } => ty.to_string(),
+            // Convert form Rust to Java
+            Self::RustPrimitive { ty, .. } => JavaPrimitive::from(*ty).to_string(),
+            Self::Object(class) => format!("Object({})", class.to_string_with_slashes()),
         };
-        f.write_str(s)
+        f.write_str(&s)
     }
 }
 
@@ -346,67 +454,62 @@ impl Parameter {
     /// Returns `false` if this is an `Array`.
     pub fn is_primitive(&self) -> bool {
         match self {
-            Self::Single {
-                ty: Type::Object(_),
-                ..
-            }
-            | Self::ArrayLiteral { .. }
-            | Self::Array { .. } => false,
-            Self::Single { .. } => true,
+            Self::Single { ty: Type::RustPrimitive { .. } | Type::JavaPrimitive { .. }, .. } => true,
+            _ => false,
         }
     }
 
     /// Returns the expression that will be put inside the `JValue::Variant(&(expr))` in the parameter list, a.k.a the *parameter's value*.
     pub fn value(&self) -> TokenStream {
+        // Does a lot of checking for **bool** because JNI treats it differently from other types
         match self {
             Self::Single { ty, value } => match ty {
-                Type::Byte(_) | Type::Char(_)
-                | Type::Short(_) | Type::Int(_)
-                | Type::Long(_) | Type::Float(_)
-                | Type::Double(_) | Type::Object(_) => value.clone(),
                 // Bool must be cast to u8
-                Type::Bool(_) => quote_spanned! {value.span()=> #value as u8 },
+                Type::JavaPrimitive { ty: JavaPrimitive::Bool, .. }
+                | Type::RustPrimitive { ty: RustPrimitive::Bool, .. } => quote_spanned! {value.span()=> #value as u8 },
+                _ => value.clone(),
             },
             Self::Array { value, .. } => value.clone(),
             // Create an Java Array from a Rust array literal
             Self::ArrayLiteral { ty, array } => {
                 let len = LitInt::new(&array.iter().count().to_string(), array.span());
+
+                let primitive_array = |ident: &Ident, ty: JavaPrimitive| {
+                    // Bool must be changed to boolean
+                    let ident = match ty {
+                        JavaPrimitive::Bool => &Ident::new("boolean", ident.span()),
+                        _ => ident,
+                    };
+                    // Values of Boolean array must be cast to u8
+                    let values = array.iter();
+                    let values = match ty {
+                        JavaPrimitive::Bool => quote! { #(#values as u8),* },
+                        _ => quote! { #(#values),* },
+                    };
+                    let new_array_fn = Ident::new(&format!("new_{ident}_array"), array.span());
+                    let new_array_err = LitStr::new(
+                        &format!("Failed to create Java {ident} array: {{err}}"),
+                        array.span(),
+                    );
+                    let fill_array_fn =
+                        Ident::new(&format!("set_{ident}_array_region"), array.span());
+                    let fill_array_err = LitStr::new(
+                        &format!("Error filling {ident} array: {{err}}"),
+                        array.span(),
+                    );
+                    // Create a Java array Object from the array literal
+                    quote_spanned! {array.span()=> {
+                        let array = env.#new_array_fn(#len)
+                            .inspect_err(|err| println!(#new_array_err)).unwrap();
+                        env.#fill_array_fn(&array, 0, &[ #values ])
+                            .inspect_err(|err| println!(#fill_array_err)).unwrap();
+                        ::jni::objects::JObject::from(array)
+                    } }
+                };
+
                 match ty {
-                    Type::Byte(ident) | Type::Bool(ident)
-                    | Type::Char(ident) | Type::Short(ident)
-                    | Type::Int(ident) | Type::Long(ident)
-                    | Type::Float(ident) | Type::Double(ident) => {
-                        // Bool must be changed to boolean
-                        let ident = match ty {
-                            Type::Bool(ident) => &Ident::new("boolean", ident.span()),
-                            _ => ident,
-                        };
-                        // Values of Boolean array must be cast to u8
-                        let values = array.iter();
-                        let values = match ty {
-                            Type::Bool(_) => quote! { #(#values as u8),* },
-                            _ => quote! { #(#values),* },
-                        };
-                        let new_array_fn = Ident::new(&format!("new_{ident}_array"), array.span());
-                        let new_array_err = LitStr::new(
-                            &format!("Failed to create Java {ident} array: {{err}}"),
-                            array.span(),
-                        );
-                        let fill_array_fn =
-                            Ident::new(&format!("set_{ident}_array_region"), array.span());
-                        let fill_array_err = LitStr::new(
-                            &format!("Error filling {ident} array: {{err}}"),
-                            array.span(),
-                        );
-                        // Create a Java array Object from the array literal
-                        quote_spanned! {array.span()=> {
-                            let array = env.#new_array_fn(#len)
-                                .inspect_err(|err| println!(#new_array_err)).unwrap();
-                            env.#fill_array_fn(&array, 0, &[ #values ])
-                                .inspect_err(|err| println!(#fill_array_err)).unwrap();
-                            ::jni::objects::JObject::from(array)
-                        } }
-                    }
+                    Type::JavaPrimitive { ident, ty } => primitive_array(ident, *ty),
+                    Type::RustPrimitive { ident, ty } => primitive_array(ident, JavaPrimitive::from(*ty)),
                     Type::Object(class) => {
                         let new_array_err = LitStr::new(
                             &format!("Failed to create Java Object \"{}\" array: {{err}}", class.to_token_stream()),
@@ -442,10 +545,7 @@ impl Parameter {
     pub fn variant(&self, var_name: Ident) -> TokenStream {
         let (ty_span, ty_variant) = match self {
             Self::Single { ty, .. } => match ty {
-                Type::Byte(ident) | Type::Char(ident)
-                | Type::Bool(ident) | Type::Short(ident)
-                | Type::Int(ident) | Type::Long(ident)
-                | Type::Float(ident) | Type::Double(ident) => (
+                Type::JavaPrimitive { ident, .. } | Type::RustPrimitive { ident, .. } => (
                     ident.span(),
                     Ident::new(&first_char_uppercase(ty.to_string()), ident.span())
                         .to_token_stream(),
@@ -522,8 +622,8 @@ pub enum Return {
     Result(ResultType, syn::Path),
 }
 impl Return {
-    // Helper function that parses the content of the option variant.
-    // Helps avoid code repetition.
+    /// Helper function that parses the content of the option variant.
+    /// Helps avoid code repetition.
     fn parse_option(
         input: syn::parse::ParseStream,
         fork: syn::parse::ParseStream,
@@ -544,6 +644,35 @@ impl Return {
             .parse::<Token![>]>()
             .map_err(|err| input.error(format!("Option takes only 1 generic argument; {err}")))?;
         Ok(class)
+    }
+
+    /// See [Type::sig_char].
+    pub fn sig_char(&self) -> char {
+        match self {
+            Self::Void(_) | Self::Result(ResultType::Void(_), _) => 'v',
+            Self::Assertive(ty) | Self::Result(ResultType::Assertive(ty), _) => ty.sig_char(),
+            Self::Option(_) | Self::Result(ResultType::Option(_), _) => 'l',
+        }
+    }
+
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Void(ident) | Self::Result(ResultType::Void(ident), _) => ident.span(),
+            Self::Assertive(ty) | Self::Result(ResultType::Assertive(ty), _) => ty.span(),
+            Self::Option(class) | Self::Result(ResultType::Option(class), _) => class.span(),
+        }
+    }
+
+    /// Returns the string representation of the Return type of the Java method (`void`, `primitive`, or `Object`).
+    pub fn inner_type(&self) -> String {
+        match self {
+            Return::Assertive(Type::Object(class))
+            | Return::Option(class)
+            | Return::Result(ResultType::Assertive(Type::Object(class)), _)
+            | Return::Result(ResultType::Option(class), _) => class.to_string_with_slashes(),
+            Return::Assertive(ty) | Return::Result(ResultType::Assertive(ty), _) => ty.to_string(),
+            Return::Void(_) | Return::Result(ResultType::Void(_), _) => "void".to_string(),
+        }
     }
 }
 impl Parse for Return {
@@ -575,20 +704,6 @@ impl Parse for Return {
             },
             // The return type did not start with Ident... weird, but let's continue
             Err(_) => Self::Assertive(input.parse()?),
-        })
-    }
-}
-impl Display for Return {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", match self {
-            Return::Assertive(Type::Object(class))
-            | Return::Result(ResultType::Assertive(Type::Object(class)), _)
-            | Return::Result(ResultType::Option(class), _)
-            | Return::Option(class) => class.to_string_with_slashes(),
-            Return::Assertive(ty)
-            | Return::Result(ResultType::Assertive(ty), _) => ty.to_string(),
-            Return::Result(ResultType::Void(_), _)
-            | Return::Void(_) => "void".to_string()
         })
     }
 }

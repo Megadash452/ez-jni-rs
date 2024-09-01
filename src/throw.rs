@@ -209,18 +209,18 @@ pub fn __panic_uncaught_exception(
     target: Either<&'static str, &JObject>,
     method_name: &'static str,
 ) {
-    let class = match target {
-        Either::Left(s) => s.to_string(),
-        Either::Right(obj) => env
-            .get_object_class(obj)
-            .and_then(|class| env.call_method(class, "getName", "()Ljava/lang/String;", &[]))
-            .and_then(|class| class.l())
-            .and_then(|class| {
-                unsafe { env.get_string_unchecked(&JString::from(class)) }.map(String::from)
-            })
-            .unwrap_or_else(|_| "<Object>".to_string()),
-    };
     if let Some(ex) = catch_exception(env) {
+        let class = match target {
+            Either::Left(s) => s.to_string(),
+            Either::Right(obj) => env
+                .get_object_class(obj)
+                .and_then(|class| env.call_method(class, "getName", "()Ljava/lang/String;", &[]))
+                .and_then(|class| class.l())
+                .and_then(|class| {
+                    unsafe { env.get_string_unchecked(&JString::from(class)) }.map(String::from)
+                })
+                .unwrap_or_else(|_| "<Object>".to_string()),
+        };
         crate::utils::__eprintln(env, format!("Rust panic: Encountered an uncaught Java Exception after calling {class}.{method_name}():"));
         env.throw(ex).unwrap();
         ::std::panic::panic_any(());
