@@ -1,16 +1,170 @@
 use std::fmt::Display;
-
 use either::Either;
-use itertools::Itertools;
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
 use syn::{
     braced, bracketed, parenthesized,
     parse::{discouraged::Speculative, Parse},
-    punctuated::{Pair, Punctuated},
+    punctuated::Punctuated,
     spanned::Spanned,
     Expr, Ident, LitInt, LitStr, Token,
 };
+
+use crate::utils::ClassPath;
+
+/// Processes input for macro call [super::call!].
+pub fn jni_call(call: MethodCall) -> TokenStream {
+    let name = call.method_name.to_string();
+
+    let signature = {
+        let mut buf = String::from("(");
+        for param in &call.parameters {
+            // Array types in signature have an opening bracket prepended to the type
+            if param.is_array() {
+                buf.push('[');
+            }
+            buf.push_str(&param.ty().sig_type());
+        }
+        buf.push(')');
+        buf.push_str(&match &call.return_type {
+            Return::Result(ResultType::Void(_), _) | Return::Void(_) => "V".to_string(),
+            Return::Assertive(ty) | Return::Result(ResultType::Assertive(ty), _) => ty.sig_type(),
+            Return::Option(class) | Return::Result(ResultType::Option(class), _) => class.sig_type()
+        });
+        LitStr::new(&buf, Span::call_site())
+    };
+
+    // Put the Value of the parameters in variables to prevent them being dropped (since JValue takes references),
+    // and to mitigate borrow checker error if the param value borrows env (since the call itself borrows &mut env).
+    let param_vars = call
+        .parameters
+        .iter()
+        .enumerate()
+        .map(|(i, param)| {
+            let value = param.value();
+            let var_name = Ident::new(&format!("__param_{i}"), value.span());
+            // Parameters of type object must always be passed by reference.
+            if param.is_primitive() {
+                quote_spanned! {value.span()=> let #var_name = #value; }
+            } else {
+                quote_spanned! {value.span()=> let #var_name = &(#value); }
+            }
+        })
+        .collect::<proc_macro2::TokenStream>();
+    // Parameters are just the variable names
+    let parameters = {
+        let params = call.parameters.iter().enumerate().map(|(i, param)| {
+            param.variant(Ident::new(&format!("__param_{i}"), param.value().span()))
+        });
+        quote! { &[ #( #params ),* ] }
+    };
+
+    // Extra function calls, such as .l() to make the result into a JObject.
+    let extras = {
+        let mut tt = quote! {};
+
+        // Induce panic when fails to call method
+        let call_failed_msg = match &call.call_type {
+            Either::Left(StaticMethod(path)) => {
+                format!("Failed to call static method {name}() on {}: {{err}}", path.to_token_stream())
+            }
+            Either::Right(ObjectMethod(_)) => format!("Failed to call {name}(): {{err}}"),
+        };
+        tt = quote! { #tt .unwrap_or_else(|err| panic!(#call_failed_msg)) };
+        // Induce panic when the returned value is not the expected type
+        let incorrect_type_msg =
+            format!("Expected {name}() to return {}: {{err}}", call.return_type);
+        let sig_char = match &call.return_type {
+            Return::Result(ResultType::Void(ident), _) | Return::Void(ident) => {
+                Ident::new("v", ident.span())
+            }
+            Return::Assertive(ty) | Return::Result(ResultType::Assertive(ty), _) => {
+                Ident::new(ty.sig_char().to_string().as_str(), ty.span())
+            }
+            Return::Option(class) | Return::Result(ResultType::Option(class), _) => {
+                Ident::new("l", class.span())
+            }
+        };
+        tt = quote! { #tt .#sig_char().unwrap_or_else(|err| panic!(#incorrect_type_msg)) };
+        tt
+    };
+
+    // Build the macro function call
+    let jni_call = match &call.call_type {
+        Either::Left(StaticMethod(class)) => {
+            let class = LitStr::new(&class.to_string_with_slashes(), class.span());
+            quote! { env.call_static_method(#class, #name, #signature, #parameters) }
+        }
+        Either::Right(ObjectMethod(object)) => quote! {
+            env.call_method(&(#object), #name, #signature, #parameters)
+        },
+    };
+
+    let non_null_msg = format!("Expected Object returned by {name}() to not be NULL");
+    // The class or object that the method is being called on. Used for panic message.
+    let target = match call.call_type {
+        Either::Left(StaticMethod(class)) => {
+            let class = class.to_string_with_slashes();
+            quote! { ::either::Either::Left(#class) }
+        }
+        Either::Right(ObjectMethod(obj)) => quote! { ::either::Either::Right(&(#obj)) },
+    };
+    let initial = quote! {
+        use ::std::borrow::BorrowMut as _;
+        #param_vars
+        let __call = #jni_call;
+    };
+    match call.return_type {
+        // Additional check that Object is not NULL
+        Return::Assertive(Type::Object(_)) => quote! { {
+            #initial
+            crate::throw::__panic_uncaught_exception(env.borrow_mut(), #target, #name);
+            let __result = __call #extras;
+            if __result.is_null() { panic!(#non_null_msg) }
+            __result
+        } },
+        Return::Assertive(_) | Return::Void(_) => quote! { {
+            #initial
+            crate::throw::__panic_uncaught_exception(env.borrow_mut(), #target, #name);
+            __call #extras
+        } },
+        // Move the result of the method call to an Option if the caller expects that the returned Object could be NULL.
+        Return::Option(_) => quote! { {
+            #initial
+            crate::throw::__panic_uncaught_exception(env.borrow_mut(), #target, #name);
+            let __result = __call #extras;
+            if __result.is_null() {
+                None
+            } else {
+                Some(__result)
+            }
+        } },
+        // Move the result of the method call to a Result if the caller expects that the method could throw.
+        Return::Result(ResultType::Assertive(Type::Object(_)), err) => quote! { {
+            #initial
+            crate::throw::__catch_exception::<#err>(env.borrow_mut()).map(|_| {
+                let __result = __call #extras;
+                if __result.is_null() { panic!(#non_null_msg) }
+                __result
+            })
+        } },
+        Return::Result(ResultType::Assertive(_) | ResultType::Void(_), err) => quote! { {
+            #initial
+            crate::throw::__catch_exception::<#err>(env.borrow_mut()).map(|_| __call #extras)
+        } },
+        Return::Result(ResultType::Option(_), err) => quote! { {
+            #initial
+            crate::throw::__catch_exception::<#err>(env.borrow_mut()).map(|_| {
+                let __result = __call #extras;
+                if __result.is_null() {
+                    None
+                } else {
+                    Some(__result)
+                }
+            })
+        } },
+    }
+}
 
 /// Define a JNI call to a Java method with parameters with expected types, and an expected return type.
 ///
@@ -76,59 +230,6 @@ impl Parse for ObjectMethod {
         };
         input.parse::<Token![.]>()?;
         Ok(Self(expr))
-    }
-}
-
-/// Represents the path in the jvm of a Java Class, such as `java.lang.String`.
-///
-/// Parsed as [`Punctuated`] Tokens of [`Ident`]s and `Dot`s, disallowing trailing Dots.
-pub struct ClassPath {
-    pub packages: Vec<(Ident, Token![.])>,
-    /// The last Ident in the Punctuated list.
-    pub class: Ident,
-}
-impl ClassPath {
-    /// Returns the Type that is used in the signature of the method call. e.g. `V` or `Ljava/lang/String;`
-    pub fn sig_type(&self) -> String {
-        format!("L{self};")
-    }
-    pub fn span(&self) -> Span {
-        let mut tt = TokenStream::new();
-        tt.append_all(self.packages.iter().map(|(t, p)| Pair::new(t, Some(p))));
-        tt.append_all(self.class.to_token_stream());
-        tt.span()
-    }
-}
-impl Parse for ClassPath {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let path = Punctuated::<Ident, Token![.]>::parse_separated_nonempty(input)?;
-
-        Ok(Self {
-            class: path.last().unwrap().clone(),
-            packages: path
-                .into_pairs()
-                .into_iter()
-                .map(|pair| pair.into_tuple())
-                .filter_map(|pair| match pair.1 {
-                    Some(punct) => Some((pair.0, punct)),
-                    None => None,
-                })
-                .collect(),
-        })
-    }
-}
-impl Display for ClassPath {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(
-            &Itertools::intersperse(
-                self.packages
-                    .iter()
-                    .map(|pair| pair.0.to_string())
-                    .chain(Some(self.class.to_string())),
-                "/".to_string(),
-            )
-            .collect::<String>(),
-        )
     }
 }
 
@@ -207,7 +308,7 @@ impl Display for Type {
             Self::Long(_)   => "long",
             Self::Float(_)  => "float",
             Self::Double(_) => "double",
-            Self::Object(class) => &format!("Object({class})"),
+            Self::Object(class) => &format!("Object({})", class.to_string_with_slashes()),
         };
         f.write_str(s)
     }
@@ -308,16 +409,14 @@ impl Parameter {
                     }
                     Type::Object(class) => {
                         let new_array_err = LitStr::new(
-                            &format!("Failed to create Java Object \"{class}\" array: {{err}}"),
+                            &format!("Failed to create Java Object \"{}\" array: {{err}}", class.to_token_stream()),
                             array.span(),
                         );
                         let set_val_err = LitStr::new(
-                            &format!(
-                                "Failed to set the value of Object array at index {{i}}: {{err}}"
-                            ),
+                            &format!("Failed to set the value of Object array at index {{i}}: {{err}}"),
                             array.span(),
                         );
-                        let class_path = LitStr::new(&class.to_string(), array.span());
+                        let class_path = LitStr::new(&class.to_string_with_slashes(), array.span());
                         // Fill the array
                         let mut elements = quote! {};
                         for (i, element) in array.iter().enumerate() {
@@ -413,14 +512,14 @@ impl Parse for Parameter {
 /// 1. [`Type`] (or `void`) if the function being called can't return `NULL` or throw an `exception` (e.g. `bool` or `java.lang.String`).
 /// 2. `Option<ClassPath>` if the return type is an [`Object`][Type::Object] that could be **NULL**.
 ///    Java *does not allow* primitive types (i.e. not Object) to be **NULL**, so [Self::Option] can only be used with a [ClassPath].
-/// 3. `Result<Type | void | Option<ClassPath>, String>` if the method call can throw an **Exception**.
-/// TODO: might change Err type to `impl FromException`
+/// 3. `Result<Type | void | Option<ClassPath>, E>` if the method call can throw an **Exception**,
+///    where `E` is any Rust type that *implements [`FromException`]*.
 pub enum Return {
     Void(Ident),
     Assertive(Type),
     Option(ClassPath),
-    /// Holds the Ok Type (a Type or Option), and the Err Type (String for now).
-    Result(ResultType, () /*syn::Path*/),
+    /// Holds the Ok Type (a Type or Option), and the Err Type.
+    Result(ResultType, syn::Path),
 }
 impl Return {
     // Helper function that parses the content of the option variant.
@@ -436,12 +535,10 @@ impl Return {
             .map_err(|err| input.error(format!("Option takes generic arguments; {err}")))?;
         let class = match input.parse::<Type>()? {
             Type::Object(path) => path,
-            t => {
-                return Err(syn::Error::new(
-                    t.span(),
-                    "Option cannot be used with primitives, only Classes.",
-                ))
-            }
+            t => return Err(syn::Error::new(
+                t.span(),
+                "Option cannot be used with primitives, only Classes.",
+            ))
         };
         input
             .parse::<Token![>]>()
@@ -471,11 +568,8 @@ impl Parse for Return {
                         input.error(format!("Result takes 2 generic arguments; {err}"))
                     })?;
                     let err_type = input.parse::<syn::Path>()?;
-                    if !err_type.is_ident("String") {
-                        return Err(syn::Error::new(err_type.span(), "For now, only 'String' is suppoerted as the Error type of the Result.\nLater, you could use any Type that implements FromException (doesn't exist yet)."));
-                    }
                     input.parse::<Token![>]>()?;
-                    Self::Result(ok_type, () /*err_type*/)
+                    Self::Result(ok_type, err_type)
                 }
                 _ => Self::Assertive(input.parse()?),
             },
@@ -490,7 +584,7 @@ impl Display for Return {
             Return::Assertive(Type::Object(class))
             | Return::Result(ResultType::Assertive(Type::Object(class)), _)
             | Return::Result(ResultType::Option(class), _)
-            | Return::Option(class) => class.to_string(),
+            | Return::Option(class) => class.to_string_with_slashes(),
             Return::Assertive(ty)
             | Return::Result(ResultType::Assertive(ty), _) => ty.to_string(),
             Return::Result(ResultType::Void(_), _)
@@ -527,7 +621,7 @@ impl Parse for ResultType {
     }
 }
 
-/// Convert eh first letter of a String into uppercase
+/// Convert the first letter of a String into uppercase
 fn first_char_uppercase(s: String) -> String {
     let mut c = s.chars();
     match c.next() {

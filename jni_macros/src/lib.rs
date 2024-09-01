@@ -1,12 +1,13 @@
-use call::{MethodCall, ObjectMethod, ResultType, Return, StaticMethod, Type};
-use either::Either;
+mod call;
+mod exception;
+mod utils;
+
 use proc_macro::TokenStream;
-use proc_macro2::Span;
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
 use std::sync::RwLock;
 use syn::{spanned::Spanned, GenericParam, Ident, ItemFn, LitStr};
-
-mod call;
+use utils::{error, error_spanned};
+use call::MethodCall;
 
 static PACKAGE_NAME: RwLock<Option<String>> = RwLock::new(None);
 
@@ -221,13 +222,13 @@ pub fn jni_fn(attr_args: TokenStream, input: TokenStream) -> TokenStream {
 /// ## Return
 ///
 /// The parameters are followed by a *return arrow* `->` and the *return type*.
-/// The return type may be concrete *primitive or Class*, an [`Option`] of a nullable Class, or a [`Result`] of one of the previous choices.
+/// The return type may be an assertive *void, primitive or Class*, an [`Option`] of a nullable Class, or a [`Result`] of one of the previous choices.
 ///
-/// - Use the **concrete type** when the Java method being called *can't return `NULL`* or throw an *exception*,
+/// - Use the **assertive type** when the Java method being called *can't return `NULL`* or throw an *exception*,
 ///   such as when it is marked with `@NonNull`.
-/// - Use **`Option`** when the method *can return a `NULL`* value.
-/// - Use **`Result<Type>`** when the method can throw an *exception*, e.g. `void method() throws Exception { ... }`, and the return value *can't be `NULL`*.
-/// - Use **`Result<Option>`** when the method can throw, and the return value *can be `NULL`*.
+/// - Use **`Option<Type>`** when the method *can return a `NULL`* value.
+/// - Use **`Result<Type, E>`** when the method can throw an *exception*, e.g. `void method() throws Exception { ... }`, and the return value *can't be `NULL`*.
+/// - Use **`Result<Option<Type>, E>`** when the method can throw, and the return value *can be `NULL`*.
 ///
 /// Here are some examples of return types:
 /// ```no_run
@@ -235,177 +236,38 @@ pub fn jni_fn(attr_args: TokenStream, input: TokenStream) -> TokenStream {
 /// -> Option<java.lang.String>
 /// -> Result<int, String> OR Result<java.lang.String, String>
 /// -> Result<Option<java.lang.String>, String>
+/// -> Result<int, MyErrorType>
 /// ```
 /// Note that `Option` can't be used with *primitive types* because those can't be `NULL` in Java.
 ///
-/// For now, the `Err` of the [`Result`] can only be of type String,
-/// but this will change in the future to allow any type that implements `FromThrowable` (a trait that doesn't yet exist).
+/// ### Exceptions
+/// 
+/// The **`E`** in the `Result` type can be any Rust type that *implements [`FromException`]*
+/// (usually an [Error Enum](https://docs.rs/thiserror/latest/thiserror/)).
+/// See also the derive macro for [`FromException`][from_exception].
+/// 
+/// If the Exception can't be converted to an `E`, the Exception will not be caught and the program will `panic!`.
+/// This is similar to how in Java, if the exception is not of any type of the *catch blocks*, the exception will not be caught.
+/// 
+/// When `E` is [`String`], it will catch any Exception.
 #[proc_macro]
 pub fn call(input: TokenStream) -> TokenStream {
     let call = syn::parse_macro_input!(input as MethodCall);
+    call::jni_call(call).into()
+}
 
-    let name = call.method_name.to_string();
-
-    let signature = {
-        let mut buf = String::from("(");
-        for param in &call.parameters {
-            // Array types in signature have an opening bracket prepended to the type
-            if param.is_array() {
-                buf.push('[');
-            }
-            buf.push_str(&param.ty().sig_type());
-        }
-        buf.push(')');
-        buf.push_str(&match &call.return_type {
-            Return::Result(ResultType::Void(_), _) | Return::Void(_) => "V".to_string(),
-            Return::Assertive(ty) | Return::Result(ResultType::Assertive(ty), _) => ty.sig_type(),
-            Return::Option(class) | Return::Result(ResultType::Option(class), _) => {
-                class.sig_type()
-            }
-        });
-        LitStr::new(&buf, Span::call_site())
-    };
-
-    // Put the Value of the parameters in variables to prevent them being dropped (since JValue takes references),
-    // and to mitigate borrow checker error if the param value borrows env (since the call itself borrows &mut env).
-    let param_vars = call
-        .parameters
-        .iter()
-        .enumerate()
-        .map(|(i, param)| {
-            let value = param.value();
-            let var_name = Ident::new(&format!("__param_{i}"), value.span());
-            // Parameters of type object must always be passed by reference.
-            if param.is_primitive() {
-                quote_spanned! {value.span()=> let #var_name = #value; }
-            } else {
-                quote_spanned! {value.span()=> let #var_name = &(#value); }
-            }
+#[proc_macro_derive(FromException, attributes(class, field))]
+pub fn from_exception(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as syn::DeriveInput);
+    match input.data {
+        syn::Data::Struct(st) => exception::from_exception_struct(syn::ItemStruct {
+            attrs: input.attrs, vis: input.vis, ident: input.ident, generics: input.generics, struct_token: st.struct_token, fields: st.fields, semi_token: st.semi_token
         })
-        .collect::<proc_macro2::TokenStream>();
-    // Parameters are just the variable names
-    let parameters = {
-        let params = call.parameters.iter().enumerate().map(|(i, param)| {
-            param.variant(Ident::new(&format!("__param_{i}"), param.value().span()))
-        });
-        quote! { &[ #( #params ),* ] }
-    };
-
-    // Extra function calls, such as .l() to make the result into a JObject.
-    let extras = {
-        let mut tt = quote! {};
-
-        // Induce panic when fails to call method
-        let call_failed_msg = match &call.call_type {
-            Either::Left(StaticMethod(path)) => {
-                format!("Failed to call static method {name}() on {path}: {{err}}")
-            }
-            Either::Right(ObjectMethod(_)) => format!("Failed to call {name}(): {{err}}"),
-        };
-        tt = quote! { #tt .unwrap_or_else(|err| panic!(#call_failed_msg)) };
-        // Induce panic when the returned value is not the expected type
-        let incorrect_type_msg =
-            format!("Expected {name}() to return {}: {{err}}", call.return_type);
-        let sig_char = match &call.return_type {
-            Return::Result(ResultType::Void(ident), _) | Return::Void(ident) => {
-                Ident::new("v", ident.span())
-            }
-            Return::Assertive(ty) | Return::Result(ResultType::Assertive(ty), _) => {
-                Ident::new(ty.sig_char().to_string().as_str(), ty.span())
-            }
-            Return::Option(class) | Return::Result(ResultType::Option(class), _) => {
-                Ident::new("l", class.span())
-            }
-        };
-        tt = quote! { #tt .#sig_char().unwrap_or_else(|err| panic!(#incorrect_type_msg)) };
-        tt
-    };
-
-    // Build the macro function call
-    let jni_call = match &call.call_type {
-        Either::Left(StaticMethod(class)) => {
-            let class = LitStr::new(&class.to_string(), class.span());
-            quote! { env.call_static_method(#class, #name, #signature, #parameters) }
-        }
-        Either::Right(ObjectMethod(object)) => quote! {
-            env.call_method(&(#object), #name, #signature, #parameters)
-        },
-    };
-
-    let non_null_msg = format!("Expected Object returned by {name}() to not be NULL");
-    // The class or object that the method is being called on. Used for panic message.
-    let target = match call.call_type {
-        Either::Left(StaticMethod(class)) => {
-            let class = class.to_string();
-            quote! { ::either::Either::Left(#class) }
-        }
-        Either::Right(ObjectMethod(obj)) => quote! { ::either::Either::Right(&(#obj)) },
-    };
-    let initial = quote! {
-        use ::std::borrow::BorrowMut as _;
-        #param_vars
-        let __call = #jni_call;
-    };
-    match call.return_type {
-        // Additional check that Object is not NULL
-        Return::Assertive(Type::Object(_)) => quote! { {
-            #initial
-            crate::throw::__panic_uncaught_exception(env.borrow_mut(), #target, #name);
-            let __result = __call #extras;
-            if __result.is_null() { panic!(#non_null_msg) }
-            __result
-        } },
-        Return::Assertive(_) | Return::Void(_) => quote! { {
-            #initial
-            crate::throw::__panic_uncaught_exception(env.borrow_mut(), #target, #name);
-            __call #extras
-        } },
-        // Move the result of the method call to an Option if the caller expects that the returned Object could be NULL.
-        Return::Option(_) => quote! { {
-            #initial
-            crate::throw::__panic_uncaught_exception(env.borrow_mut(), #target, #name);
-            let __result = __call #extras;
-            if __result.is_null() {
-                None
-            } else {
-                Some(__result)
-            }
-        } },
-        // Move the result of the method call to a Result if the caller expects that the method could throw.
-        Return::Result(ResultType::Assertive(Type::Object(_)), _) => quote! { {
-            #initial
-            crate::throw::__catch_exception(env.borrow_mut()).map(|_| {
-                let __result = __call #extras;
-                if __result.is_null() { panic!(#non_null_msg) }
-                __result
-            })
-        } },
-        Return::Result(ResultType::Assertive(_) | ResultType::Void(_), _) => quote! { {
-            #initial
-            crate::throw::__catch_exception(env.borrow_mut()).map(|_| __call #extras)
-        } },
-        Return::Result(ResultType::Option(_), _) => quote! { {
-            #initial
-            crate::throw::__catch_exception(env.borrow_mut()).map(|_| {
-                let __result = __call #extras;
-                if __result.is_null() {
-                    None
-                } else {
-                    Some(__result)
-                }
-            })
-        } },
-    }
-    .into()
-}
-
-fn error(err: impl AsRef<str>) -> proc_macro2::TokenStream {
-    let err = err.as_ref();
-    quote! { compile_error!(#err); }
-}
-fn error_spanned(span: Span, err: impl AsRef<str>) -> proc_macro2::TokenStream {
-    let err = err.as_ref();
-    quote_spanned! {span=>
-        compile_error!(#err);
-    }
+            .unwrap_or_else(|err| err.to_compile_error()),
+        syn::Data::Enum(enm) => exception::from_exception_enum(syn::ItemEnum {
+            attrs: input.attrs, vis: input.vis, ident: input.ident, generics: input.generics, enum_token: enm.enum_token, brace_token: enm.brace_token, variants: enm.variants
+        })
+            .unwrap_or_else(|err| err.to_compile_error()),
+        syn::Data::Union(_) => error("Unions not supported"),
+    }.into()
 }

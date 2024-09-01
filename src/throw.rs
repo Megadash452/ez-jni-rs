@@ -1,9 +1,10 @@
 use crate::utils::get_string;
 use either::Either;
 use jni::{
-    objects::{JObject, JString, JThrowable},
     JNIEnv,
+    objects::{JObject, JString, JThrowable},
 };
+use jni_macros::call;
 use std::{any::Any, sync::RwLock};
 
 /// A lot like [std::panic::Location], but uses a [String] instead of `&str`.
@@ -54,7 +55,6 @@ pub fn __catch_throw<'local, R>(
         }
     }
 }
-
 fn throw_panic(env: &mut JNIEnv, payload: Box<dyn Any + Send>) {
     let panic_msg = match payload.downcast::<&'static str>() {
         Ok(msg) => Some(msg.as_ref().to_string()),
@@ -77,26 +77,120 @@ fn throw_panic(env: &mut JNIEnv, payload: Box<dyn Any + Send>) {
     let _ = env.throw_new("java/lang/Exception", msg);
 }
 
+/// A trait used to construct **Error Enums** from an `Exception` thrown from Java.
+/// The conversion from `Exception` to `Self` will succe
+pub trait FromException
+where Self: Sized {
+    fn from_exception(env: &mut JNIEnv, exception: &JThrowable) -> Option<Self>;
+}
+
+impl FromException for String {
+    fn from_exception(env: &mut jni::JNIEnv, exception: &jni::objects::JThrowable) -> Option<Self> {
+        let msg = JString::from(call!(exception.getMessage() -> java.lang.String));
+        Some(get_string(env, JString::from(msg)))
+    }
+}
+
+impl FromException for std::io::Error {
+    fn from_exception(env: &mut JNIEnv, exception: &JThrowable) -> Option<Self> {
+        use std::io;
+        let msg = JString::from(call!(exception.getMessage() -> java.lang.String));
+        let msg = get_string(env, JString::from(msg));
+        
+        let map = [
+            ("java/io/FileNotFoundException", io::ErrorKind::NotFound),
+            ("java/nio/file/NoSuchFileException", io::ErrorKind::NotFound),
+            ("java/nio/file/AccessDeniedException", io::ErrorKind::PermissionDenied),
+            // (, io::ErrorKind::ConnectionRefused),
+            // (, io::ErrorKind::ConnectionReset),
+            // (, io::ErrorKind::ConnectionAborted),
+            ("java/net/ConnectException", io::ErrorKind::NotConnected),
+            ("java/net/BindException", io::ErrorKind::AddrInUse),
+            ("java/net/NoRouteToHostException", io::ErrorKind::AddrNotAvailable),
+            ("java/net/SocketException", io::ErrorKind::BrokenPipe),
+            ("java/nio/file/FileAlreadyExistsException", io::ErrorKind::AlreadyExists),
+            // (, io::ErrorKind::WouldBlock),
+            ("java/lang/IllegalArgumentException", io::ErrorKind::InvalidInput),
+            ("java/lang/IllegalFormatException", io::ErrorKind::InvalidData),
+            ("java/lang/UnsupportedEncodingException", io::ErrorKind::InvalidData),
+            ("java/lang/UTFDataFormatException", io::ErrorKind::InvalidData),
+            ("java/nio/charset/CharacterCodingException", io::ErrorKind::InvalidData),
+            ("java/nio/charset/MalformedInputException", io::ErrorKind::InvalidData),
+            ("java/nio/charset/UnmappableCharacterException", io::ErrorKind::InvalidData),
+            ("java/net/SocketTimeoutException", io::ErrorKind::TimedOut),
+            ("org/apache/http/conn/ConnectTimeoutException", io::ErrorKind::TimedOut),
+            ("java/io/WriteAbortedException", io::ErrorKind::WriteZero),
+            ("java/io/InterruptedIOException", io::ErrorKind::Interrupted),
+            // (, io::ErrorKind::Unsupported),
+            ("java/io/EOFException", io::ErrorKind::UnexpectedEof),
+            // (, io::ErrorKind::OutOfMemory),
+        ];
+        
+        let exception_class = env.get_object_class(exception)
+            .expect("Failed to get Exception's class");
+        let exception_class = JString::from(call!(exception_class.getName() -> java.lang.String));
+        let exception_class = get_string(env, exception_class);
+        
+        for (class, error_kind) in map {
+            if class == exception_class {
+                return Some(Self::new(error_kind, msg))
+            }
+        }
+        
+        if object_is_descendant_of(env, exception, "java/io/IOException") {
+            return Some(Self::other(format!("{exception_class}: {msg}")));
+        }
+        
+        None
+    }
+}
+
+/// Check if an Object's class is **class**, or if it **extends** (is descendant of) **class**.
+/// 
+/// Use this to convert an Object into a rust type, such as in [`FromException`].
+pub fn object_is_descendant_of(env: &mut JNIEnv, obj: &JObject, class: &str) -> bool {
+    // First check if the top class of obj is `class`.
+    let obj_class = env.get_object_class(obj)
+        .expect("Failed to get Object's class");
+    let obj_class_name = JString::from(call!(obj_class.getName() -> java.lang.String));
+    let obj_class_name = get_string(env, obj_class_name);
+    if obj_class_name == class {
+        return true
+    }
+    
+    let mut current = obj_class;
+    while let Some(super_class) = env.get_superclass(&current)
+        .expect("Failed to get class' super class")
+    {
+        let class_name = JString::from(call!(super_class.getName() -> java.lang.String));
+        let class_name = get_string(env, class_name);
+        if class_name == class {
+            return true
+        }
+        current = super_class
+    }
+    
+    false
+}
+
 /// Chekcs if an exception has been thrown from a previous JNI function call,
-/// and converts that exception to a `Err(String)` so that it can be [`mapped`][Result::map].
+/// and tries to convert it to an [`E`] so that it can be [`mapped`][Result::map] to get a `Result<T, E>`.
+/// 
+/// If the `Exception` can't be converted to an [`E`],
+/// the program will `panic!` and the `Exception` will be rethrown,
+/// in a similar way to how [`__panic_uncaught_exception()`] does it.
 ///
 /// This function is used by [jni_macros::call!].
-// TODO: let the erorr be any type that implements `FromJThrowable`
 #[doc(hidden)]
-pub fn __catch_exception(env: &mut JNIEnv) -> Result<(), String> {
+pub fn __catch_exception<E: FromException>(env: &mut JNIEnv) -> Result<(), E> {
     match catch_exception(env) {
-        Some(ex) => {
-            let msg = env
-                .call_method(ex, "getMessage", "()Ljava/lang/String;", &[])
-                .unwrap_or_else(|err| panic!("Failed to call getMessage() on Throwable: {err}"))
-                .l()
-                .unwrap_or_else(|err| {
-                    panic!("Value returned by getMessage() is not a String: {err}")
-                });
-            if msg.is_null() {
-                panic!("Throwable message is NULL");
+        Some(ex) => match E::from_exception(env, &ex) {
+            Some(e) => Err(e),
+            None => {
+                crate::utils::__eprintln(env, format!("Attempted to catch an exception, but failed to convert it to a concrete type."));
+                env.throw(ex).unwrap();
+                ::std::panic::panic_any(());
             }
-            Err(get_string(env, JString::from(msg)))
         }
         None => Ok(()),
     }
