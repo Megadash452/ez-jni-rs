@@ -70,32 +70,13 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
         // Induce panic when the returned value is not the expected type
         let incorrect_type_msg = format!("Expected {name}() to return {}: {{err}}", call.return_type.inner_type());
         let sig_char = Ident::new(&call.return_type.sig_char().to_string(), call.return_type.span());
-        // Some primitive types need to be converted to the type the caller requested.
-        let conversion = match &call.return_type {
-            // Transmute to the unsigned type
-            Return::Assertive(Type::RustPrimitive { ty, ident })
-            | Return::Result(ResultType::Assertive(Type::RustPrimitive { ty, ident }), _)
-                if ty.is_unsigned()
-                => quote! { .map(|v| unsafe { ::std::mem::transmute::<_, #ident>(v) }) },
-            // Decode UTF-16
-            Return::Assertive(Type::RustPrimitive {
-                ty: RustPrimitive::Char,
-                ..
-            })
-            | Return::Result(
-                ResultType::Assertive(Type::RustPrimitive {
-                    ty: RustPrimitive::Char,
-                    ..
-                }),
-                _,
-            ) => quote! {
-                .map(|v|
-                    char::decode_utf16(Some(v))
-                        .next().unwrap()
-                        .unwrap_or(char::REPLACEMENT_CHARACTER)
-                )
-            },
-            _ => quote!(),
+        // Some Types need to be converted because they are a special case
+        let conversion = match (call.return_type.special_case_conversions(quote!(v)), call.return_type.sig_char()) {
+            // Move the result of the method call to an Option if it is Object because it could be null.
+            (Some(conversion), 'l') => quote! { .map(|v| (!v.is_null()).then_some(#conversion)) },
+            (None, 'l') => quote! { .map(|v| (!v.is_null()).then_some(v)) },
+            (Some(conversion), _) => quote! { .map(|v| #conversion) },
+            (None, _) => quote!()
         };
         quote! {
             .unwrap_or_else(|err| panic!(#call_failed_msg))
@@ -131,48 +112,29 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
         let __call = #jni_call;
     };
     match call.return_type {
-        // Additional check that Object is not NULL
         Return::Assertive(Type::Object(_)) => quote! { {
             #initial
             ::ez_jni::__throw::panic_uncaught_exception(env.borrow_mut(), #target, #name);
-            let __result = __call #common;
-            if __result.is_null() { panic!(#non_null_msg) }
-            __result
+            __call #common
+                .unwrap_or_else(|| panic!(#non_null_msg))
         } },
-        Return::Assertive(_) | Return::Void(_) => quote! { {
+        Return::Assertive(_) | Return::Void(_) | Return::Option(_) => quote! { {
             #initial
             ::ez_jni::__throw::panic_uncaught_exception(env.borrow_mut(), #target, #name);
             __call #common
         } },
-        // Move the result of the method call to an Option if the caller expects that the returned Object could be NULL.
-        Return::Option(_) => quote! { {
-            #initial
-            ::ez_jni::__throw::panic_uncaught_exception(env.borrow_mut(), #target, #name);
-            let __result = __call #common;
-            (!__result.is_null())
-                .then_some(__result)
-        } },
         // Move the result of the method call to a Result if the caller expects that the method could throw.
         Return::Result(ResultType::Assertive(Type::Object(_)), err) => quote! { {
             #initial
-            ::ez_jni::__throw::catch::<#err>(env.borrow_mut()).map(|_| {
-                let __result = __call #common;
-                if __result.is_null() { panic!(#non_null_msg) }
-                __result
-            })
+            ::ez_jni::__throw::catch::<#err>(env.borrow_mut())
+                .map(|_| __call #common
+                    .unwrap_or_else(|| panic!(#non_null_msg))
+                )
         } },
-        Return::Result(ResultType::Assertive(_) | ResultType::Void(_), err) => quote! { {
+        Return::Result(ResultType::Assertive(_) | ResultType::Void(_) | ResultType::Option(_), err) => quote! { {
             #initial
             ::ez_jni::__throw::catch::<#err>(env.borrow_mut())
                 .map(|_| __call #common)
-        } },
-        Return::Result(ResultType::Option(_), err) => quote! { {
-            #initial
-            ::ez_jni::__throw::catch::<#err>(env.borrow_mut()).map(|_| {
-                let __result = __call #common;
-                (!__result.is_null())
-                    .then_some(__result)
-            })
         } },
     }
 }
@@ -666,6 +628,43 @@ impl Return {
             | Return::Result(ResultType::Option(class), _) => class.to_string_with_slashes(),
             Return::Assertive(ty) | Return::Result(ResultType::Assertive(ty), _) => ty.to_string(),
             Return::Void(_) | Return::Result(ResultType::Void(_), _) => "void".to_string(),
+        }
+    }
+    
+    /// Handle special cases of the call's return value.
+    /// e.g. wrap `java.lang.String` in `JString`.
+    /// 
+    /// **value** is the tokens representing the value that will be *operated on*.
+    pub fn special_case_conversions(&self, value: TokenStream) -> Option<TokenStream> {
+        match self {
+            // Special cases for RustPrimitives
+            Return::Assertive(Type::RustPrimitive { ty, ident })
+            | Return::Result(ResultType::Assertive(Type::RustPrimitive { ty, ident }), _)
+                => if ty.is_unsigned() {
+                    // Transmute to the unsigned type
+                    Some(quote! { unsafe { ::std::mem::transmute::<_, #ident>(#value) } })
+                } else if *ty == RustPrimitive::Char {
+                    // Decode UTF-16
+                    Some(quote! {
+                        char::decode_utf16(Some(#value))
+                            .next().unwrap()
+                            .unwrap_or(char::REPLACEMENT_CHARACTER)
+                    })
+                } else {
+                    None
+                },
+            // Special cases for Java Objects
+            Return::Assertive(Type::Object(class))
+            | Return::Option(class)
+            | Return::Result(ResultType::Assertive(Type::Object(class)), _)
+            | Return::Result(ResultType::Option(class), _) =>
+                if class.to_string_with_slashes() == "java/lang/String" {
+                    // Wrap java.lang.String in JString
+                    Some(quote! { ::jni::objects::JString::from(#value) })
+                } else {
+                    None
+                },
+            _ => None
         }
     }
 }

@@ -5,7 +5,6 @@ pub mod __throw;
 pub mod utils;
 extern crate self as ez_jni;
 
-use jni::objects::JString;
 use jni::objects::JThrowable;
 use jni::JNIEnv;
 pub use jni_macros::*;
@@ -20,18 +19,14 @@ where Self: Sized {
 
 impl FromException for String {
     fn from_exception(env: &mut jni::JNIEnv, exception: &jni::objects::JThrowable) -> Option<Self> {
-        Some(get_string(JString::from(
-            call!(exception.getMessage() -> java.lang.String)
-        ), env))
+        Some(get_string(call!(exception.getMessage() -> java.lang.String), env))
     }
 }
 
 impl FromException for std::io::Error {
     fn from_exception(env: &mut JNIEnv, exception: &JThrowable) -> Option<Self> {
         use std::io;
-        let msg = get_string(JString::from(
-            call!(exception.getMessage() -> java.lang.String)
-        ), env);
+        let msg = get_string(call!(exception.getMessage() -> java.lang.String), env);
         
         let map = [
             ("java/io/FileNotFoundException", io::ErrorKind::NotFound),
@@ -64,8 +59,7 @@ impl FromException for std::io::Error {
         
         let exception_class = env.get_object_class(exception)
             .expect("Failed to get Exception's class");
-        let exception_class = JString::from(call!(exception_class.getName() -> java.lang.String));
-        let exception_class = get_string(exception_class, env);
+        let exception_class = get_string(call!(exception_class.getName() -> java.lang.String), env);
         
         for (class, error_kind) in map {
             if class == exception_class {

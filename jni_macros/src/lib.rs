@@ -277,38 +277,54 @@ pub fn from_exception(input: TokenStream) -> TokenStream {
     .into()
 }
 
+/// Print output. See [`std::println!`].
+/// 
+/// In Android, printing to `STDOUT` does not work because apparently it redirects to `/dev/null`.
+/// This macro will instead crate a String and send it to `android.util.Log`.
+/// 
+/// Use this macro instead of [`std::println!`] everywhere.
+/// 
+/// See also [eprintln!].
 #[proc_macro]
 pub fn println(input: TokenStream) -> TokenStream {
     let input = proc_macro2::TokenStream::from(input);
-    let format = if input.is_empty() {
+    let string = if input.is_empty() {
         quote!("".to_string())
     } else {
-        input
+        input.clone()
     };
     
     quote!{
         if #[cfg(target_os = "android")] {
-            ::ez_jni::utils::__println(format!(#format), env)
+            ::ez_jni::utils::__println(format!(#input), env)
         } else {
-            ::std::println!(#format)
+            ::std::println!(#string)
         }
     }.into()
 }
 
+/// Print error. See [`std::eprintln!`].
+/// 
+/// In Android, printing to `STDERR` does not work because apparently it redirects to `/dev/null`.
+/// This macro will instead crate a String and send it to `android.util.Log`.
+/// 
+/// Use this macro instead of [`std::eprintln!`] everywhere.
+/// 
+/// See also [println!].
 #[proc_macro]
 pub fn eprintln(input: TokenStream) -> TokenStream {
     let input = proc_macro2::TokenStream::from(input);
-    let format = if input.is_empty() {
+    let string = if input.is_empty() {
         quote!("".to_string())
     } else {
-        input
+        input.clone()
     };
     
     quote!{ ::cfg_if::cfg_if! {
         if #[cfg(target_os = "android")] {
-            ::ez_jni::utils::__eprintln(format!(#format), env)
+            ::ez_jni::utils::__eprintln(format!(#input), env)
         } else {
-            ::std::eprintln!(#format)
+            ::std::eprintln!(#string)
         }
     } }.into()
 }
