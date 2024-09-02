@@ -27,61 +27,61 @@ mod android {
     }
 }
 
+// // #[macro_export]
+// // /// Printing to STDOUT does not work in Android because apparently it redirects to `/dev/null`.
+// // /// This macro replaces the regular [`print!()`] so that the output actually goes somewhere (Android app log in this case).
+// // macro_rules! print {
+// //     () => { };
+// //     ($($arg:tt)*) => {
+// //         $crate::utils::__print(env, format!($($arg)*))
+// //     };
+// // }
 // #[macro_export]
 // /// Printing to STDOUT does not work in Android because apparently it redirects to `/dev/null`.
 // /// This macro replaces the regular [`print!()`] so that the output actually goes somewhere (Android app log in this case).
-// macro_rules! print {
-//     () => { };
-//     ($($arg:tt)*) => {
-//         $crate::utils::__print(env, format!($($arg)*))
-//     };
+// macro_rules! println {
+//     () => { cfg_if! {
+//         if #[cfg(target_os = "android")] {
+//             $crate::utils::__println("".to_string(), #env)
+//         } else {
+//             ::std::println!()
+//         }
+//     } };
+//     ($($arg:tt)*) => { cfg_if! {
+//         if #[cfg(target_os = "android")] {
+//             $crate::utils::__println(format!($($arg)*), #env)
+//         } else {
+//             ::std::println!($($arg)*)
+//         }
+//     } };
 // }
-#[macro_export]
-/// Printing to STDOUT does not work in Android because apparently it redirects to `/dev/null`.
-/// This macro replaces the regular [`print!()`] so that the output actually goes somewhere (Android app log in this case).
-macro_rules! println {
-    () => { cfg_if! {
-        if #[cfg(target_os = "android")] {
-            $crate::utils::__println("".to_string(), env)
-        } else {
-            ::std::println!()
-        }
-    } };
-    ($($arg:tt)*) => { cfg_if! {
-        if #[cfg(target_os = "android")] {
-            $crate::utils::__println(format!($($arg)*), env)
-        } else {
-            ::std::println!($($arg)*)
-        }
-    } };
-}
 
+// // #[macro_export]
+// // /// See [`print`].
+// // macro_rules! eprint {
+// //     () => { };
+// //     ($($arg:tt)*) => {
+// //         $crate::utils::__print(format!($($arg)*), env)
+// //     };
+// // }
 // #[macro_export]
-// /// See [`print`].
-// macro_rules! eprint {
-//     () => { };
-//     ($($arg:tt)*) => {
-//         $crate::utils::__print(format!($($arg)*), env)
-//     };
+// /// Like [`println`], but prints with Error level.
+// macro_rules! eprintln {
+//     () => { ::cfg_if::cfg_if! {
+//         if #[cfg(target_os = "android")] {
+//             $crate::utils::__eprintln("".to_string(), #env)
+//         } else {
+//             ::std::eprintln!()
+//         }
+//     } };
+//     ($($arg:tt)*) => { ::cfg_if::cfg_if! {
+//         if #[cfg(target_os = "android")] {
+//             $crate::utils::__eprintln(format!($($arg)*), #env)
+//         } else {
+//             ::std::eprintln!($($arg)*)
+//         }
+//     } };
 // }
-#[macro_export]
-/// Like [`println`], but prints with Error level.
-macro_rules! eprintln {
-    () => { ::cfg_if::cfg_if! {
-        if #[cfg(target_os = "android")] {
-            $crate::utils::__eprintln("".to_string(), env)
-        } else {
-            ::std::eprintln!()
-        }
-    } };
-    ($($arg:tt)*) => { ::cfg_if::cfg_if! {
-        if #[cfg(target_os = "android")] {
-            $crate::utils::__eprintln(format!($($arg)*), env)
-        } else {
-            ::std::eprintln!($($arg)*)
-        }
-    } };
-}
 
 /// Get a [`String`] from a `java.lang.String`, asserting that the object is NOT **`NULL`**.
 pub fn get_string(arg: JString, env: &mut JNIEnv) -> String {

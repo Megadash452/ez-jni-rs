@@ -17,9 +17,9 @@ pub fn from_exception_struct(st: syn::ItemStruct) -> syn::Result<TokenStream> {
     let st_generics = &st.generics;
     let st_generic_params = &st.generics.params;
     Ok(quote! {
-        impl #st_generic_params crate::throw::FromException for #st_ident #st_generics {
+        impl #st_generic_params ::ez_jni::FromException for #st_ident #st_generics {
             fn from_exception(env: &mut ::jni::JNIEnv, exception: &::jni::objects::JThrowable) -> Option<Self> {
-                if !crate::throw::object_is_descendant_of(env, exception, #class) {
+                if !::ez_jni::utils::object_is_descendant_of(env, exception, #class) {
                     return None;
                 }
 
@@ -58,7 +58,7 @@ pub fn from_exception_enum(enm: syn::ItemEnum) -> syn::Result<TokenStream> {
             };
             // Check if Exception is the class that this Variant uses, and construct the variant
             Some(quote! {
-                #_if crate::throw::object_is_descendant_of(env, exception, #class) {
+                #_if ::ez_jni::utils::object_is_descendant_of(env, exception, #class) {
                     Some(Self::#ident #fields)
                 }
             })
@@ -79,7 +79,7 @@ pub fn from_exception_enum(enm: syn::ItemEnum) -> syn::Result<TokenStream> {
     let enm_generics = &enm.generics;
     let enm_generic_params = &enm.generics.params;
     Ok(quote! {
-        impl #enm_generic_params crate::throw::FromException for #enm_ident #enm_generics {
+        impl #enm_generic_params ez_jni::FromException for #enm_ident #enm_generics {
             fn from_exception(env: &mut ::jni::JNIEnv, exception: &::jni::objects::JThrowable) -> Option<Self> {
                 #(#class_checks)* else {
                     None

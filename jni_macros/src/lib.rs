@@ -276,3 +276,39 @@ pub fn from_exception(input: TokenStream) -> TokenStream {
     }
     .into()
 }
+
+#[proc_macro]
+pub fn println(input: TokenStream) -> TokenStream {
+    let input = proc_macro2::TokenStream::from(input);
+    let format = if input.is_empty() {
+        quote!("".to_string())
+    } else {
+        input
+    };
+    
+    quote!{
+        if #[cfg(target_os = "android")] {
+            ::ez_jni::utils::__println(format!(#format), env)
+        } else {
+            ::std::println!(#format)
+        }
+    }.into()
+}
+
+#[proc_macro]
+pub fn eprintln(input: TokenStream) -> TokenStream {
+    let input = proc_macro2::TokenStream::from(input);
+    let format = if input.is_empty() {
+        quote!("".to_string())
+    } else {
+        input
+    };
+    
+    quote!{ ::cfg_if::cfg_if! {
+        if #[cfg(target_os = "android")] {
+            ::ez_jni::utils::__eprintln(format!(#format), env)
+        } else {
+            ::std::eprintln!(#format)
+        }
+    } }.into()
+}
