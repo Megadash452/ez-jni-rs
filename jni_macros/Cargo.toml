@@ -2,6 +2,7 @@
 name = "jni_macros"
 version = "0.1.0"
 edition = "2021"
+description = "Provides macros for the ez-jni crate"
 
 [lib]
 proc-macro = true

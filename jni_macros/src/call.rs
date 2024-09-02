@@ -134,20 +134,20 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
         // Additional check that Object is not NULL
         Return::Assertive(Type::Object(_)) => quote! { {
             #initial
-            crate::throw::__panic_uncaught_exception(env.borrow_mut(), #target, #name);
+                ::ez_jni::__throw::panic_uncaught_exception(env.borrow_mut(), #target, #name);
             let __result = __call #common;
             if __result.is_null() { panic!(#non_null_msg) }
             __result
         } },
         Return::Assertive(_) | Return::Void(_) => quote! { {
             #initial
-            crate::throw::__panic_uncaught_exception(env.borrow_mut(), #target, #name);
+                ::ez_jni::__throw::panic_uncaught_exception(env.borrow_mut(), #target, #name);
             __call #common
         } },
         // Move the result of the method call to an Option if the caller expects that the returned Object could be NULL.
         Return::Option(_) => quote! { {
             #initial
-            crate::throw::__panic_uncaught_exception(env.borrow_mut(), #target, #name);
+                ::ez_jni::__throw::panic_uncaught_exception(env.borrow_mut(), #target, #name);
             let __result = __call #common;
             if __result.is_null() {
                 None
@@ -158,7 +158,7 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
         // Move the result of the method call to a Result if the caller expects that the method could throw.
         Return::Result(ResultType::Assertive(Type::Object(_)), err) => quote! { {
             #initial
-            crate::throw::__catch_exception::<#err>(env.borrow_mut()).map(|_| {
+                ::ez_jni::__throw::catch_exception::<#err>(env.borrow_mut()).map(|_| {
                 let __result = __call #common;
                 if __result.is_null() { panic!(#non_null_msg) }
                 __result
@@ -166,12 +166,12 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
         } },
         Return::Result(ResultType::Assertive(_) | ResultType::Void(_), err) => quote! { {
             #initial
-            crate::throw::__catch_exception::<#err>(env.borrow_mut())
+                ::ez_jni::__throw::catch_exception::<#err>(env.borrow_mut())
                 .map(|_| __call #common)
         } },
         Return::Result(ResultType::Option(_), err) => quote! { {
             #initial
-            crate::throw::__catch_exception::<#err>(env.borrow_mut()).map(|_| {
+                ::ez_jni::__throw::catch_exception::<#err>(env.borrow_mut()).map(|_| {
                 let __result = __call #common;
                 if __result.is_null() {
                     None

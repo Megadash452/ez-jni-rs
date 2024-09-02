@@ -157,26 +157,18 @@ pub fn jni_fn(attr_args: TokenStream, input: TokenStream) -> TokenStream {
     );
     // Wrap the block in a panic catcher
     let unwrapped_block = *input.block;
-    let wrapped_block = quote_spanned! {unwrapped_block.span()=> {
-        crate::throw::__catch_throw(&mut env, move |env| #unwrapped_block)
-    } };
-    input.block = Box::new(match syn::parse2(wrapped_block) {
-        Ok(block) => block,
-        Err(err) => {
-            return error_spanned(
-                err.span(),
-                format!("Error wrapping function block with panic catcher: {err}"),
-            )
-            .into()
-        }
-    });
+    input.block = Box::new(syn::parse2(
+        quote_spanned! {unwrapped_block.span()=> {
+            ::ez_jni::__throw::catch_throw(&mut env, move |env| #unwrapped_block)
+        } }
+    ).unwrap());
 
     quote! { #input }.into()
 }
 
 /// A macro that helps make JNI Method calls less verbose and easier to use in Rust.
 ///
-/// Can be used to call **`static methods`** on Java classes:
+/// Can be used to call **static methods** on Java classes:
 /// ```text
 /// call!(static me.author.ClassName::methodName(int(arg1), java.lang.String(arg2)) -> int)
 ///                 Primitive type parameter --->\_______/  \____________________/     \_/
