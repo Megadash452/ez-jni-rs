@@ -2,7 +2,7 @@ mod call;
 mod exception;
 mod utils;
 
-use call::MethodCall;
+use call::{ConstructorCall, MethodCall};
 use proc_macro::TokenStream;
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
 use std::sync::RwLock;
@@ -246,6 +246,29 @@ pub fn jni_fn(attr_args: TokenStream, input: TokenStream) -> TokenStream {
 pub fn call(input: TokenStream) -> TokenStream {
     let call = syn::parse_macro_input!(input as MethodCall);
     call::jni_call(call).into()
+}
+
+/// Call a Java Class' constructor.
+/// 
+/// Has similar syntax as [*calling a static method*][crate::call!], but there is no *method name* or *return value*.
+/// 
+/// ```no_run
+/// new!(me.author.ClassName(int(arg1), java.lang.String(arg2)))
+/// ```
+/// 
+/// ### Exceptions
+/// 
+/// The constructor can be followed by **`throws`** with a Rust type that *implements [`FromException`]*.
+/// This will make the constructor call return a `Result<JObject, E>` instead,
+/// and the exception will be caught if it occurs.
+/// 
+/// ```no_run
+/// new!(me.author.ClassName() throws String)
+/// ```
+#[proc_macro]
+pub fn new(input: TokenStream) -> TokenStream {
+    let call = syn::parse_macro_input!(input as ConstructorCall);
+    call::jni_call_constructor(call).into()
 }
 
 #[proc_macro_derive(FromException, attributes(class, field))]

@@ -15,49 +15,9 @@ use crate::utils::ClassPath;
 /// Processes input for macro call [super::call!].
 pub fn jni_call(call: MethodCall) -> TokenStream {
     let name = call.method_name.to_string();
-
-    let signature = {
-        let mut buf = String::from("(");
-        for param in &call.parameters {
-            // Array types in signature have an opening bracket prepended to the type
-            if param.is_array() {
-                buf.push('[');
-            }
-            buf.push_str(&param.ty().sig_type());
-        }
-        buf.push(')');
-        buf.push_str(&match &call.return_type {
-            Return::Result(ResultType::Void(_), _) | Return::Void(_) => "V".to_string(),
-            Return::Assertive(ty) | Return::Result(ResultType::Assertive(ty), _) => ty.sig_type(),
-            Return::Option(class) | Return::Result(ResultType::Option(class), _) => class.sig_type()
-        });
-        LitStr::new(&buf, Span::call_site())
-    };
-
-    // Put the Value of the parameters in variables to prevent them being dropped (since JValue takes references),
-    // and to mitigate borrow checker error if the param value borrows env (since the call itself borrows &mut env).
-    let param_vars = call
-        .parameters
-        .iter()
-        .enumerate()
-        .map(|(i, param)| {
-            let value = param.value();
-            let var_name = Ident::new(&format!("__param_{i}"), value.span());
-            // Parameters of type object must always be passed by reference.
-            if param.is_primitive() {
-                quote_spanned! {value.span()=> let #var_name = #value; }
-            } else {
-                quote_spanned! {value.span()=> let #var_name = &(#value); }
-            }
-        })
-        .collect::<proc_macro2::TokenStream>();
-    // Parameters are just the variable names
-    let parameters = {
-        let params = call.parameters.iter().enumerate().map(|(i, param)| {
-            param.variant(Ident::new(&format!("__param_{i}"), param.value().span()))
-        });
-        quote! { &[ #( #params ),* ] }
-    };
+    let signature = gen_signature(call.parameters.iter(), &call.return_type);
+    let param_vars = gen_arg_vars_defs(call.parameters.iter());
+    let arguments = gen_arguments(call.parameters.iter());
 
     // Common checks done by all Return variants, such as .l() to make the result into a JObject.
     let common = {
@@ -89,10 +49,10 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
     let jni_call = match &call.call_type {
         Either::Left(StaticMethod(class)) => {
             let class = LitStr::new(&class.to_string_with_slashes(), class.span());
-            quote! { env.call_static_method(#class, #name, #signature, #parameters) }
+            quote! { env.call_static_method(#class, #name, #signature, #arguments) }
         }
         Either::Right(ObjectMethod(object)) => quote! {
-            env.call_method(&(#object), #name, #signature, #parameters)
+            env.call_method(&(#object), #name, #signature, #arguments)
         },
     };
 
@@ -139,6 +99,36 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
     }
 }
 
+/// Processes input for macro call [super::new!].
+pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
+    let class = call.class.to_string_with_slashes();
+    let signature = gen_signature(call.parameters.iter(), &Return::Void(Ident::new("void", Span::call_site())));
+    let param_vars = gen_arg_vars_defs(call.parameters.iter());
+    let arguments = gen_arguments(call.parameters.iter());
+    let method_name = format!("constructor{}", signature.value());
+    let call_failed_msg = format!("Failed to call constructor {} on {}: {{err}}", signature.value(), class.to_token_stream());
+    
+    // The Initial JNI call, before any types or errors are checked
+    let initial = quote! {
+        use ::std::borrow::BorrowMut as _;
+        #param_vars
+        let __call = env.new_object(#class, #signature, #arguments);
+    };
+    match call.err_type {
+        Some(err) => quote! { {
+            #initial
+            ::ez_jni::__throw::catch::<#err>(env.borrow_mut())
+                .map(|_| __call.unwrap_or_else(|err| panic!(#call_failed_msg)))
+        } },
+        None => quote! { {
+            #initial
+            ::ez_jni::__throw::panic_uncaught_exception(env.borrow_mut(), ::either::Either::Left(#class), #method_name);
+            __call
+                .unwrap_or_else(|err| panic!(#call_failed_msg))
+        } }
+    }
+}
+
 /// Define a JNI call to a Java method with parameters with expected types, and an expected return type.
 ///
 /// See [`crate::call`] for an example.
@@ -165,6 +155,37 @@ impl Parse for MethodCall {
                 input.parse::<Token![->]>()?;
                 input.parse()?
             },
+        })
+    }
+}
+
+/// Define a JNI call to a Java Class' constructor.
+/// 
+/// See [`crate::new`] for an example.
+pub struct ConstructorCall {
+    pub class: ClassPath,
+    pub parameters: Punctuated<Parameter, Token![,]>,
+    pub err_type: Option<syn::Path>
+}
+impl Parse for ConstructorCall {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        Ok(Self {
+            class: input.parse()?,
+            parameters: {
+                let arg_tokens;
+                parenthesized!(arg_tokens in input);
+                Punctuated::parse_terminated(&arg_tokens)?
+            },
+            err_type: {
+                let fork = input.fork();
+                match fork.parse::<Ident>() {
+                    Ok(ident) if ident.to_string() == "throws" => {
+                        input.advance_to(&fork);
+                        Some(input.parse()?)
+                    },
+                    _ => None
+                }
+            }
         })
     }
 }
@@ -736,4 +757,58 @@ fn first_char_uppercase(s: String) -> String {
         Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
         None => String::new(),
     }
+}
+
+/// Generate *variable definitions* for the arguments that will be passed to the JNI call.
+/// 
+/// Defines 1 variable for each argument,
+/// where the *variable's name* is `__param_i` and *i* is the 0-based index of the argument.
+/// 
+/// Use [`gen_params()`] to put the resulting variables in the JNI call.
+/// 
+/// Putting the arguments in variables prevents them from being dropped (since JValue takes references),
+/// and mitigates borrow checker error if the argument expression *borrows env* (since the call itself borrows &mut env).
+fn gen_arg_vars_defs<'a>(params: impl Iterator<Item = &'a Parameter>) -> TokenStream {
+    params
+        .enumerate()
+        .map(|(i, param)| {
+            let value = param.value();
+            let var_name = Ident::new(&format!("__param_{i}"), value.span());
+            // Parameters of type object must always be passed by reference.
+            if param.is_primitive() {
+                quote_spanned! {value.span()=> let #var_name = #value; }
+            } else {
+                quote_spanned! {value.span()=> let #var_name = &(#value); }
+            }
+        })
+        .collect()
+}
+/// Generates the argument array that will be passed to the JNI call,
+/// but the values are just the variables generated by [`gen_arg_vars_defs()`].
+fn gen_arguments<'a>(params: impl Iterator<Item = &'a Parameter>) -> TokenStream {
+    let params = params
+        .enumerate()
+        .map(|(i, param)| {
+            param.variant(Ident::new(&format!("__param_{i}"), param.value().span()))
+        });
+    quote! { &[ #( #params ),* ] }
+}
+
+/// Generate the signature string for a JNI call.
+fn gen_signature<'a>(params: impl Iterator<Item = &'a Parameter>, return_type: &Return) -> LitStr {
+    let mut buf = String::from("(");
+    for param in params {
+        // Array types in signature have an opening bracket prepended to the type
+        if param.is_array() {
+            buf.push('[');
+        }
+        buf.push_str(&param.ty().sig_type());
+    }
+    buf.push(')');
+    buf.push_str(&match return_type {
+        Return::Result(ResultType::Void(_), _) | Return::Void(_) => "V".to_string(),
+        Return::Assertive(ty) | Return::Result(ResultType::Assertive(ty), _) => ty.sig_type(),
+        Return::Option(class) | Return::Result(ResultType::Option(class), _) => class.sig_type()
+    });
+    LitStr::new(&buf, Span::call_site())
 }

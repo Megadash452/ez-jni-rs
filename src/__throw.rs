@@ -75,6 +75,8 @@ fn throw_panic(env: &mut JNIEnv, payload: Box<dyn Any + Send>) {
         (None, Some(info)) => format!("Rust panicked at {info}, but could not obtain message"),
         (None, None) => "Rust had a panic! but could not obtain any panic data".to_string(),
     };
+    // clear any exceptions before throwing the new exception
+    let _ = env.exception_clear();
     let _ = env.throw_new("java/lang/Exception", msg);
 }
 

@@ -3,6 +3,7 @@
 pub mod __throw;
 #[macro_use]
 pub mod utils;
+pub mod object;
 extern crate self as ez_jni;
 
 use jni::objects::JThrowable;
@@ -10,8 +11,35 @@ use jni::JNIEnv;
 pub use jni_macros::*;
 use utils::{get_string, object_is_descendant_of};
 
-/// A trait used to construct **Error Enums** from an `Exception` thrown from Java.
-/// The conversion from `Exception` to `Self` will succe
+/// Allows converting *Java Exceptions* to Rust types that allow for better error handling.
+/// 
+/// ### Derive
+/// This trait has a **derive macro** available from [`jni_macros`].
+/// Use it on *structs* to indicate that only 1 specific Exception class is expected.
+/// Use it on *enums* to expect different Exception classes (one for each variant).
+/// 
+/// **Attributes**:
+/// - **`class`**: Specifies the *Class Path* of the Exception that the *struct or enum variant* expects.
+/// - **`field`**: Assigns the field of the *struct* with the result of a *Java method call* or *public member*. (not yet implemented)
+/// 
+/// ```
+/// #[derive(FromException)]
+/// #[class(java.lang.Exception)]
+/// struct MyError {
+///     #[field(exception.getMessage() -> java.lang.String)]
+///     msg: String
+/// }
+/// 
+/// #[derive(FromException)]
+/// enum MyError {
+///     #[class(java.lang.NullPointerException)]
+///     Null,
+///     #[class(me.author.ElementExists)]
+///     AlreadyExists(#[field(exception.getName() -> java.lang.String)] name: String),
+///     #[class(java.lang.Exception)]
+///     Other(#[field(exception.getMessage() -> java.lang.String)] msg: String),
+/// }
+/// ```
 pub trait FromException
 where Self: Sized {
     fn from_exception(env: &mut JNIEnv, exception: &JThrowable) -> Option<Self>;
