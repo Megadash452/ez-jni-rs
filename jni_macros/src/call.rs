@@ -265,7 +265,7 @@ impl FromStr for RustPrimitive {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum JavaPrimitive {
-    Byte, Bool, Char,
+    Byte, Boolean, Char,
     Short, Int, Long,
     Float, Double
 }
@@ -273,14 +273,14 @@ impl JavaPrimitive {
     /// Returns the character/letter (lowercase) that is used to convert from JValue to a concrete type.
     pub fn sig_char(self) -> char {
         match self {
-            Self::Byte   => 'b',
-            Self::Bool   => 'z',
-            Self::Char   => 'c',
-            Self::Short  => 's',
-            Self::Int    => 'i',
-            Self::Long   => 'j',
-            Self::Float  => 'f',
-            Self::Double => 'd',
+            Self::Byte    => 'b',
+            Self::Boolean => 'z',
+            Self::Char    => 'c',
+            Self::Short   => 's',
+            Self::Int     => 'i',
+            Self::Long    => 'j',
+            Self::Float   => 'f',
+            Self::Double  => 'd',
         }
     }
 }
@@ -288,14 +288,14 @@ impl FromStr for JavaPrimitive {
     type Err = ();
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "byte"   => Ok(Self::Byte),
-            "bool"   => Ok(Self::Bool),
-            "char"   => Ok(Self::Char),
-            "short"  => Ok(Self::Short),
-            "int"    => Ok(Self::Int),
-            "long"   => Ok(Self::Long),
-            "float"  => Ok(Self::Float),
-            "double" => Ok(Self::Double),
+            "byte"    => Ok(Self::Byte),
+            "boolean" => Ok(Self::Boolean),
+            "char"    => Ok(Self::Char),
+            "short"   => Ok(Self::Short),
+            "int"     => Ok(Self::Int),
+            "long"    => Ok(Self::Long),
+            "float"   => Ok(Self::Float),
+            "double"  => Ok(Self::Double),
             _ => Err(()),
         }
     }
@@ -303,21 +303,21 @@ impl FromStr for JavaPrimitive {
 impl Display for JavaPrimitive {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Self::Byte   => "byte",
-            Self::Bool   => "bool",
-            Self::Char   => "char",
-            Self::Short  => "short",
-            Self::Int    => "int",
-            Self::Long   => "long",
-            Self::Float  => "float",
-            Self::Double => "double",
+            Self::Byte    => "byte",
+            Self::Boolean => "boolean",
+            Self::Char    => "char",
+            Self::Short   => "short",
+            Self::Int     => "int",
+            Self::Long    => "long",
+            Self::Float   => "float",
+            Self::Double  => "double",
         })
     }
 }
 impl From<RustPrimitive> for JavaPrimitive {
     fn from(value: RustPrimitive) -> Self {
         match value {
-            RustPrimitive::Bool => JavaPrimitive::Bool,
+            RustPrimitive::Bool => JavaPrimitive::Boolean,
             RustPrimitive::Char => JavaPrimitive::Char,
             RustPrimitive::U8   => JavaPrimitive::Byte,
             RustPrimitive::I8   => JavaPrimitive::Byte,
@@ -376,7 +376,7 @@ impl Parse for Type {
                 input.advance_to(&fork);
                 Ok(Self::RustPrimitive { ident, ty })
             },
-            // JavaPrimitive::Char and Bool will never be constructued here because the RustPrimitive takes priority
+            // JavaPrimitive::Char will never be constructued here because the RustPrimitive takes priority
             None => match JavaPrimitive::from_str(&ident_str).ok() {
                 Some(ty) => {
                     input.advance_to(&fork);
@@ -436,57 +436,67 @@ impl Parameter {
         }
     }
 
-    /// Returns the expression that will be put inside the `JValue::Variant(&(expr))` in the parameter list, a.k.a the *parameter's value*.
+    /// Returns the expression that will be put inside the `JValue::Variant(expr)` in the parameter list, a.k.a the *parameter's value*.
     pub fn value(&self) -> TokenStream {
-        // Does a lot of checking for **bool** because JNI treats it differently from other types
+        fn primitive_conversion(ty: Either<RustPrimitive, JavaPrimitive>, value: TokenStream) -> Option<TokenStream> {
+            match ty {
+                // Transmute unsigned integers
+                Either::Left(ty) if ty.is_unsigned() => Some(quote_spanned!(value.span()=> unsafe { ::std::mem::transmute(#value) })),
+                // Bool must be cast to u8
+                Either::Right(JavaPrimitive::Boolean)
+                | Either::Left(RustPrimitive::Bool) => Some(quote_spanned!(value.span()=> #value as u8)),
+                // Char must be encoded to UTF-16 (will panic! if the conversion fails)
+                Either::Right(JavaPrimitive::Char)
+                | Either::Left(RustPrimitive::Char) => Some(quote_spanned!(value.span()=> #value.encode_utf16(&mut [0;1])[0])), 
+                _ => None,
+            }
+        }
+        
         match self {
             Self::Single { ty, value } => match ty {
-                // Bool must be cast to u8
-                Type::JavaPrimitive { ty: JavaPrimitive::Bool, .. }
-                | Type::RustPrimitive { ty: RustPrimitive::Bool, .. } => quote_spanned! {value.span()=> #value as u8 },
-                _ => value.clone(),
+                Type::JavaPrimitive { ty, .. } => primitive_conversion(Either::Right(*ty), value.clone())
+                    .unwrap_or_else(|| value.clone()),
+                Type::RustPrimitive { ty, .. } => primitive_conversion(Either::Left(*ty), value.clone())
+                    .unwrap_or_else(|| value.clone()),
+                Type::Object(_) => value.clone(),
             },
             Self::Array { value, .. } => value.clone(),
             // Create an Java Array from a Rust array literal
             Self::ArrayLiteral { ty, array } => {
                 let len = LitInt::new(&array.iter().count().to_string(), array.span());
-
-                let primitive_array = |ident: &Ident, ty: JavaPrimitive| {
-                    // Bool must be changed to boolean
-                    let ident = match ty {
-                        JavaPrimitive::Bool => &Ident::new("boolean", ident.span()),
-                        _ => ident,
+                
+                let primitive_array = |ty: Either<RustPrimitive, JavaPrimitive>| {
+                    let values = match primitive_conversion(ty, quote!(v)) {
+                        Some(conversion) => quote_spanned!(array.span()=> &[#array].map(|v| #conversion)),
+                        None => quote_spanned!(array.span()=> &[#array])
                     };
-                    // Values of Boolean array must be cast to u8
-                    let values = array.iter();
-                    let values = match ty {
-                        JavaPrimitive::Bool => quote! { #(#values as u8),* },
-                        _ => quote! { #(#values),* },
-                    };
-                    let new_array_fn = Ident::new(&format!("new_{ident}_array"), array.span());
+                    let ty = ty.right_or_else(|ty| JavaPrimitive::from(ty));
+                    // Can only use JavaPrimitive from here on
+                    
+                    let new_array_fn = Ident::new(&format!("new_{ty}_array"), array.span());
                     let new_array_err = LitStr::new(
-                        &format!("Failed to create Java {ident} array: {{err}}"),
+                        &format!("Failed to create Java {ty} array: {{err}}"),
                         array.span(),
                     );
                     let fill_array_fn =
-                        Ident::new(&format!("set_{ident}_array_region"), array.span());
+                        Ident::new(&format!("set_{ty}_array_region"), array.span());
                     let fill_array_err = LitStr::new(
-                        &format!("Error filling {ident} array: {{err}}"),
+                        &format!("Error filling {ty} array: {{err}}"),
                         array.span(),
                     );
                     // Create a Java array Object from the array literal
                     quote_spanned! {array.span()=> {
                         let array = env.#new_array_fn(#len)
                             .inspect_err(|err| println!(#new_array_err)).unwrap();
-                        env.#fill_array_fn(&array, 0, &[ #values ])
+                        env.#fill_array_fn(&array, 0, #values)
                             .inspect_err(|err| println!(#fill_array_err)).unwrap();
                         ::jni::objects::JObject::from(array)
                     } }
                 };
 
                 match ty {
-                    Type::JavaPrimitive { ident, ty } => primitive_array(ident, *ty),
-                    Type::RustPrimitive { ident, ty } => primitive_array(ident, JavaPrimitive::from(*ty)),
+                    Type::JavaPrimitive { ty, .. } => primitive_array(Either::Right(*ty)),
+                    Type::RustPrimitive { ty, .. } => primitive_array(Either::Left(*ty)),
                     Type::Object(class) => {
                         let new_array_err = LitStr::new(
                             &format!("Failed to create Java Object \"{}\" array: {{err}}", class.to_token_stream()),
@@ -500,10 +510,11 @@ impl Parameter {
                         // Fill the array
                         let mut elements = quote! {};
                         for (i, element) in array.iter().enumerate() {
-                            elements = quote! { #elements
+                            let element = quote_spanned! {array[i].span()=>
                                 env.set_object_array_element(&array, #i, #element)
-                                    .inspect_err(|err| println!(#set_val_err)).unwrap();
-                            }
+                                    .inspect_err(|err| println!(#set_val_err)).unwrap()
+                            };
+                            elements = quote! { #elements #element }
                         }
                         // Return the array
                         quote_spanned! {array.span()=> {
@@ -520,13 +531,21 @@ impl Parameter {
     /// Conver the parameter to a `Jvalue` enum variant that will be used in the JNI call parameter list.
     /// The variant will have one of the parameter variables as the inner value.
     pub fn variant(&self, var_name: Ident) -> TokenStream {
+        fn primitive_variant(ty: JavaPrimitive, span: Span) -> TokenStream {
+            Ident::new(
+                &if ty == JavaPrimitive::Boolean {
+                    "Bool".to_string()
+                } else {
+                    first_char_uppercase(ty.to_string())
+                },
+            span)
+                .to_token_stream()
+        }
+        
         let (ty_span, ty_variant) = match self {
             Self::Single { ty, .. } => match ty {
-                Type::JavaPrimitive { ident, .. } | Type::RustPrimitive { ident, .. } => (
-                    ident.span(),
-                    Ident::new(&first_char_uppercase(ty.to_string()), ident.span())
-                        .to_token_stream(),
-                ),
+                Type::JavaPrimitive { ident, ty } => (ident.span(), primitive_variant(*ty, ident.span())),
+                Type::RustPrimitive { ident, ty } => (ident.span(), primitive_variant(JavaPrimitive::from(*ty), ident.span())),
                 Type::Object(class) => (class.span(), quote!(Object)),
             },
             Self::Array { ty, .. } | Self::ArrayLiteral { ty, .. } => (ty.span(), quote!(Object)),
