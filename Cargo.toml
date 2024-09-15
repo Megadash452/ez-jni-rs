@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2021"
 description = "Macros and functions that make using Java in rust feel natural"
 repository = "https://github.com/Megadash452/ez-jni-rs"
-license = "MIT"
 license-file = "LICENSE"
 
 [dependencies]
@@ -13,3 +12,6 @@ either = "1.13.0"
 jni = { version = "0.21", default-features = false }
 jni_macros = { path = "./jni_macros" }
 thiserror = "1.0.63"
+
+[dev-dependencies]
+jni = { version = "0.21.1", features = ["invocation"] }
