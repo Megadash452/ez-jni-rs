@@ -1,5 +1,4 @@
-use jni::{objects::{JObject, JString}, JNIEnv};
-use jni_macros::call;
+use jni::{objects::JString, JNIEnv};
 
 #[cfg(target_os = "android")]
 pub use android::*;
@@ -43,30 +42,4 @@ pub fn get_nullable_string(arg: JString, env: &mut JNIEnv) -> Option<String> {
             .ok()
             .map(String::from)
     }
-}
-
-/// Check if an Object's class is **class**, or if it **extends** (is descendant of) **class**.
-/// 
-/// Use this to convert an Object into a rust type, such as in [`FromException`][crate::FromException].
-pub fn object_is_descendant_of(env: &mut JNIEnv, obj: &JObject, class: &str) -> bool {
-    // First check if the top class of obj is `class`.
-    let obj_class = env.get_object_class(obj)
-        .expect("Failed to get Object's class");
-    let obj_class_name = get_string(call!(obj_class.getName() -> java.lang.String), env);
-    if obj_class_name == class {
-        return true
-    }
-    
-    let mut current = obj_class;
-    while let Some(super_class) = env.get_superclass(&current)
-        .expect("Failed to get class' super class")
-    {
-        let class_name = get_string(call!(super_class.getName() -> java.lang.String), env);
-        if class_name == class {
-            return true
-        }
-        current = super_class
-    }
-    
-    false
 }

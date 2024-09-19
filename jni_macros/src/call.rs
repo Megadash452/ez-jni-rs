@@ -9,8 +9,7 @@ use syn::{
     spanned::Spanned,
     Expr, Ident, LitInt, LitStr, Token,
 };
-
-use crate::utils::ClassPath;
+use crate::utils::{first_char_uppercase, ClassPath, JavaPrimitive, RustPrimitive};
 
 /// Processes input for macro call [super::call!].
 pub fn jni_call(call: MethodCall) -> TokenStream {
@@ -224,112 +223,6 @@ impl Parse for ObjectMethod {
         };
         input.parse::<Token![.]>()?;
         Ok(Self(expr))
-    }
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum RustPrimitive {
-    Bool, Char,
-    U8, U16, U32, U64,
-    I8, I16, I32, I64,
-    F32, F64
-}
-impl RustPrimitive {
-    pub fn is_unsigned(self) -> bool {
-        match self {
-            Self::U8 | Self::U16 | Self::U32 | Self::U64 => true,
-            _ => false,
-        }
-    }
-}
-impl FromStr for RustPrimitive {
-    type Err = ();
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "bool" => Ok(Self::Bool),
-            "char" => Ok(Self::Char),
-            "u8"   => Ok(Self::U8),
-            "i8"   => Ok(Self::I8),
-            "u16"  => Ok(Self::U16),
-            "i16"  => Ok(Self::I16),
-            "u32"  => Ok(Self::U32),
-            "i32"  => Ok(Self::I32),
-            "u64"  => Ok(Self::U64),
-            "i64"  => Ok(Self::I64),
-            "f32"  => Ok(Self::F32),
-            "f64"  => Ok(Self::F64),
-            _ => Err(()),
-        }
-    }
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum JavaPrimitive {
-    Byte, Boolean, Char,
-    Short, Int, Long,
-    Float, Double
-}
-impl JavaPrimitive {
-    /// Returns the character/letter (lowercase) that is used to convert from JValue to a concrete type.
-    pub fn sig_char(self) -> char {
-        match self {
-            Self::Byte    => 'b',
-            Self::Boolean => 'z',
-            Self::Char    => 'c',
-            Self::Short   => 's',
-            Self::Int     => 'i',
-            Self::Long    => 'j',
-            Self::Float   => 'f',
-            Self::Double  => 'd',
-        }
-    }
-}
-impl FromStr for JavaPrimitive {
-    type Err = ();
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "byte"    => Ok(Self::Byte),
-            "boolean" => Ok(Self::Boolean),
-            "char"    => Ok(Self::Char),
-            "short"   => Ok(Self::Short),
-            "int"     => Ok(Self::Int),
-            "long"    => Ok(Self::Long),
-            "float"   => Ok(Self::Float),
-            "double"  => Ok(Self::Double),
-            _ => Err(()),
-        }
-    }
-}
-impl Display for JavaPrimitive {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Byte    => "byte",
-            Self::Boolean => "boolean",
-            Self::Char    => "char",
-            Self::Short   => "short",
-            Self::Int     => "int",
-            Self::Long    => "long",
-            Self::Float   => "float",
-            Self::Double  => "double",
-        })
-    }
-}
-impl From<RustPrimitive> for JavaPrimitive {
-    fn from(value: RustPrimitive) -> Self {
-        match value {
-            RustPrimitive::Bool => JavaPrimitive::Boolean,
-            RustPrimitive::Char => JavaPrimitive::Char,
-            RustPrimitive::U8   => JavaPrimitive::Byte,
-            RustPrimitive::I8   => JavaPrimitive::Byte,
-            RustPrimitive::U16  => JavaPrimitive::Short,
-            RustPrimitive::I16  => JavaPrimitive::Short,
-            RustPrimitive::U32  => JavaPrimitive::Int,
-            RustPrimitive::I32  => JavaPrimitive::Int,
-            RustPrimitive::U64  => JavaPrimitive::Long,
-            RustPrimitive::I64  => JavaPrimitive::Long,
-            RustPrimitive::F32  => JavaPrimitive::Float,
-            RustPrimitive::F64  => JavaPrimitive::Double,
-        }
     }
 }
 
@@ -678,21 +571,9 @@ impl Return {
     pub fn special_case_conversions(&self, value: TokenStream) -> Option<TokenStream> {
         match self {
             // Special cases for RustPrimitives
-            Return::Assertive(Type::RustPrimitive { ty, ident })
-            | Return::Result(ResultType::Assertive(Type::RustPrimitive { ty, ident }), _)
-                => if ty.is_unsigned() {
-                    // Transmute to the unsigned type
-                    Some(quote! { unsafe { ::std::mem::transmute::<_, #ident>(#value) } })
-                } else if *ty == RustPrimitive::Char {
-                    // Decode UTF-16
-                    Some(quote! {
-                        char::decode_utf16(Some(#value))
-                            .next().unwrap()
-                            .unwrap_or(char::REPLACEMENT_CHARACTER)
-                    })
-                } else {
-                    None
-                },
+            Return::Assertive(Type::RustPrimitive { ty, .. })
+            | Return::Result(ResultType::Assertive(Type::RustPrimitive { ty, .. }), _)
+                => ty.special_case_conversion(value),
             // Special cases for Java Objects
             Return::Assertive(Type::Object(class))
             | Return::Option(class)
@@ -766,15 +647,6 @@ impl Parse for ResultType {
             // The return type did not start with Ident... weird, but let's continue
             Err(_) => Self::Assertive(input.parse()?),
         })
-    }
-}
-
-/// Convert the first letter of a String into uppercase
-fn first_char_uppercase(s: String) -> String {
-    let mut c = s.chars();
-    match c.next() {
-        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-        None => String::new(),
     }
 }
 

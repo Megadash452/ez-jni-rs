@@ -271,6 +271,7 @@ pub fn new(input: TokenStream) -> TokenStream {
     call::jni_call_constructor(call).into()
 }
 
+/// See [`ez_jni::FromException`].
 #[proc_macro_derive(FromException, attributes(class, field))]
 pub fn from_exception(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
@@ -296,8 +297,7 @@ pub fn from_exception(input: TokenStream) -> TokenStream {
         })
         .unwrap_or_else(|err| err.to_compile_error()),
         syn::Data::Union(_) => error("Unions not supported"),
-    }
-    .into()
+    }.into()
 }
 
 /// Print output. See [`std::println!`].

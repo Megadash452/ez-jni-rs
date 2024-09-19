@@ -9,7 +9,8 @@ extern crate self as ez_jni;
 use jni::objects::JThrowable;
 use jni::JNIEnv;
 pub use jni_macros::*;
-use utils::{get_string, object_is_descendant_of};
+use object::FromObjectError;
+use utils::get_string;
 
 /// Allows converting *Java Exceptions* to Rust types that allow for better error handling.
 /// 
@@ -26,7 +27,7 @@ use utils::{get_string, object_is_descendant_of};
 /// #[derive(FromException)]
 /// #[class(java.lang.Exception)]
 /// struct MyError {
-///     #[field(exception.getMessage() -> java.lang.String)]
+///     #[field(call = getMessage)]
 ///     msg: String
 /// }
 /// 
@@ -35,24 +36,24 @@ use utils::{get_string, object_is_descendant_of};
 ///     #[class(java.lang.NullPointerException)]
 ///     Null,
 ///     #[class(me.author.ElementExists)]
-///     AlreadyExists(#[field(exception.getName() -> java.lang.String)] name: String),
+///     AlreadyExists(#[field(call = getMessage)] name: String),
 ///     #[class(java.lang.Exception)]
-///     Other(#[field(exception.getMessage() -> java.lang.String)] msg: String),
+///     Other(#[field(call = getMessage)] msg: String),
 /// }
 /// ```
-pub trait FromException
+pub trait FromException<'env>
 where Self: Sized {
-    fn from_exception(env: &mut JNIEnv, exception: &JThrowable) -> Option<Self>;
+    fn from_exception(env: &mut JNIEnv<'env>, exception: &JThrowable) -> Result<Self, FromObjectError>;
 }
 
-impl FromException for String {
-    fn from_exception(env: &mut jni::JNIEnv, exception: &jni::objects::JThrowable) -> Option<Self> {
-        Some(get_string(call!(exception.getMessage() -> java.lang.String), env))
+impl FromException<'_> for String {
+    fn from_exception(env: &mut jni::JNIEnv, exception: &jni::objects::JThrowable) -> Result<Self, FromObjectError> {
+        Ok(get_string(call!(exception.getMessage() -> java.lang.String), env))
     }
 }
 
-impl FromException for std::io::Error {
-    fn from_exception(env: &mut JNIEnv, exception: &JThrowable) -> Option<Self> {
+impl FromException<'_> for std::io::Error {
+    fn from_exception(env: &mut JNIEnv, exception: &JThrowable) -> Result<Self, FromObjectError> {
         use std::io;
         let msg = get_string(call!(exception.getMessage() -> java.lang.String), env);
         
@@ -87,18 +88,18 @@ impl FromException for std::io::Error {
         
         let exception_class = env.get_object_class(exception)
             .expect("Failed to get Exception's class");
-        let exception_class = get_string(call!(exception_class.getName() -> java.lang.String), env);
+        let exception_class_str = get_string(call!(exception_class.getName() -> java.lang.String), env);
         
         for (class, error_kind) in map {
-            if class == exception_class {
-                return Some(Self::new(error_kind, msg))
+            if env.is_assignable_from(class, &exception_class).unwrap() {
+                return Ok(Self::new(error_kind, msg))
             }
         }
         
-        if object_is_descendant_of(env, exception, "java/io/IOException") {
-            return Some(Self::other(format!("{exception_class}: {msg}")));
+        if env.is_assignable_from("java/io/IOException", &exception_class).unwrap() {
+            return Ok(Self::other(format!("{exception_class_str}: {msg}")));
         }
         
-        None
+        Err(FromObjectError::ClassMismatch { obj_class: exception_class_str, target_class: "java/io/IOException" })
     }
 }

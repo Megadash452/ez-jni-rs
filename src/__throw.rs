@@ -88,12 +88,12 @@ fn throw_panic(env: &mut JNIEnv, payload: Box<dyn Any + Send>) {
 /// in a similar way to how [`panic_uncaught_exception()`] does it.
 ///
 /// This function is used by [jni_macros::call!].
-pub fn catch<E: FromException>(env: &mut JNIEnv) -> Result<(), E> {
+pub fn catch<'env, E: FromException<'env>>(env: &mut JNIEnv<'env>) -> Result<(), E> {
     match catch_exception(env) {
         Some(ex) => match E::from_exception(env, &ex) {
-            Some(e) => Err(e),
-            None => {
-                eprintln!("Attempted to catch an exception, but failed to convert it to a concrete type.");
+            Ok(e) => Err(e),
+            Err(err) => {
+                eprintln!("Attempted to catch an exception, but failed to convert it to a concrete type:\n{err}");
                 env.throw(ex).unwrap();
                 ::std::panic::panic_any(());
             }
