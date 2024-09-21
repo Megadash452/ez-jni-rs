@@ -4,10 +4,7 @@ use itertools::Itertools;
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt as _};
 use syn::{
-    parse::Parse,
-    punctuated::{Pair, Punctuated},
-    spanned::Spanned as _,
-    Ident, Token,
+    parse::Parse, punctuated::{Pair, Punctuated}, spanned::Spanned as _, Ident, LitStr, Token
 };
 
 /// Create an error from a **msg** to return in a proc_macro.
@@ -20,6 +17,21 @@ pub fn error_spanned(span: Span, err: impl AsRef<str>) -> TokenStream {
     let err = err.as_ref();
     quote_spanned! {span=>
         compile_error!(#err);
+    }
+}
+
+/// Collect multiple syn errors into one error.
+pub fn merge_errors(mut errors: Vec<syn::Error>) -> syn::Result<()> {
+    // Check if there are errors
+    if let Some(last) = errors.pop() /*Order doesn't matter*/ {
+        let errors = errors.into_iter()
+            .fold(last, |mut errors, err| {
+                errors.combine(err);
+                errors
+            });
+        Err(errors)
+    } else {
+        Ok(())
     }
 }
 
@@ -44,10 +56,6 @@ pub struct ClassPath {
     pub class: Ident,
 }
 impl ClassPath {
-    /// Returns the Type that is used in the signature of the method call. e.g. `Ljava/lang/String;`
-    pub fn sig_type(&self) -> String {
-        format!("L{};", self.to_string_with_slashes())
-    }
     pub fn span(&self) -> Span {
         let mut tt = TokenStream::new();
         tt.append_all(self.packages.iter().map(|(t, p)| Pair::new(t, Some(p))));
@@ -66,6 +74,14 @@ impl ClassPath {
             "/".to_string(),
         )
         .collect::<String>()
+    }
+}
+impl SigType for ClassPath {
+    fn sig_char(&self) -> Ident {
+        Ident::new("l", self.span())
+    }
+    fn sig_type(&self) -> LitStr {
+        LitStr::new(&format!("L{};", self.to_string_with_slashes()), self.span())
     }
 }
 impl Parse for ClassPath {
@@ -186,10 +202,9 @@ pub enum JavaPrimitive {
     Short, Int, Long,
     Float, Double
 }
-impl JavaPrimitive {
-    /// Returns the character/letter (lowercase) that is used to convert from JValue to a concrete type.
-    pub fn sig_char(self) -> char {
-        match self {
+impl SigType for JavaPrimitive {
+    fn sig_char(&self) -> Ident {
+        let c = match self {
             Self::Byte    => 'b',
             Self::Boolean => 'z',
             Self::Char    => 'c',
@@ -198,7 +213,21 @@ impl JavaPrimitive {
             Self::Long    => 'j',
             Self::Float   => 'f',
             Self::Double  => 'd',
-        }
+        };
+        Ident::new(&c.to_string(), Span::call_site())
+    }
+    fn sig_type(&self) -> LitStr {
+        LitStr::new(
+            self.sig_char()
+                .to_string()
+                .chars()
+                .next()
+                .unwrap()
+                .to_uppercase()
+                .collect::<String>()
+                .as_str(),
+            Span::call_site()
+        )
     }
 }
 impl FromStr for JavaPrimitive {
@@ -248,4 +277,15 @@ impl From<RustPrimitive> for JavaPrimitive {
             RustPrimitive::F64  => JavaPrimitive::Double,
         }
     }
+}
+
+/// Indicates that a type is data about Java Type signature, such as a *parameter type* or *return type*
+pub trait SigType {
+    /// The name of the function that maps from a `JValue` to a concrete type.
+    /// This will always be a single *lowercase character*.
+    /// Must be one of the single-letter functions found in [`JValueGen`][https://docs.rs/jni/latest/jni/objects/enum.JValueGen.html#method.l].
+    fn sig_char(&self) -> Ident;
+    /// The Type that is used in the signature of the method call. e.g. `"V"` or `"Ljava/lang/String;"`.
+    /// It is the *uppercase [`SigType::sig_char`]*, and if it is `L` it is followed by the ClassPath and a `;`.
+    fn sig_type(&self) -> LitStr;
 }

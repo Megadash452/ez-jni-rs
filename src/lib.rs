@@ -21,29 +21,36 @@ use utils::get_string;
 /// 
 /// **Attributes**:
 /// - **`class`**: Specifies the *Class Path* of the Exception that the *struct or enum variant* expects.
-/// - **`field`**: Assigns the field of the *struct* with the result of a *Java method call* or *public member*. (not yet implemented)
+/// - **`field`**: Use it on the struct's fields to assign their values by accessing an *Object's members*.
+///   By default, the struct's field name and type is used to produce the JNI call.
+///   Note: **name** and **call** mutually exclusive, and either one MUST be used if the field belongs to a *Tuple struct*.
+///   - **`name`**: Use a different name for the Object's field lookup instead of the field's name.
+///     Mutually exclusive with `call`.
+///   - **`call`**: Instead of accessing a field, Call a *getter method* with this name.
+///   - **`class`**: If the struct field's type is [`JObject`][jni::objects::JObject] require that it be of this class.
 /// 
 /// ```
+/// # use ez_jni::FromException;
+/// 
 /// #[derive(FromException)]
 /// #[class(java.lang.Exception)]
-/// struct MyError {
-///     #[field(call = getMessage)]
-///     msg: String
+/// struct MyStError {
+///     message: String
 /// }
 /// 
 /// #[derive(FromException)]
-/// enum MyError {
+/// enum MyEnmError {
 ///     #[class(java.lang.NullPointerException)]
 ///     Null,
 ///     #[class(me.author.ElementExists)]
-///     AlreadyExists(#[field(call = getMessage)] name: String),
+///     AlreadyExists(#[field(name = message)] String),
 ///     #[class(java.lang.Exception)]
-///     Other(#[field(call = getMessage)] msg: String),
+///     Other(#[field(call = getMessage)] String),
 /// }
 /// ```
-pub trait FromException<'env>
+pub trait FromException<'local>
 where Self: Sized {
-    fn from_exception(env: &mut JNIEnv<'env>, exception: &JThrowable) -> Result<Self, FromObjectError>;
+    fn from_exception(env: &mut JNIEnv<'local>, exception: &JThrowable) -> Result<Self, FromObjectError>;
 }
 
 impl FromException<'_> for String {

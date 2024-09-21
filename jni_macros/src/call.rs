@@ -9,7 +9,7 @@ use syn::{
     spanned::Spanned,
     Expr, Ident, LitInt, LitStr, Token,
 };
-use crate::utils::{first_char_uppercase, ClassPath, JavaPrimitive, RustPrimitive};
+use crate::utils::{first_char_uppercase, ClassPath, JavaPrimitive, RustPrimitive, SigType};
 
 /// Processes input for macro call [super::call!].
 pub fn jni_call(call: MethodCall) -> TokenStream {
@@ -30,10 +30,10 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
         let incorrect_type_msg = format!("Expected {name}() to return {}: {{err}}", call.return_type.inner_type());
         let sig_char = Ident::new(&call.return_type.sig_char().to_string(), call.return_type.span());
         // Some Types need to be converted because they are a special case
-        let conversion = match (call.return_type.special_case_conversions(quote!(v)), call.return_type.sig_char()) {
+        let conversion = match (call.return_type.special_case_conversions(quote!(v)), call.return_type.sig_char().to_string().as_str()) {
             // Move the result of the method call to an Option if it is Object because it could be null.
-            (Some(conversion), 'l') => quote! { .map(|v| (!v.is_null()).then_some(#conversion)) },
-            (None, 'l') => quote! { .map(|v| (!v.is_null()).then_some(v)) },
+            (Some(conversion), "l") => quote! { .map(|v| (!v.is_null()).then_some(#conversion)) },
+            (None, "l") => quote! { .map(|v| (!v.is_null()).then_some(v)) },
             (Some(conversion), _) => quote! { .map(|v| #conversion) },
             (None, _) => quote!()
         };
@@ -237,25 +237,42 @@ pub enum Type {
     Object(ClassPath),
 }
 impl Type {
-    /// See [JavaPrimitive::sig_char()].
-    pub fn sig_char(&self) -> char {
-        match self {
-            Self::JavaPrimitive { ty, .. } => ty.sig_char(),
-            Self::RustPrimitive { ty, .. } => JavaPrimitive::from(*ty).sig_char(),
-            Self::Object(_) => 'l',
-        }
-    }
-    /// Returns the Type that is used in the signature of the method call. e.g. `V` or `Ljava/lang/String;`
-    pub fn sig_type(&self) -> String {
-        match self {
-            Self::Object(class) => class.sig_type(),
-            _ => self.sig_char().to_uppercase().to_string(),
-        }
-    }
     pub fn span(&self) -> Span {
         match self {
             Self::JavaPrimitive { ident, .. } | Self::RustPrimitive { ident, .. } => ident.span(),
             Self::Object(class) => class.span(),
+        }
+    }
+}
+impl SigType for Type {
+    fn sig_char(&self) -> Ident {
+        match self {
+            Self::JavaPrimitive { ident, ty } => {
+                let mut sig_char = ty.sig_char();
+                sig_char.set_span(ident.span());
+                sig_char
+            },
+            Self::RustPrimitive { ident, ty, .. } => {
+                let mut sig_char = JavaPrimitive::from(*ty).sig_char();
+                sig_char.set_span(ident.span());
+                sig_char
+            },
+            Self::Object(class) => class.sig_char(),
+        }
+    }
+    fn sig_type(&self) -> LitStr {
+        match self {
+            Self::JavaPrimitive { ident, ty } => {
+                let mut sig_type = ty.sig_type();
+                sig_type.set_span(ident.span());
+                sig_type
+            },
+            Self::RustPrimitive { ident, ty } => {
+                let mut sig_type = JavaPrimitive::from(*ty).sig_type();
+                sig_type.set_span(ident.span());
+                sig_type
+            },
+            Self::Object(class) => class.sig_type(),
         }
     }
 }
@@ -535,15 +552,6 @@ impl Return {
         Ok(class)
     }
 
-    /// See [Type::sig_char].
-    pub fn sig_char(&self) -> char {
-        match self {
-            Self::Void(_) | Self::Result(ResultType::Void(_), _) => 'v',
-            Self::Assertive(ty) | Self::Result(ResultType::Assertive(ty), _) => ty.sig_char(),
-            Self::Option(_) | Self::Result(ResultType::Option(_), _) => 'l',
-        }
-    }
-
     pub fn span(&self) -> Span {
         match self {
             Self::Void(ident) | Self::Result(ResultType::Void(ident), _) => ident.span(),
@@ -586,6 +594,25 @@ impl Return {
                     None
                 },
             _ => None
+        }
+    }
+}
+impl SigType for Return {
+    fn sig_char(&self) -> Ident {
+        match self {
+            Self::Void(ident) | Self::Result(ResultType::Void(ident), _) => Ident::new("v", ident.span()),
+            Self::Assertive(ty) | Self::Result(ResultType::Assertive(ty), _) => ty.sig_char(),
+            Self::Option(class) | Self::Result(ResultType::Option(class), _) => class.sig_char(),
+        }
+    }
+    fn sig_type(&self) -> LitStr {
+        match self {
+            Self::Void(ident)
+            | Self::Result(ResultType::Void(ident), _) => LitStr::new("V", ident.span()),
+            Self::Assertive(ty)
+            | Self::Result(ResultType::Assertive(ty), _) => ty.sig_type(),
+            Self::Option(class)
+            | Self::Result(ResultType::Option(class), _) => class.sig_type(),
         }
     }
 }
@@ -693,13 +720,9 @@ fn gen_signature<'a>(params: impl Iterator<Item = &'a Parameter>, return_type: &
         if param.is_array() {
             buf.push('[');
         }
-        buf.push_str(&param.ty().sig_type());
+        buf.push_str(&param.ty().sig_type().value());
     }
     buf.push(')');
-    buf.push_str(&match return_type {
-        Return::Result(ResultType::Void(_), _) | Return::Void(_) => "V".to_string(),
-        Return::Assertive(ty) | Return::Result(ResultType::Assertive(ty), _) => ty.sig_type(),
-        Return::Option(class) | Return::Result(ResultType::Option(class), _) => class.sig_type()
-    });
+    buf.push_str(&return_type.sig_type().value());
     LitStr::new(&buf, Span::call_site())
 }

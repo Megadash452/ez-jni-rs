@@ -38,7 +38,7 @@ static PANIC_LOCATION: RwLock<Option<PanicLocation>> = RwLock::new(None);
 /// This function is used by [jni_macros::jni_fn].
 pub fn catch_throw<'local, R>(
     env: &mut JNIEnv<'local>,
-    f: impl FnOnce(&mut JNIEnv<'local>) -> R,
+    f: fn(&mut JNIEnv<'local>) -> R,
 ) -> R {
     std::panic::set_hook(Box::new(|info| {
         if let Ok(mut panic_location) = PANIC_LOCATION.write() {
@@ -80,15 +80,17 @@ fn throw_panic(env: &mut JNIEnv, payload: Box<dyn Any + Send>) {
     let _ = env.throw_new("java/lang/Exception", msg);
 }
 
-/// Chekcs if an exception has been thrown from a previous JNI function call,
+/// Checks if an exception has been thrown from a previous JNI function call,
 /// and tries to convert it to an `E` so that it can be [`mapped`][Result::map] to get a `Result<T, E>`.
 /// 
 /// If the `Exception` can't be converted to an `E`,
 /// the program will `panic!` and the `Exception` will be rethrown,
 /// in a similar way to how [`panic_uncaught_exception()`] does it.
+/// 
+/// See [`try_catch`] if panicking is not intended.
 ///
 /// This function is used by [jni_macros::call!].
-pub fn catch<'env, E: FromException<'env>>(env: &mut JNIEnv<'env>) -> Result<(), E> {
+pub fn catch<'local, E: FromException<'local>>(env: &mut JNIEnv<'local>) -> Result<(), E> {
     match catch_exception(env) {
         Some(ex) => match E::from_exception(env, &ex) {
             Ok(e) => Err(e),
@@ -101,6 +103,25 @@ pub fn catch<'env, E: FromException<'env>>(env: &mut JNIEnv<'env>) -> Result<(),
         None => Ok(()),
     }
 }
+/// Similar to [`catch()`], but will not panic if the exception's type did not match the desired type.
+/// Instead it will continue to be thrown until another [`try_catch`] is called with the correct type.
+/// 
+/// Returns the Exception if it was caught.
+pub fn try_catch<'local, E: FromException<'local>>(env: &mut JNIEnv<'local>) -> Option<E> {
+    catch_exception(env)
+        .and_then(|ex|
+            E::from_exception(env, &ex)
+                .inspect_err(|_| env.throw(ex).unwrap())
+                .ok()
+        )
+}
+
+/// Throws the exception in the [`JNIEnv`] and **panics**.
+pub fn panic_exception(ex: JThrowable, env: &mut JNIEnv) -> ! {
+    env.throw(ex).unwrap();
+    ::std::panic::panic_any(())
+}
+
 /// Checks if there is an **exception** that was thrown by a Java method called from Rust,
 /// and that was not caught by the user (did not use [`Result`] for the return type),
 /// and **panics** with that exception.
@@ -112,7 +133,7 @@ pub fn catch<'env, E: FromException<'env>>(env: &mut JNIEnv<'env>) -> Result<(),
 pub fn panic_uncaught_exception(
     env: &mut JNIEnv,
     target: Either<&'static str, &JObject>,
-    method_name: &'static str,
+    method_name: impl AsRef<str>,
 ) {
     if let Some(ex) = catch_exception(env) {
         let class = match target {
@@ -126,11 +147,11 @@ pub fn panic_uncaught_exception(
                 })
                 .unwrap_or_else(|_| "<Object>".to_string()),
         };
-        eprintln!("Rust panic: Encountered an uncaught Java Exception after calling {class}.{method_name}():");
-        env.throw(ex).unwrap();
-        ::std::panic::panic_any(());
+        eprintln!("Rust panic: Encountered an uncaught Java Exception after calling {class}.{}():", method_name.as_ref());
+        panic_exception(ex, env);
     }
 }
+
 /// Checks if an `Exception` was thrown after calling a Java Method, and returns said `Exception`.
 /// The `Exception` will be cleared so that it will be possible to do other jni_calls to handle the exception (e.g. rethrowing it).
 ///

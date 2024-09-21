@@ -12,8 +12,8 @@ public final class Test {
     public static double getDouble() { return 1d; }
     public static Object getObject() { return new Object(); }
     public static String getString() { return "Hello, World"; }
-    public static boolean throw_prim() throws Exception { throw new Exception("exception"); }
-    public static Object throw_obj() throws Exception { throw new Exception("exception"); }
+    public static boolean throwPrim() throws Exception { throw new Exception("exception"); }
+    public static Object throwObj() throws Exception { throw new Exception("exception"); }
     public static Object nullable() { return null; }
     
     public static void multiArg(boolean z, char c, byte b, short s, int i, long j, float f, double d, Object l) { }

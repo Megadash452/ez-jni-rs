@@ -1,38 +1,7 @@
-use std::{process::Command, sync::LazyLock};
-use jni::{objects::{JObject, JString}, JavaVM};
+mod common;
+
+use jni::objects::{JObject, JString};
 use ez_jni::call;
-
-static CLASS_DIR: &'static str = "./target/tmp";
-static JVM: LazyLock<JavaVM> = LazyLock::new(|| {
-    compile_java()
-        .unwrap_or_else(|err| panic!("Error compiling Java file: {err}"));
-    JavaVM::new(jni::InitArgsBuilder::new()
-        .option(format!("-Djava.class.path={CLASS_DIR}"))
-        .build()
-        .unwrap()
-    )
-        .unwrap_or_else(|err| panic!("Error starting JavaVM: {err}"))
-});
-
-/// Must call it this exact same way: `setup_env!(env)`;
-macro_rules! setup_env {
-    ($var:ident) => {
-        let mut $var = JVM.attach_current_thread_permanently()
-            .unwrap_or_else(|err| panic!("Error attaching current thread to JavaVM: {err}"));
-    };
-}
-
-fn compile_java() -> Result<(), Box<dyn std::error::Error>> {
-    std::fs::create_dir_all(CLASS_DIR)?;
-    let output = Command::new("javac")
-        .args(["./tests/Test.java", "-d", CLASS_DIR])
-        .output()?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).into())
-    }
-    
-    Ok(())
-}
 
 #[test]
 fn return_primitives() {
@@ -71,11 +40,11 @@ fn return_other() {
     // Result
     let r: Result<bool, String> = call!(static me.test.Test::getBoolean() -> Result<bool, String>);
     r.unwrap();
-    let r: Result<bool, String> = call!(static me.test.Test::throw_prim() -> Result<bool, String>);
+    let r: Result<bool, String> = call!(static me.test.Test::throwPrim() -> Result<bool, String>);
     r.unwrap_err();
     let r: Result<JObject, String> = call!(static me.test.Test::getObject() -> Result<java.lang.Object, String>);
     r.unwrap();
-    let r: Result<JObject, String> = call!(static me.test.Test::throw_obj() -> Result<java.lang.Object, String>);
+    let r: Result<JObject, String> = call!(static me.test.Test::throwObj() -> Result<java.lang.Object, String>);
     r.unwrap_err();
     // Option
     let r: Option<JObject> = call!(static me.test.Test::getObject() -> Option<java.lang.Object>);

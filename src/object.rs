@@ -9,13 +9,17 @@ pub enum FromObjectError {
     Null,
     #[error("The Class of the Object is not the target Class, or a descendant of the target Class {target_class}")]
     ClassMismatch { obj_class: String, target_class: &'static str },
-    #[error("Could not find {ty} field {name:?} in class {target_class}; maybe its private?")]
-    FieldNotFound { name: String, ty: String, target_class: &'static str },
+    #[error("Could not find field {name:?} of type {ty} in class {target_class}; maybe its private?")]
+    FieldNotFound { name: String, ty: String, target_class: String },
+    // #[error("{0}")]
+    // Other(String)
 }
 
 // This is not object wrapper, but constructors
 pub trait Class
 where Self: Sized {
+    /// The path of the target Class.
+    /// Must be in *slash-separeted* form. e.g. "java/lang/String".
     const PATH: &'static str;
     
     /// Construct a [`Self`] by reading data from a *Java Object*.
@@ -46,7 +50,7 @@ where T: Class {
 }
 
 impl Class for String {
-    const PATH: &'static str = "java.lang.String";
+    const PATH: &'static str = "java/lang/String";
     
     /// Get a [`String`] from some random Object.
     /// 
@@ -60,7 +64,7 @@ impl Class for String {
         let obj_class = env.get_object_class(&object)
             .unwrap_or_else(|err| panic!("Failed to get Object's class: {err}"));
         
-        if env.is_assignable_from(Self::PATH, &obj_class).unwrap() {
+        if !env.is_assignable_from(Self::PATH, &obj_class).unwrap() {
             return Err(FromObjectError::ClassMismatch {
                 obj_class: get_string(call!(obj_class.getName() -> java.lang.String), env),
                 target_class: Self::PATH

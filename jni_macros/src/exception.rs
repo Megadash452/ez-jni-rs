@@ -1,18 +1,17 @@
 use std::str::FromStr;
 
-use crate::utils::{first_char_uppercase, ClassPath, JavaPrimitive, RustPrimitive};
+use crate::utils::{merge_errors, ClassPath, JavaPrimitive, RustPrimitive, SigType};
 use either::Either;
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
-use syn::{parse::Parse, spanned::Spanned, AngleBracketedGenericArguments, Field, Fields, GenericArgument, Ident, ItemEnum, ItemStruct, Lifetime, LitStr, Token, Type, TypePath};
+use syn::{parse::Parse, spanned::Spanned, AngleBracketedGenericArguments, Field, Fields, GenericArgument, Generics, Ident, ItemEnum, ItemStruct, Lifetime, LitStr, Token, Type, TypePath};
 
 pub fn from_exception_struct(st: syn::ItemStruct) -> syn::Result<TokenStream> {
     let class = get_class_attribute(&st.attrs, st.ident.span())?
-        .to_token_stream()
-        .to_string();
+        .to_string_with_slashes();
     
     // Find the JObject field with a lifetime, and use that lifetime's name for the JNIEnv lifetime
-    let env_lt = get_env_lifetime(Either::Left(&st));
+    let env_lt = get_local_lifetime(Either::Left(&st));
 
     let st_ident = st.ident;
     let st_generics = &st.generics;
@@ -24,7 +23,7 @@ pub fn from_exception_struct(st: syn::ItemStruct) -> syn::Result<TokenStream> {
             fn from_exception(env: &mut ::jni::JNIEnv<#env_lt>, exception: &::jni::objects::JThrowable) -> Result<Self, ::ez_jni::object::FromObjectError> {
                 let __class = env.get_object_class(&exception)
                     .unwrap_or_else(|err| panic!("Failed to get Object's class: {err}"));
-                if env.is_assignable_from(#class, &__class).unwrap() {
+                if !env.is_assignable_from(#class, &__class).unwrap() {
                     return Err(::ez_jni::object::FromObjectError::ClassMismatch {
                         obj_class: ::ez_jni::utils::get_string(::ez_jni::call!(__class.getName() -> java.lang.String), env),
                         target_class: #class
@@ -54,7 +53,7 @@ pub fn from_exception_enum(enm: syn::ItemEnum) -> syn::Result<TokenStream> {
         errors.push(syn::Error::new(Span::call_site(), "Error enum must have at least 1 variant"));
     }
     
-    let env_lt = get_env_lifetime(Either::Right(&enm));
+    let env_lt = get_local_lifetime(Either::Right(&enm));
 
     let class_checks = enm.variants.into_iter()
         .enumerate()
@@ -63,7 +62,8 @@ pub fn from_exception_enum(enm: syn::ItemEnum) -> syn::Result<TokenStream> {
             let class = get_class_attribute(&variant.attrs, variant.ident.span())
                 .map_err(|err| errors.push(err))
                 .ok()?
-                .to_token_stream().to_string();
+                .to_string_with_slashes();
+
             let ident = &variant.ident;
             // Get a constructor for this variant
             let ctor = struct_constructor(variant.fields, &class)
@@ -83,16 +83,7 @@ pub fn from_exception_enum(enm: syn::ItemEnum) -> syn::Result<TokenStream> {
         })
         .collect::<Box<_>>();
     
-
-    // Check if there are errors
-    if let Some(last) = errors.pop() /*Order doesn't matter*/ {
-        let errors = errors.into_iter()
-            .fold(last, |mut errors, err| {
-                errors.combine(err);
-                errors
-            });
-        return Err(errors);
-    }
+    merge_errors(errors)?;
 
     let enm_ident = enm.ident;
     let enm_generics = &enm.generics;
@@ -151,7 +142,13 @@ fn get_class_attribute(attributes: &[syn::Attribute], item_span: Span) -> syn::R
 
 // Find the JObject field with a lifetime, and use that lifetime's name for the JNIEnv lifetime,
 // Or returns implicit lifetime if there is no JObject
-fn get_env_lifetime(item: Either<&ItemStruct, &ItemEnum>) -> Lifetime {
+fn get_local_lifetime(item: Either<&ItemStruct, &ItemEnum>) -> Lifetime {
+    fn find_local(generics: &Generics) -> Option<Lifetime> {
+        generics.lifetimes()
+            .map(|lt| &lt.lifetime)
+            .find(|lt| lt.ident.to_string() == "local")
+            .map(Clone::clone)
+    }
     fn find_in_fields(fields: &Fields) -> Option<Lifetime> {
         fields.iter()
             .find_map(|field| match &field.ty {
@@ -170,16 +167,22 @@ fn get_env_lifetime(item: Either<&ItemStruct, &ItemEnum>) -> Lifetime {
     }
     
     match item {
-        Either::Left(st) => find_in_fields(&st.fields)
-            .unwrap_or(Lifetime::new("'_", st.span())),
-        Either::Right(enm) => enm.variants.iter()
-            .find_map(|variant| find_in_fields(&variant.fields))
-            .unwrap_or(Lifetime::new("'_", enm.span()))
+        Either::Left(st) =>
+            find_local(&st.generics)
+                .or_else(|| find_in_fields(&st.fields))
+                .unwrap_or(Lifetime::new("'_", st.span())),
+        Either::Right(enm) =>
+            find_local(&enm.generics)
+                .or_else(||
+                    enm.variants.iter()
+                        .find_map(|variant| find_in_fields(&variant.fields))
+                )
+                .unwrap_or(Lifetime::new("'_", enm.span())),
     }
 }
 
-/// Consists of *key-value pairs* inside a parenthesis.
-/// * **name** - Use this name for the Object's member lookup instead of the field's name.
+/// Content of the `field` attribute: *key-value pairs* inside a parenthesis.
+/// * **name** - Use this name for the Object's field lookup instead of the field's name.
 ///                     Mutually exclusive with `call`.
 /// * **call** - Instead of a looking up a *member*, call one of the Object's *method*s.
 ///                     Mutually exclusive with `name`.
@@ -194,7 +197,7 @@ struct FieldAttr {
     class: Option<ClassPath>,
 }
 impl FieldAttr {
-    /// Parse the `field` attribute from a struct's field.
+    /// Find the `field` attribute in a struct's field and parse its content.
     pub fn get_from_attrs(field: &Field) -> syn::Result<Self> {
         field.attrs
             .iter()
@@ -203,7 +206,10 @@ impl FieldAttr {
                     .get_ident()
                     .is_some_and(|ident| ident.to_string() == "field")
             )
-            .map_or_else(|| Ok(Self { name: None, call: None, class: None }), |attr| Self::parse_attr_meta(&attr.meta))
+            .map_or_else(
+                || Ok(Self { name: None, call: None, class: None }),
+                |attr| Self::parse_attr_meta(&attr.meta)
+            )
     }
     
     /// Parses the tokens in the attribute as `comma-separated` `key-value pairs`.
@@ -264,7 +270,7 @@ impl FieldAttr {
                 "name" => parse_val(key, val, &mut name)?,
                 "call" => parse_val(key, val, &mut call)?,
                 "class" => parse_val(key, val, &mut class)?,
-                _ => return Err(syn::Error::new(key.span(), "Expected one of the following keys: \"name\", \"call\", \"class\""))
+                _ => return Err(syn::Error::new(key.span(), "Unknown key; Expected one of the following keys: \"name\", \"call\", \"class\""))
             }
         }
         
@@ -272,19 +278,21 @@ impl FieldAttr {
     }
 }
 
+/// The type that will be used in the JNI call to *get field* or *call gettter method*.
 enum FieldType {
-    Prim(RustPrimitive),
+    Prim(Ident, RustPrimitive),
     Object(ClassPath),
     // The Java Class is obtained from the struct/enum's `Class` implementation.
     Implicit(syn::Type)
 }
 impl FieldType {
     pub fn from_field(field_ty: &Type, class_attr: Option<ClassPath>) -> syn::Result<Self> {
+        let ty_str = field_ty.to_token_stream().to_string();
         // Check if the Field's type is a primitive
-        match RustPrimitive::from_str(&field_ty.to_token_stream().to_string()) {
+        match RustPrimitive::from_str(&ty_str) {
             Ok(prim) => match class_attr {
                 Some(class) => Err(syn::Error::new(class.span(), "Can't use \"class\" when the field is prmitive")),
-                None => Ok(Self::Prim(prim))
+                None => Ok(Self::Prim(Ident::new(&ty_str, field_ty.span()), prim))
             },
             Err(_) => match class_attr {
                 // If not a primitive, then use the provided Class
@@ -299,35 +307,58 @@ impl FieldType {
             }
         }
     }
-    
-    /// The Type string used in the signature
-    pub fn sig_type(&self) -> TokenStream {
-        match self {
-            Self::Prim(prim) => JavaPrimitive::from(*prim).sig_char().to_uppercase().collect::<String>().to_token_stream(),
-            Self::Object(class) => class.sig_type().to_token_stream(),
-            Self::Implicit(ty) => quote_spanned! {ty.span()=> <#ty as ::ez_jni::object::Class>::PATH }
-        }
-    }
-    /// See [`JavaPrimitive::sig_char()`].
+
+    /// See [`crate::utils::SigType::sig_char()`].
     pub fn sig_char(&self) -> Ident {
         match self {
-            Self::Prim(prim) => Ident::new(&JavaPrimitive::from(*prim).sig_char().to_string(), Span::call_site()),
-            Self::Object(class) => Ident::new("l", class.span()),
+            Self::Prim(ident, prim) => {
+                let mut i = JavaPrimitive::from(*prim).sig_char();
+                i.set_span(ident.span());
+                i
+            },
+            Self::Object(class) => class.sig_char(),
             Self::Implicit(ty) => Ident::new("l", ty.span()),
         }
     }
-    
-    fn converted(&self, value: TokenStream) -> TokenStream {
+    /// The signature of a Java field using this type.
+    /// Is an expression of a *format string* if is [`FieldType::Implicit`].
+    pub fn field_sig_type(&self) -> TokenStream {
         match self {
-            FieldType::Prim(prim) => prim.special_case_conversion(value.clone())
+            Self::Prim(ident, prim) => {
+                let mut sig_ty: LitStr = JavaPrimitive::from(*prim).sig_type();
+                sig_ty.set_span(ident.span());
+                sig_ty.to_token_stream()
+            },
+            Self::Object(class) => class.sig_type().to_token_stream(),
+            Self::Implicit(ty) => quote_spanned! {ty.span()=> format!("L{};", <#ty as ::ez_jni::object::Class>::PATH) }
+        }
+    }
+    /// The same [`Self::field_sig_type()`], but for use in the getter method signature.
+    pub fn method_sig_type(&self) -> TokenStream {
+        match self {
+            Self::Prim(ident, prim) => {
+                let sig_ty = JavaPrimitive::from(*prim).sig_type().value();
+                LitStr::new(&format!("(){sig_ty}"), ident.span()).to_token_stream()
+            },
+            Self::Object(class) => {
+                let sig_ty = class.sig_type().value();
+                LitStr::new(&format!("(){sig_ty}"), class.span()).to_token_stream()
+            },
+            Self::Implicit(ty) => quote_spanned! {ty.span()=> format!("()L{};", <#ty as ::ez_jni::object::Class>::PATH) },
+        }
+    }
+
+    pub fn converted(&self, value: TokenStream) -> TokenStream {
+        match self {
+            FieldType::Prim(_, prim) => prim.special_case_conversion(value.clone())
                 .unwrap_or(value),
             FieldType::Implicit(ty) => quote_spanned! {ty.span()=> <#ty as ::ez_jni::object::Class>::from_object(#value, env)? },
-            FieldType::Object(_) => value
+            FieldType::Object(_) => quote_spanned! {value.span()=> #value.into() }
         }
     }
 }
 
-/// Returns a struct constructor, where all its fields are initialized with JNI calls.
+/// Returns a struct constructor, where all its fields are initialized with JNI calls to *read fields* or *call getter methods*.
 /// Can handle *Unit, Tuple, and Named structs*.
 /// Can also be used for enum variants.
 /// 
@@ -335,7 +366,7 @@ impl FieldType {
 /// By default, the **name** will be used to get the value from a *member of the Object*,
 /// and the **type** will be converted from a Java Object if it implements `ez_jni::Class`.
 /// 
-/// **class** is the Java Class of the struct/enum.
+/// **class** is the Java Class (in *slash-separated* form) of the struct/enum.
 /// 
 /// See [`FieldAttr`] for syntax.
 fn struct_constructor(fields: Fields, class: &str) -> syn::Result<TokenStream> {    
@@ -351,36 +382,30 @@ fn struct_constructor(fields: Fields, class: &str) -> syn::Result<TokenStream> {
             let ty = FieldType::from_field(&field.ty, attr.class)
                 .map_err(|err| errors.push(err))
                 .ok()?;
+
+            let get_field = |name: String, getter_fallback: bool| {
+                let sig_char = ty.sig_char();
+                let sig_ty = ty.field_sig_type();
+                
+                ty.converted(quote_spanned! {field.span()=>
+                    ::ez_jni::utils::get_field(&exception, #name, &#sig_ty, #getter_fallback, env)?
+                        .#sig_char().unwrap_or_else(|err| panic!("The method call did not return the expected type: {err}"))
+                })
+            };
             
             Some(if let Some(name) = attr.name {
                 // Use the "name" of the field attribute
-                let name = name.to_string();
-                let sig_char = ty.sig_char();
-                let sig_ty = ty.sig_type();
-                
-                ty.converted(quote_spanned! {field.span()=>
-                    env.get_field(&exception, #name, #sig_ty)
-                        .map_err(|err| if let ::jni::errors::Error::FieldNotFound { name, sig } = err {
-                            ::ez_jni::object::FromObjectError::FieldNotFound { name, ty: sig, target_class: #class }
-                        } else {
-                            panic!("Error occurred while accessing field: {err}")
-                        })?
-                        .#sig_char().unwrap_or_else(|err| panic!("The method call did not return the expected type: {err}"))
-                })
+                get_field(name.to_string(), false)
             } else if let Some(call) = attr.call {
                 // Call the Java method
                 let call = LitStr::new(&call.to_string(), call.span());
                 let sig_char = ty.sig_char();
-                let sig_ty = ty.sig_type();
-                let sig_ty = match ty {
-                    FieldType::Implicit(_) => quote!(format!("(){}", #sig_ty)),
-                    _ => format!("(){sig_ty}").to_token_stream(),
-                };
+                let sig_ty = ty.method_sig_type();
                 
                 ty.converted(quote_spanned! {call.span()=>
                     env.call_method(&exception, #call, #sig_ty, &[])
                         .map_err(|err| if let ::jni::errors::Error::MethodNotFound { name, sig } = err {
-                            ::ez_jni::object::FromObjectError::FieldNotFound { name, ty: sig, target_class: #class }
+                            ::ez_jni::object::FromObjectError::FieldNotFound { name, ty: sig, target_class: #class.to_string() }
                         } else {
                             panic!("Error occurred while calling getter method: {err}")
                         })?
@@ -389,29 +414,7 @@ fn struct_constructor(fields: Fields, class: &str) -> syn::Result<TokenStream> {
                 })
             } else if let Some(name) = &field.ident {
                 // Use the name of the field, and also call "get{Name}" if field not found
-                let name = name.to_string();
-                let sig_char = ty.sig_char();
-                let sig_ty = ty.sig_type();
-                let getter_name = format!("get{}", first_char_uppercase(name.to_string()));
-                let getter_sig = match ty {
-                    FieldType::Implicit(_) => quote!(format!("(){}", #sig_ty)),
-                    _ => format!("(){sig_ty}").to_token_stream(),
-                };
-                
-                ty.converted(quote_spanned! {field.span()=>
-                    env.get_field(&exception, #name, #sig_ty)
-                        .or_else(|err| if let ::jni::errors::Error::FieldNotFound { .. } = err {
-                            env.call_method(&exception, #getter_name, #getter_sig, &[])
-                        } else {
-                            panic!("Error occurred while accessing field: {err}")
-                        })
-                        .map_err(|err| if let ::jni::errors::Error::MethodNotFound { name, sig } = err {
-                            ::ez_jni::object::FromObjectError::FieldNotFound { name, ty: sig, target_class: #class }
-                        } else {
-                            panic!("Error occurred while calling getter method: {err}")
-                        })?
-                        .#sig_char().unwrap_or_else(|err| panic!("The method call did not return the expected type: {err}"))
-                })
+                get_field(name.to_string(), true)
             } else {
                 errors.push(syn::Error::new(field.span(), "Field must have \"name\" or \"call\" if it is unnamed. See the 'field' attribute."));
                 return None
@@ -419,15 +422,7 @@ fn struct_constructor(fields: Fields, class: &str) -> syn::Result<TokenStream> {
         })
         .collect::<Box<_>>();
     
-    // Check if there are errors
-    if let Some(last) = errors.pop() /*Order doesn't matter*/ {
-        let errors = errors.into_iter()
-            .fold(last, |mut errors, err| {
-                errors.combine(err);
-                errors
-            });
-        return Err(errors);
-    }
+    merge_errors(errors)?;
     
     let span = fields.span();
     Ok(match fields {
