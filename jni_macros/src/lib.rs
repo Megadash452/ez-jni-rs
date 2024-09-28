@@ -1,13 +1,14 @@
 mod call;
-mod exception;
+mod object;
 mod utils;
 
 use call::{ConstructorCall, MethodCall};
+use either::Either;
 use proc_macro::TokenStream;
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
 use std::sync::RwLock;
 use syn::{spanned::Spanned, GenericParam, Ident, ItemFn, LitStr};
-use utils::{error, error_spanned};
+use utils::{error, error_spanned, item_from_derive_input};
 
 static PACKAGE_NAME: RwLock<Option<String>> = RwLock::new(None);
 
@@ -271,32 +272,27 @@ pub fn new(input: TokenStream) -> TokenStream {
     call::jni_call_constructor(call).into()
 }
 
+/// See [`ez_jni::FromObject`].
+#[proc_macro_derive(FromObject, attributes(class, field))]
+pub fn from_object(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as syn::DeriveInput);
+    match item_from_derive_input(input) {
+        Either::Left(st) => object::from_object_st(st)
+            .unwrap_or_else(|err| err.to_compile_error()),
+        Either::Right(enm) => object::from_object_enum(enm)
+            .unwrap_or_else(|err| err.to_compile_error()),
+    }.into()
+}
+
 /// See [`ez_jni::FromException`].
 #[proc_macro_derive(FromException, attributes(class, field))]
 pub fn from_exception(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
-    match input.data {
-        syn::Data::Struct(st) => exception::from_exception_struct(syn::ItemStruct {
-            attrs: input.attrs,
-            vis: input.vis,
-            ident: input.ident,
-            generics: input.generics,
-            struct_token: st.struct_token,
-            fields: st.fields,
-            semi_token: st.semi_token,
-        })
-        .unwrap_or_else(|err| err.to_compile_error()),
-        syn::Data::Enum(enm) => exception::from_exception_enum(syn::ItemEnum {
-            attrs: input.attrs,
-            vis: input.vis,
-            ident: input.ident,
-            generics: input.generics,
-            enum_token: enm.enum_token,
-            brace_token: enm.brace_token,
-            variants: enm.variants,
-        })
-        .unwrap_or_else(|err| err.to_compile_error()),
-        syn::Data::Union(_) => error("Unions not supported"),
+    match item_from_derive_input(input) {
+        Either::Left(st) => object::from_exception_struct(st)
+            .unwrap_or_else(|err| err.to_compile_error()),
+        Either::Right(enm) => object::from_exception_enum(enm)
+            .unwrap_or_else(|err| err.to_compile_error()),
     }.into()
 }
 

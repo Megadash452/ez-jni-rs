@@ -1,122 +1,39 @@
-use std::str::FromStr;
+mod class;
+mod exception;
 
-use crate::utils::{merge_errors, ClassPath, JavaPrimitive, RustPrimitive, SigType};
+pub use class::*;
+use convert_case::{Case, Casing};
+pub use exception::*;
+
 use either::Either;
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
-use syn::{parse::Parse, spanned::Spanned, AngleBracketedGenericArguments, Field, Fields, GenericArgument, Generics, Ident, ItemEnum, ItemStruct, Lifetime, LitStr, Token, Type, TypePath};
+use syn::{parse::Parse, punctuated::Punctuated, spanned::Spanned, AngleBracketedGenericArguments, Field, Fields, GenericArgument, GenericParam, Generics, Ident, ItemEnum, ItemStruct, Lifetime, LitStr, Token, Type, TypePath, Variant};
+use crate::utils::{merge_errors, ClassPath, JavaPrimitive, RustPrimitive, SigType};
+use std::str::FromStr;
 
-pub fn from_exception_struct(st: syn::ItemStruct) -> syn::Result<TokenStream> {
-    let class = get_class_attribute(&st.attrs, st.ident.span())?
-        .to_string_with_slashes();
-    
-    // Find the JObject field with a lifetime, and use that lifetime's name for the JNIEnv lifetime
-    let env_lt = get_local_lifetime(Either::Left(&st));
-
-    let st_ident = st.ident;
-    let st_generics = &st.generics;
-    let st_generic_params = &st.generics.params;
-    let st_ctor = struct_constructor(st.fields, &class)?;
-    
-    Ok(quote! {
-        impl <#st_generic_params> ::ez_jni::FromException<#env_lt> for #st_ident #st_generics {
-            fn from_exception(env: &mut ::jni::JNIEnv<#env_lt>, exception: &::jni::objects::JThrowable) -> Result<Self, ::ez_jni::object::FromObjectError> {
-                let __class = env.get_object_class(&exception)
-                    .unwrap_or_else(|err| panic!("Failed to get Object's class: {err}"));
-                if !env.is_assignable_from(#class, &__class).unwrap() {
-                    return Err(::ez_jni::object::FromObjectError::ClassMismatch {
-                        obj_class: ::ez_jni::utils::get_string(::ez_jni::call!(__class.getName() -> java.lang.String), env),
-                        target_class: #class
-                    })
-                }
-
-                Ok(Self #st_ctor)
-            }
-        }
-    })
-}
-
-pub fn from_exception_enum(enm: syn::ItemEnum) -> syn::Result<TokenStream> {
-    let mut errors = Vec::new();
-    
-    if let Some(attr) = enm.attrs.iter()
-        .find(|attr| {
-            attr.path()
-                .get_ident()
-                .is_some_and(|ident| ident.to_string() == "class")
-        })
-    {
-        errors.push(syn::Error::new(attr.span(), "The \"class\" attribute can't be used on the enum, only on its variants"));
-    }
-    
-    if enm.variants.is_empty() {
-        errors.push(syn::Error::new(Span::call_site(), "Error enum must have at least 1 variant"));
-    }
-    
-    let env_lt = get_local_lifetime(Either::Right(&enm));
-
-    let class_checks = enm.variants.into_iter()
-        .enumerate()
-        .filter_map(|(i, variant)| {
-            // Get class name for this variant
-            let class = get_class_attribute(&variant.attrs, variant.ident.span())
-                .map_err(|err| errors.push(err))
-                .ok()?
-                .to_string_with_slashes();
-
-            let ident = &variant.ident;
-            // Get a constructor for this variant
-            let ctor = struct_constructor(variant.fields, &class)
-                .map_err(|err| errors.push(err))
-                .ok()?;
-            let _if = if i == 0 {
-                quote! { if }
-            } else {
-                quote! { else if }
-            };
-            // Check if Exception is the class that this Variant uses, and construct the variant
-            Some(quote! {
-                #_if env.is_assignable_from(#class, &__class).unwrap() {
-                    Ok(Self::#ident #ctor)
-                }
-            })
-        })
-        .collect::<Box<_>>();
-    
-    merge_errors(errors)?;
-
-    let enm_ident = enm.ident;
-    let enm_generics = &enm.generics;
-    let enm_generic_params = &enm.generics.params;
-    Ok(quote! {
-        impl <#enm_generic_params> ez_jni::FromException<#env_lt> for #enm_ident #enm_generics {
-            fn from_exception(env: &mut ::jni::JNIEnv<#env_lt>, exception: &::jni::objects::JThrowable) -> Result<Self, ::ez_jni::object::FromObjectError> {
-                let __class = env.get_object_class(&exception)
-                    .unwrap_or_else(|err| panic!("Failed to get Object's class: {err}"));
-                #(#class_checks)* else {
-                    Err(::ez_jni::object::FromObjectError::ClassMismatch {
-                        obj_class: ::ez_jni::utils::get_string(::ez_jni::call!(__class.getName() -> java.lang.String), env),
-                        target_class: ""
-                    })
-                }
-            }
-        }
-    })
+/// Same as [`get_class_attribute()`], but requires that the attribute is present.
+/// 
+/// Takes the [`Span`] of the struct or enum variant's Name for errors.
+fn get_class_attribute_required(attributes: &[syn::Attribute], item_span: Span) -> syn::Result<ClassPath> {
+    get_class_attribute(attributes)
+        .and_then(|res| res.ok_or_else(|| syn::Error::new(item_span, "Must have \"class\" attribute")))
 }
 
 /// Find the `class` attribute of the **struct** or **enum variant** and return the Path to the Java Class.
 /// 
-/// Takes the [`Span`] of the struct or enum variant's Name for errors.
-fn get_class_attribute(attributes: &[syn::Attribute], item_span: Span) -> syn::Result<ClassPath> {
+/// Returns [`None`] if there is no `class` attribute.
+fn get_class_attribute(attributes: &[syn::Attribute]) -> syn::Result<Option<ClassPath>> {
     let mut iter = attributes.iter()
         .filter(|attr| {
             attr.path()
                 .get_ident()
                 .is_some_and(|ident| ident.to_string() == "class")
         });
-    let attr = iter
-        .next()
-        .ok_or_else(|| syn::Error::new(item_span, "Must have \"class\" attribute"))?;
+    let attr = match iter.next() {
+        Some(attr) => attr,
+        None => return Ok(None)
+    };
     if let Some(attr) = iter.next() {
         return Err(syn::Error::new(
             attr.span(),
@@ -125,28 +42,31 @@ fn get_class_attribute(attributes: &[syn::Attribute], item_span: Span) -> syn::R
     }
 
     // Get attribute value
-    match &attr.meta {
+    Ok(Some(match &attr.meta {
         // Can be #[class(java.class.path)] or #[class("java.class.path")]
         syn::Meta::List(syn::MetaList { tokens, .. }) => match syn::parse2::<LitStr>(tokens.clone()).ok() {
-            Some(s) => syn::parse_str::<ClassPath>(&s.value()),
-            None => syn::parse2::<ClassPath>(tokens.clone())
+            Some(s) => syn::parse_str::<ClassPath>(&s.value())?,
+            None => syn::parse2::<ClassPath>(tokens.clone())?
         },
         // Can only be #[class("java.class.path")]
         syn::Meta::NameValue(syn::MetaNameValue { value, .. }) => match value {
-            syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(value), .. }) => syn::parse_str::<ClassPath>(&value.value()),
+            syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(value), .. }) => syn::parse_str::<ClassPath>(&value.value())?,
             _ => return Err(syn::Error::new(value.span(), "Try using a string literal here"))
         },
         syn::Meta::Path(path) => return Err(syn::Error::new(path.span(), "\"class\" attribute must have a value of a Java ClassPath (e.g. #[class(java.lang.Exception)])")) 
-    }
+    }))
 }
 
-// Find the JObject field with a lifetime, and use that lifetime's name for the JNIEnv lifetime,
-// Or returns implicit lifetime if there is no JObject
-fn get_local_lifetime(item: Either<&ItemStruct, &ItemEnum>) -> Lifetime {
+/// Find the JObject field with a lifetime, and use that lifetime's name for the JNIEnv lifetime,
+/// Defaults to `'local` if such object could not be found, and **appends** the lifetime to the *generics*.
+///
+/// `P` is just the punctuation type; don't worry about it.
+fn get_local_lifetime<P: Default>(item: Either<&ItemStruct, &ItemEnum>, generics: &mut Punctuated<GenericParam, P>) -> Lifetime {
+    static DEFAULT: &str = "local";
     fn find_local(generics: &Generics) -> Option<Lifetime> {
         generics.lifetimes()
             .map(|lt| &lt.lifetime)
-            .find(|lt| lt.ident.to_string() == "local")
+            .find(|lt| lt.ident.to_string() == DEFAULT)
             .map(Clone::clone)
     }
     fn find_in_fields(fields: &Fields) -> Option<Lifetime> {
@@ -165,19 +85,30 @@ fn get_local_lifetime(item: Either<&ItemStruct, &ItemEnum>) -> Lifetime {
                 _ => None
             })
     }
+
+    /// Generate the default Lifetime: `'local`.
+    /// Appends the lifetime to the generic params.
+    /// The failure of [`find_local()`] indicates that there is no `'local` lifetime and it needs to be added.
+    fn default<P: Default>(span: Span, generics: &mut Punctuated<GenericParam, P>) -> Lifetime {
+        let default = Lifetime::new(&format!("'{DEFAULT}"), span);
+
+        generics.push(syn::GenericParam::Lifetime(syn::LifetimeParam::new(default.clone())));
+
+        default
+    }
     
     match item {
         Either::Left(st) =>
             find_local(&st.generics)
                 .or_else(|| find_in_fields(&st.fields))
-                .unwrap_or(Lifetime::new("'_", st.span())),
+                .unwrap_or_else(|| default(st.ident.span(), generics)),
         Either::Right(enm) =>
             find_local(&enm.generics)
                 .or_else(||
                     enm.variants.iter()
                         .find_map(|variant| find_in_fields(&variant.fields))
                 )
-                .unwrap_or(Lifetime::new("'_", enm.span())),
+                .unwrap_or_else(|| default(enm.ident.span(), generics)),
     }
 }
 
@@ -330,7 +261,7 @@ impl FieldType {
                 sig_ty.to_token_stream()
             },
             Self::Object(class) => class.sig_type().to_token_stream(),
-            Self::Implicit(ty) => quote_spanned! {ty.span()=> format!("L{};", <#ty as ::ez_jni::object::Class>::PATH) }
+            Self::Implicit(ty) => quote_spanned! {ty.span()=> format!("L{};", <#ty as ::ez_jni::FromObject>::PATH) }
         }
     }
     /// The same [`Self::field_sig_type()`], but for use in the getter method signature.
@@ -344,7 +275,7 @@ impl FieldType {
                 let sig_ty = class.sig_type().value();
                 LitStr::new(&format!("(){sig_ty}"), class.span()).to_token_stream()
             },
-            Self::Implicit(ty) => quote_spanned! {ty.span()=> format!("()L{};", <#ty as ::ez_jni::object::Class>::PATH) },
+            Self::Implicit(ty) => quote_spanned! {ty.span()=> format!("()L{};", <#ty as ::ez_jni::FromObject>::PATH) },
         }
     }
 
@@ -352,13 +283,13 @@ impl FieldType {
         match self {
             FieldType::Prim(_, prim) => prim.special_case_conversion(value.clone())
                 .unwrap_or(value),
-            FieldType::Implicit(ty) => quote_spanned! {ty.span()=> <#ty as ::ez_jni::object::Class>::from_object(#value, env)? },
+            FieldType::Implicit(ty) => quote_spanned! {ty.span()=> <#ty as ::ez_jni::FromObject>::from_object(&#value, env)? },
             FieldType::Object(_) => quote_spanned! {value.span()=> #value.into() }
         }
     }
 }
 
-/// Returns a struct constructor, where all its fields are initialized with JNI calls to *read fields* or *call getter methods*.
+/// Builds a struct *constructor literal*, where all its fields are initialized with JNI calls to *read fields* or *call getter methods*.
 /// Can handle *Unit, Tuple, and Named structs*.
 /// Can also be used for enum variants.
 /// 
@@ -369,31 +300,27 @@ impl FieldType {
 /// **class** is the Java Class (in *slash-separated* form) of the struct/enum.
 /// 
 /// See [`FieldAttr`] for syntax.
-fn struct_constructor(fields: Fields, class: &str) -> syn::Result<TokenStream> {    
+fn struct_constructor(fields: &Fields, class: &str) -> syn::Result<TokenStream> {    
     let mut errors = Vec::new();
     
     // Produce the value that will be assigned for each field
     let values = fields.iter()
-        .filter_map(|field| {
-            let attr = FieldAttr::get_from_attrs(&field)
-                .map_err(|err| errors.push(err))
-                .ok()?;
+        .map(|field| {
+            let attr = FieldAttr::get_from_attrs(field)?;
             // Determine the type of the Java member
-            let ty = FieldType::from_field(&field.ty, attr.class)
-                .map_err(|err| errors.push(err))
-                .ok()?;
+            let ty = FieldType::from_field(&field.ty, attr.class)?;
 
             let get_field = |name: String, getter_fallback: bool| {
                 let sig_char = ty.sig_char();
                 let sig_ty = ty.field_sig_type();
                 
                 ty.converted(quote_spanned! {field.span()=>
-                    ::ez_jni::utils::get_field(&exception, #name, &#sig_ty, #getter_fallback, env)?
+                    ::ez_jni::utils::get_field(&object, #name, &#sig_ty, #getter_fallback, env)?
                         .#sig_char().unwrap_or_else(|err| panic!("The method call did not return the expected type: {err}"))
                 })
             };
             
-            Some(if let Some(name) = attr.name {
+            Ok(if let Some(name) = attr.name {
                 // Use the "name" of the field attribute
                 get_field(name.to_string(), false)
             } else if let Some(call) = attr.call {
@@ -403,9 +330,9 @@ fn struct_constructor(fields: Fields, class: &str) -> syn::Result<TokenStream> {
                 let sig_ty = ty.method_sig_type();
                 
                 ty.converted(quote_spanned! {call.span()=>
-                    env.call_method(&exception, #call, #sig_ty, &[])
+                    env.call_method(&object, #call, #sig_ty, &[])
                         .map_err(|err| if let ::jni::errors::Error::MethodNotFound { name, sig } = err {
-                            ::ez_jni::object::FromObjectError::FieldNotFound { name, ty: sig, target_class: #class.to_string() }
+                            ::ez_jni::FromObjectError::FieldNotFound { name, ty: sig, target_class: #class.to_string() }
                         } else {
                             panic!("Error occurred while calling getter method: {err}")
                         })?
@@ -414,13 +341,13 @@ fn struct_constructor(fields: Fields, class: &str) -> syn::Result<TokenStream> {
                 })
             } else if let Some(name) = &field.ident {
                 // Use the name of the field, and also call "get{Name}" if field not found
-                get_field(name.to_string(), true)
+                get_field(name.to_string().to_case(Case::Camel), true)
             } else {
-                errors.push(syn::Error::new(field.span(), "Field must have \"name\" or \"call\" if it is unnamed. See the 'field' attribute."));
-                return None
+                return Err(syn::Error::new(field.span(), "Field must have \"name\" or \"call\" if it is unnamed. See the 'field' attribute."))
             })
         })
-        .collect::<Box<_>>();
+        .filter_map(|res| res.map_err(|err| errors.push(err)).ok())
+        .collect::<Box<[_]>>();
     
     merge_errors(errors)?;
     
@@ -436,4 +363,34 @@ fn struct_constructor(fields: Fields, class: &str) -> syn::Result<TokenStream> {
             } }
         }
     })
+}
+
+/// Creates constructor literals for each of the *enum's variants*,
+/// checking that the object is the right class.
+/// 
+/// The returned results can be [`filter_maped`][`Iterator::filter_map()`],
+/// stripping out the error by pushing them to an *error [`Vec`]*.
+/// ```
+/// .filter_map(|res| res.map_err(|err| errors.push(err)).ok())
+/// ```
+/// 
+/// The constructor literal is built by [`struct_constructor()`].
+fn construct_variants<'a>(variants: impl Iterator<Item = &'a Variant> + 'a) -> impl Iterator<Item = syn::Result<TokenStream>> + 'a {
+    variants.enumerate()
+        .map(|(i, variant)| {
+            // Get class name for this variant
+            let class = get_class_attribute_required(&variant.attrs, variant.ident.span())?
+                .to_string_with_slashes();
+
+            let ident = &variant.ident;
+            // Get a constructor for this variant
+            let ctor = struct_constructor(&variant.fields, &class)?;
+            let _if = if i == 0 { quote!(if) } else { quote!(else if) };
+            // Check if Exception is the class that this Variant uses, and construct the variant
+            Ok(quote_spanned! {variant.span()=>
+                #_if env.is_assignable_from(#class, &__class).unwrap() {
+                    Ok(Self::#ident #ctor)
+                }
+            })
+        })
 }

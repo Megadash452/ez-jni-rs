@@ -1,6 +1,18 @@
 package me.test;
 
 public final class Test {
+    Test(int member) {
+        this.memberField = member;
+    }
+
+    public int memberField;
+    public Integer memberObject() {
+        return new Integer(this.memberField);
+    }
+    public int memberGetter() {
+        return this.memberField;
+    }
+
     public static void getVoid() { return; }
     public static boolean getBoolean() { return true; }
     public static char getChar() { return 'a'; }
@@ -18,4 +30,19 @@ public final class Test {
     
     public static void multiArg(boolean z, char c, byte b, short s, int i, long j, float f, double d, Object l) { }
     public static void arrayArg(boolean[] z, char[] c, byte[] b, short[] s, int[] i, long[] j, float[] f, double[] d, Object[] l) { }
+
+    public static sealed class SumClass {
+        public static final class SumClass1 extends SumClass {
+            SumClass1(int number) {
+                this.number = number;
+            }
+            public int number;
+        }
+        public static final class SumClass2 extends SumClass {
+            SumClass2(String str) {
+                this.str = str;
+            }
+            public String str;
+        }
+    }
 }

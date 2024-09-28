@@ -92,7 +92,7 @@ fn throw_panic(env: &mut JNIEnv, payload: Box<dyn Any + Send>) {
 /// This function is used by [jni_macros::call!].
 pub fn catch<'local, E: FromException<'local>>(env: &mut JNIEnv<'local>) -> Result<(), E> {
     match catch_exception(env) {
-        Some(ex) => match E::from_exception(env, &ex) {
+        Some(ex) => match E::from_exception(&ex, env) {
             Ok(e) => Err(e),
             Err(err) => {
                 eprintln!("Attempted to catch an exception, but failed to convert it to a concrete type:\n{err}");
@@ -110,7 +110,7 @@ pub fn catch<'local, E: FromException<'local>>(env: &mut JNIEnv<'local>) -> Resu
 pub fn try_catch<'local, E: FromException<'local>>(env: &mut JNIEnv<'local>) -> Option<E> {
     catch_exception(env)
         .and_then(|ex|
-            E::from_exception(env, &ex)
+            E::from_exception(&ex, env)
                 .inspect_err(|_| env.throw(ex).unwrap())
                 .ok()
         )
@@ -132,7 +132,7 @@ pub fn panic_exception(ex: JThrowable, env: &mut JNIEnv) -> ! {
 /// This function is used by [jni_macros::call!].
 pub fn panic_uncaught_exception(
     env: &mut JNIEnv,
-    target: Either<&'static str, &JObject>,
+    target: Either<&str, &JObject>,
     method_name: impl AsRef<str>,
 ) {
     if let Some(ex) = catch_exception(env) {

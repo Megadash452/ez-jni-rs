@@ -95,3 +95,13 @@ fn arguments() {
         [java.lang.Object]([])
     ) -> void);
 }
+
+#[test]
+fn constructor() {
+    // todo!()
+}
+
+#[test]
+fn obj_method() {
+    
+}

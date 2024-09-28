@@ -1,10 +1,11 @@
 use std::{fmt::Display, str::FromStr};
 
+use either::Either;
 use itertools::Itertools;
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt as _};
 use syn::{
-    parse::Parse, punctuated::{Pair, Punctuated}, spanned::Spanned as _, Ident, LitStr, Token
+    parse::Parse, punctuated::{Pair, Punctuated}, spanned::Spanned as _, Ident, ItemEnum, ItemStruct, LitStr, Token
 };
 
 /// Create an error from a **msg** to return in a proc_macro.
@@ -32,6 +33,31 @@ pub fn merge_errors(mut errors: Vec<syn::Error>) -> syn::Result<()> {
         Err(errors)
     } else {
         Ok(())
+    }
+}
+
+/// Converts the Derive input into a real *struct or enum*.
+pub fn item_from_derive_input(input: syn::DeriveInput) -> Either<ItemStruct, ItemEnum> {
+    match input.data {
+        syn::Data::Struct(st) => Either::Left(ItemStruct {
+            attrs: input.attrs,
+            vis: input.vis,
+            ident: input.ident,
+            generics: input.generics,
+            struct_token: st.struct_token,
+            fields: st.fields,
+            semi_token: st.semi_token,
+        }),
+        syn::Data::Enum(enm) => Either::Right(ItemEnum {
+            attrs: input.attrs,
+            vis: input.vis,
+            ident: input.ident,
+            generics: input.generics,
+            enum_token: enm.enum_token,
+            brace_token: enm.brace_token,
+            variants: enm.variants,
+        }),
+        syn::Data::Union(_) => panic!("Unions not supported"),
     }
 }
 
