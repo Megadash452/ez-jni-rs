@@ -1,4 +1,4 @@
-use std::{fmt::Display, str::FromStr};
+use std::{fmt::{Debug, Display}, str::FromStr};
 
 use either::Either;
 use itertools::Itertools;
@@ -218,15 +218,20 @@ impl Parse for ClassPath {
         Ok(Self { class, packages, nested_path })
     }
 }
-impl ToTokens for ClassPath {
-    /// Converts the path back to the same tokens it was obtained from: e.g. `java.lang.String`.
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        tokens.append_all(syn::parse_str::<TokenStream>(&self.to_string()).unwrap())
-    }
-}
+// impl ToTokens for ClassPath {
+//     /// Converts the path back to the same tokens it was obtained from: e.g. `java.lang.String`.
+//     fn to_tokens(&self, tokens: &mut TokenStream) {
+//         tokens.append_all(syn::parse_str::<TokenStream>(&self.to_string()).unwrap())
+//     }
+// }
 impl Display for ClassPath {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.to_string_helper(".", "."))
+    }
+}
+impl Debug for ClassPath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(&self, f)
     }
 }
 
@@ -396,4 +401,39 @@ pub trait SigType {
     /// The Type that is used in the signature of the method call. e.g. `"V"` or `"Ljava/lang/String;"`.
     /// It is the *uppercase [`SigType::sig_char`]*, and if it is `L` it is followed by the ClassPath and a `;`.
     fn sig_type(&self) -> LitStr;
+}
+
+#[cfg(test)]
+mod tests {
+    use syn::parse::Parser;
+
+    use super::*;
+
+    #[test]
+    fn class_path() {
+        fn parse_str_with<P>(s: &str, parser: P) -> syn::Result<P::Output>
+        where P: syn::parse::Parser {
+            Parser::parse2(parser, syn::parse_str(s)?)
+        }
+
+        syn::parse_str::<ClassPath>("me.author.MyClass").unwrap();
+        syn::parse_str::<ClassPath>("me.MyClass").unwrap();
+        syn::parse_str::<ClassPath>("me.author.MyClass$Nested").unwrap();
+        syn::parse_str::<ClassPath>("me.author.MyClass$Nested$Nested2").unwrap();
+        parse_str_with("me.author.MyClass.method", ClassPath::parse_with_trailing_method).unwrap();
+        parse_str_with("me.MyClass.method", ClassPath::parse_with_trailing_method).unwrap();
+        parse_str_with("me.author.MyClass$Nested.method", ClassPath::parse_with_trailing_method).unwrap();
+        parse_str_with("me.author.MyClass$Nested$Nested2.method", ClassPath::parse_with_trailing_method).unwrap();
+        
+        // Test errors
+        syn::parse_str::<ClassPath>("").unwrap_err();
+        syn::parse_str::<ClassPath>("me").unwrap_err();
+        syn::parse_str::<ClassPath>("me.author.MyClass.").unwrap_err();
+        syn::parse_str::<ClassPath>(".me.author.MyClass").unwrap_err();
+        syn::parse_str::<ClassPath>("MyClass$Nested").unwrap_err();
+        syn::parse_str::<ClassPath>("me.author.MyClass$").unwrap_err();
+        syn::parse_str::<ClassPath>("me.author.MyClass$Nested$").unwrap_err();
+        parse_str_with("MyClass.method", ClassPath::parse_with_trailing_method).unwrap_err();
+        parse_str_with("MyClass$Nested.method", ClassPath::parse_with_trailing_method).unwrap_err();
+    }
 }

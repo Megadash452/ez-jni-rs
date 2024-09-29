@@ -23,7 +23,7 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
         // Induce panic when fails to call method
         let call_failed_msg = match &call.call_type {
             Either::Left(StaticMethod(path))
-                => format!("Failed to call static method {name}() on {}: {{err}}", path.to_token_stream()),
+                => format!("Failed to call static method {name}() on {}: {{err}}", path.to_string()),
             Either::Right(ObjectMethod(_)) => format!("Failed to call {name}(): {{err}}"),
         };
         // Induce panic when the returned value is not the expected type
@@ -404,7 +404,7 @@ impl Parameter {
                     Type::RustPrimitive { ty, .. } => primitive_array(Either::Left(*ty)),
                     Type::Object(class) => {
                         let new_array_err = LitStr::new(
-                            &format!("Failed to create Java Object \"{}\" array: {{err}}", class.to_token_stream()),
+                            &format!("Failed to create Java Object \"{}\" array: {{err}}", class.to_string()),
                             array.span(),
                         );
                         let set_val_err = LitStr::new(
