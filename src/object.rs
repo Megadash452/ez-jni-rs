@@ -129,10 +129,10 @@ fn object_check_boilerplate(object: &JObject, path: &'static str, env: &mut JNIE
         return Err(FromObjectError::Null)
     }
     
-    let obj_class = env.get_object_class(&object)
+    let obj_class = env.get_object_class(object)
         .unwrap_or_else(|err| panic!("Failed to get Object's class: {err}"));
     
-    if !env.is_assignable_from(path, &obj_class).unwrap() {
+    if !env.is_instance_of(object, path).unwrap() {
         return Err(FromObjectError::ClassMismatch {
             obj_class: get_string(call!(obj_class.getName() -> java.lang.String), env),
             target_class: path
@@ -161,9 +161,19 @@ impl FromObject<'_> for String {
 }
 impl<'local> ToObject<'local> for String {
     fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        self.as_str().to_object(env)
+    }
+}
+impl<'local> ToObject<'local> for str {
+    fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         env.new_string(self)
             .unwrap_or_else(|err| panic!("Error converting Rust string to Java String: {err}"))
             .into()
+    }
+}
+impl<'local> ToObject<'local> for &str {
+    fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        (**self).to_object(env)
     }
 }
 
@@ -179,10 +189,8 @@ impl FromException<'_> for String {
     }
 }
 
-const IO_EXC_PATH: &str = "java/io/IOException";
-
 impl FromObject<'_> for std::io::Error {
-    const PATH: &'static str = IO_EXC_PATH;
+    const PATH: &'static str = "java/io/IOException";
 
     fn from_object(object: &JObject, env: &mut JNIEnv) -> Result<Self, FromObjectError> {
         static MAP: &[(&str, io::ErrorKind)] = &[
@@ -213,6 +221,10 @@ impl FromObject<'_> for std::io::Error {
             ("java/io/EOFException", io::ErrorKind::UnexpectedEof),
             // (, io::ErrorKind::OutOfMemory),
         ];
+
+        if object.is_null() {
+            return Err(FromObjectError::Null);
+        }
         
         let class = env.get_object_class(&object)
             .expect("Failed to get Object's class");
@@ -222,13 +234,13 @@ impl FromObject<'_> for std::io::Error {
 
         // All classes in map extend java.io.IOException.
         // Check this before the classes in map to avoid a bunch of pointless JNI calls
-        if !env.is_assignable_from(IO_EXC_PATH, &class).unwrap() {
-            return Err(FromObjectError::ClassMismatch { obj_class: class_str, target_class: IO_EXC_PATH })
+        if !env.is_instance_of(object, Self::PATH).unwrap() {
+            return Err(FromObjectError::ClassMismatch { obj_class: class_str, target_class: Self::PATH });
         }
         
         for &(class, error_kind) in MAP {
-            if env.is_assignable_from(class, &class).unwrap() {
-                return Ok(Self::new(error_kind, msg))
+            if env.is_instance_of(object, class).unwrap() {
+                return Ok(Self::new(error_kind, msg));
             }
         }
 
@@ -265,7 +277,7 @@ impl<'local> ToObject<'local> for std::io::Error {
         let class = MAP.iter()
             .find(|(err, _)| self.kind() == *err)
             .map(|(_, class)| *class)
-            .unwrap_or(IO_EXC_PATH);
+            .unwrap_or(Self::PATH);
 
         let msg = self.to_string().to_object(env);
 
@@ -274,7 +286,7 @@ impl<'local> ToObject<'local> for std::io::Error {
         ])
             .unwrap_or_else(|err| {
                 panic_uncaught_exception(env, Either::Left(class), "ctor"); // Does nothing if there is no exception
-                panic!("Error constructing {IO_EXC_PATH} object: {err}")
+                panic!("Error constructing {} object: {err}", Self::PATH)
             })
     }
 }
@@ -365,3 +377,7 @@ impl<'local> ToObject<'local> for f64 {
         new!(java.lang.Double(double(*self)))
     }
 }
+
+// TODO: missing unsigned integer types
+
+// TODO: missing array types

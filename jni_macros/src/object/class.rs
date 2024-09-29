@@ -19,9 +19,14 @@ pub fn from_object_st(st: ItemStruct) -> syn::Result<TokenStream> {
             const PATH: &'static str = #class;
 
             fn from_object(object: &::jni::objects::JObject, env: &mut ::jni::JNIEnv<#env_lt>) -> Result<Self, ::ez_jni::FromObjectError> {
-                let __class = env.get_object_class(&object)
+                if object.is_null() {
+                    return Err(::ez_jni::FromObjectError::Null);
+                }
+
+                let __class = env.get_object_class(object)
                     .unwrap_or_else(|err| panic!("Failed to get Object's class: {err}"));
-                if !env.is_assignable_from(Self::PATH, &__class).unwrap() {
+                
+                if !env.is_instance_of(object, Self::PATH).unwrap() {
                     return Err(::ez_jni::FromObjectError::ClassMismatch {
                         obj_class: ::ez_jni::utils::get_string(::ez_jni::call!(__class.getName() -> java.lang.String), env),
                         target_class: Self::PATH
@@ -62,19 +67,23 @@ pub fn from_object_enum(enm: ItemEnum) -> syn::Result<TokenStream> {
             const PATH: &'static str = #base_class; 
 
             fn from_object(object: &::jni::objects::JObject, env: &mut ::jni::JNIEnv<#env_lt>) -> Result<Self, ::ez_jni::FromObjectError> {
-                let __class = env.get_object_class(&object)
-                    .unwrap_or_else(|err| panic!("Failed to get Object's class: {err}"));
-                if !env.is_assignable_from(Self::PATH, &__class).unwrap() {
-                    return Err(::ez_jni::FromObjectError::ClassMismatch {
-                        obj_class: ::ez_jni::utils::get_string(::ez_jni::call!(__class.getName() -> java.lang.String), env),
-                        target_class: Self::PATH
-                    })
+                if object.is_null() {
+                    return Err(::ez_jni::FromObjectError::Null);
                 }
+                
+                let __class = env.get_object_class(object)
+                    .unwrap_or_else(|err| panic!("Failed to get Object's class: {err}"));
+                let __class_mismatch_err = ::ez_jni::FromObjectError::ClassMismatch {
+                    obj_class: ::ez_jni::utils::get_string(::ez_jni::call!(__class.getName() -> java.lang.String), env),
+                    target_class: Self::PATH
+                };
+
+                if !env.is_instance_of(object, Self::PATH).unwrap() {
+                    return Err(__class_mismatch_err)
+                }
+
                 #(#class_checks)* else {
-                    Err(::ez_jni::FromObjectError::ClassMismatch {
-                        obj_class: ::ez_jni::utils::get_string(::ez_jni::call!(__class.getName() -> java.lang.String), env),
-                        target_class: Self::PATH
-                    })
+                    Err(__class_mismatch_err)
                 }
             }
         }

@@ -18,9 +18,12 @@ pub fn from_exception_struct(st: ItemStruct) -> syn::Result<TokenStream> {
     Ok(quote! {
         impl <#st_generic_params> ::ez_jni::FromException<#env_lt> for #st_ident #st_generics {
             fn from_exception(object: &::jni::objects::JThrowable, env: &mut ::jni::JNIEnv<#env_lt>) -> Result<Self, ::ez_jni::FromObjectError> {
-                let __class = env.get_object_class(&object)
+                // object is guaranteed to not be null by the catch function
+
+                let __class = env.get_object_class(object)
                     .unwrap_or_else(|err| panic!("Failed to get Object's class: {err}"));
-                if !env.is_assignable_from(#class, &__class).unwrap() {
+                
+                if !env.is_instance_of(object, #class).unwrap() {
                     return Err(::ez_jni::FromObjectError::ClassMismatch {
                         obj_class: ::ez_jni::utils::get_string(::ez_jni::call!(__class.getName() -> java.lang.String), env),
                         target_class: #class
@@ -42,7 +45,7 @@ pub fn from_exception_enum(enm: ItemEnum) -> syn::Result<TokenStream> {
         .and_then(|o| o)
         .map(|class| class.to_jni_class_path());
     let base_class_check = base_class.map(|base_class| quote_spanned! {enm.ident.span()=>
-        if !env.is_assignable_from(#base_class, &__class).unwrap() {
+        if !env.is_instance_of(object, #base_class).unwrap() {
             return Err(::ez_jni::FromObjectError::ClassMismatch {
                 obj_class: ::ez_jni::utils::get_string(::ez_jni::call!(__class.getName() -> java.lang.String), env),
                 target_class: #base_class
@@ -67,8 +70,11 @@ pub fn from_exception_enum(enm: ItemEnum) -> syn::Result<TokenStream> {
     Ok(quote! {
         impl <#enm_generic_params> ez_jni::FromException<#env_lt> for #enm_ident #enm_generics {
             fn from_exception(object: &::jni::objects::JThrowable, env: &mut ::jni::JNIEnv<#env_lt>) -> Result<Self, ::ez_jni::FromObjectError> {
-                let __class = env.get_object_class(&exception)
+                // object is guaranteed to not be null by the catch function
+
+                let __class = env.get_object_class(object)
                     .unwrap_or_else(|err| panic!("Failed to get Object's class: {err}"));
+                
                 #base_class_check
                 #(#class_checks)* else {
                     Err(::ez_jni::FromObjectError::ClassMismatch {

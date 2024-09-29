@@ -388,7 +388,7 @@ fn construct_variants<'a>(variants: impl Iterator<Item = &'a Variant> + 'a) -> i
             let _if = if i == 0 { quote!(if) } else { quote!(else if) };
             // Check if Exception is the class that this Variant uses, and construct the variant
             Ok(quote_spanned! {variant.span()=>
-                #_if env.is_assignable_from(#class, &__class).unwrap() {
+                #_if env.is_instance_of(object, #class).unwrap() {
                     Ok(Self::#ident #ctor)
                 }
             })
