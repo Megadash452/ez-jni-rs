@@ -6,7 +6,7 @@ use super::*;
 
 pub fn from_object_st(st: ItemStruct) -> syn::Result<TokenStream> {
     let class = get_class_attribute_required(&st.attrs, st.ident.span())?
-        .to_string_with_slashes();
+        .to_jni_class_path();
     
     let mut st_generic_params = st.generics.params.clone();
     let env_lt = get_local_lifetime(Either::Left(&st), &mut st_generic_params);
@@ -41,7 +41,7 @@ pub fn from_object_enum(enm: ItemEnum) -> syn::Result<TokenStream> {
     let base_class = get_class_attribute_required(&enm.attrs, enm.ident.span())
         .map_err(|err| errors.push(err))
         .ok()
-        .map(|base_class| base_class.to_string_with_slashes());
+        .map(|base_class| base_class.to_jni_class_path());
 
     if enm.variants.is_empty() {
         errors.push(syn::Error::new(Span::call_site(), "Enum must have at least 1 variant"));

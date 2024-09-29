@@ -80,26 +80,86 @@ pub struct ClassPath {
     pub packages: Vec<(Ident, Token![.])>,
     /// The last Ident in the Punctuated list.
     pub class: Ident,
+    pub nested_path: Option<NestedPath>
+}
+pub struct NestedPath {
+    pub classes: Vec<(Ident, Token![$])>,
+    pub final_class: Ident
 }
 impl ClassPath {
+    /// Builds a [`TokenStream`] out of this path's items and returns its [`span`][TokenStream::span()].
     pub fn span(&self) -> Span {
         let mut tt = TokenStream::new();
         tt.append_all(self.packages.iter().map(|(t, p)| Pair::new(t, Some(p))));
         tt.append_all(self.class.to_token_stream());
+        if let Some(nested_path) = &self.nested_path {
+            tt.append_all(nested_path.classes.iter().map(|(t, p)| Pair::new(t, Some(p))));
+            tt.append_all(nested_path.final_class.to_token_stream());
+        }
         tt.span()
     }
 
-    /// Converts the [`ClassPath`] to a string of its components, where each component is separated by a slash.
-    /// e.g. `java/lang/String`.
-    pub fn to_string_with_slashes(&self) -> String {
-        Itertools::intersperse(
-            self.packages
-                .iter()
-                .map(|pair| pair.0.to_string())
-                .chain(Some(self.class.to_string())),
-            "/".to_string(),
-        )
-        .collect::<String>()
+    /// Parses the [`ClassPath`] with [`Parse::parse()`], but the final path *component* is a method name.
+    /// 
+    /// Returns the parsed [`ClassPath`] and the **method name**.
+    pub fn parse_with_trailing_method(input: syn::parse::ParseStream) -> syn::Result<(Self, Ident)> {
+        let mut path = Self::parse(input)?;
+
+        let method_name = match &path.nested_path {
+            // Parse the Dot and method name
+            Some(_) => {
+                input.parse::<Token![.]>()?;
+                input.parse::<Ident>()?
+            },
+            // If the path had no Nested Classes (i.e. it was only separated by Dots)
+            // the method name would have already been parsed, so take it out of the path.
+            None => {
+                // This implies that the path must be at least 3 components long: 2 for the path and 1 for the method name
+                if path.packages.len() < 2 {
+                    return Err(syn::Error::new(path.span(), "Java Class Path must have at least 1 package component (aside from the Class and method), such as `me.Class.method`"))
+                }
+
+                let method_name = path.class;
+                path.class = path.packages.pop().unwrap().0;
+                method_name
+            }
+        };
+
+        Ok((path, method_name))
+    }
+
+    /// Converts the [`ClassPath`] to a string used by `JNI`, where each component is separated by a slash.
+    /// e.g. `java/lang/String` or `me/author/Class$Nested`.
+    #[allow(unstable_name_collisions)]
+    pub fn to_jni_class_path(&self) -> String {
+        self.to_string_helper("/", "$")
+    }
+
+    /// Helps create the string in [`Self::to_jni_class_path()`] and [`Self::fmt()`].
+    /// 
+    /// **sep** is the separator between the package and class component.
+    /// **nested_sep** is the separator between the nested classes
+    #[allow(unstable_name_collisions)]
+    fn to_string_helper(&self, sep: &str, nested_sep: &str) -> String {
+        let nested_classes = match &self.nested_path {
+            Some(nested_path) => Box::new(
+                // Put nested_sep between packages and nested classes
+                Some(nested_sep.to_string()).into_iter()
+                    .chain(nested_path.classes.iter()
+                        .map(|(ident, _)| ident.to_string())
+                        .chain(Some(nested_path.final_class.to_string()))
+                        .intersperse(nested_sep.to_string())
+                    )
+            ) as Box<dyn Iterator<Item = String>>,
+            None => Box::new(None.into_iter()) as Box<dyn Iterator<Item = String>>
+        };
+
+        self.packages.iter()
+            .map(|(ident, _)| ident.to_string())
+            .chain(Some(self.class.to_string()))
+            .intersperse(sep.to_string())
+            .chain(nested_classes)
+            .collect::<String>()
     }
 }
 impl SigType for ClassPath {
@@ -107,44 +167,66 @@ impl SigType for ClassPath {
         Ident::new("l", self.span())
     }
     fn sig_type(&self) -> LitStr {
-        LitStr::new(&format!("L{};", self.to_string_with_slashes()), self.span())
+        LitStr::new(&format!("L{};", self.to_jni_class_path()), self.span())
     }
 }
 impl Parse for ClassPath {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let path = Punctuated::<Ident, Token![.]>::parse_separated_nonempty(input)?;
-        let span = path.span();
-        let class = path.last().unwrap().clone();
-        let packages = path
-            .into_pairs()
-            .into_iter()
-            .map(|pair| pair.into_tuple())
-            .filter_map(|pair| match pair.1 {
-                Some(punct) => Some((pair.0, punct)),
-                None => None, // Skips the last pair, because it will not have punct
-            })
-            .collect::<Vec<_>>();
-
-        if packages.is_empty() {
-            return Err(syn::Error::new(span, "Java Class Path must have at least one component for the packages"))
+        /// Converts a [`Punctuated`] whose last element is [`None`] to a [`Vec`] of pairs.
+        fn punctuated_to_pairs<T, P>(punctuated: Punctuated<T, P>) -> Vec<(T, P)> {
+            punctuated.into_pairs()
+                .into_iter()
+                .map(|pair| pair.into_tuple())
+                .filter_map(|pair| match pair.1 {
+                    Some(punct) => Some((pair.0, punct)),
+                    None => None, // Skips the last pair, because it will not have punct
+                })
+                .collect()
         }
 
-        Ok(Self { class, packages })
+        // Parse the dot-separated section `me.author.Class`
+        let mut path = Punctuated::<Ident, Token![.]>::parse_separated_nonempty(input)?;
+        // The class is the final component of the path
+        let class = match path.pop() {
+            Some(class) => class.into_value(),
+            None => return Err(syn::Error::new(path.span(), "Java Class Path must not be empty"))
+        };
+        if path.is_empty() {
+            return Err(syn::Error::new(path.span(), "Java Class Path must have more than one component, such as `me.author`"))
+        }
+        // Take the rest of the path components
+        let packages = punctuated_to_pairs(path);
+
+        // Path could have Nested classes, separated by `$`
+        let nested_path = if input.parse::<Token![$]>().is_ok() {
+            // Parse the Nested Class part of the path `Nested$Nested2`.
+            let mut path = Punctuated::<Ident, Token![$]>::parse_separated_nonempty(input)?;
+            // Is valid even if it containes only 1 component
+
+            Some(NestedPath {
+                // The class is the final component of the path
+                final_class: match path.pop() {
+                    Some(class) => class.into_value(),
+                    None => return Err(syn::Error::new(path.span(), "Nested Class Path must not be empty"))
+                },
+                classes: punctuated_to_pairs(path)
+            })
+        } else {
+            None
+        };
+
+        Ok(Self { class, packages, nested_path })
     }
 }
 impl ToTokens for ClassPath {
     /// Converts the path back to the same tokens it was obtained from: e.g. `java.lang.String`.
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        for (package, dot) in &self.packages {
-            tokens.append(package.clone());
-            tokens.append_all(dot.to_token_stream())
-        }
-        tokens.append(self.class.clone())
+        tokens.append_all(syn::parse_str::<TokenStream>(&self.to_string()).unwrap())
     }
 }
 impl Display for ClassPath {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.to_token_stream().to_string())
+        f.write_str(&self.to_string_helper(".", "."))
     }
 }
 

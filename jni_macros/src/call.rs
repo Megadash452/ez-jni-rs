@@ -47,7 +47,7 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
     // Build the macro function call
     let jni_call = match &call.call_type {
         Either::Left(StaticMethod(class)) => {
-            let class = LitStr::new(&class.to_string_with_slashes(), class.span());
+            let class = LitStr::new(&class.to_jni_class_path(), class.span());
             quote! { env.call_static_method(#class, #name, #signature, #arguments) }
         }
         Either::Right(ObjectMethod(object)) => quote! {
@@ -59,7 +59,7 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
     // The class or object that the method is being called on. Used for panic message.
     let target = match call.call_type {
         Either::Left(StaticMethod(class)) => {
-            let class = class.to_string_with_slashes();
+            let class = class.to_jni_class_path();
             quote! { ::either::Either::Left(#class) }
         }
         Either::Right(ObjectMethod(obj)) => quote! { ::either::Either::Right(&(#obj)) },
@@ -100,7 +100,7 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
 
 /// Processes input for macro call [super::new!].
 pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
-    let class = call.class.to_string_with_slashes();
+    let class = call.class.to_jni_class_path();
     let signature = gen_signature(call.parameters.iter(), &Return::Void(Ident::new("void", Span::call_site())));
     let param_vars = gen_arg_vars_defs(call.parameters.iter());
     let arguments = gen_arguments(call.parameters.iter());
@@ -139,12 +139,16 @@ pub struct MethodCall {
 }
 impl Parse for MethodCall {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let (call_type, method_name) = if input.parse::<Token![static]>().is_ok() {
+            let (class_path, method_name) = ClassPath::parse_with_trailing_method(input)?;
+            (Either::Left(StaticMethod(class_path)), method_name)
+        } else {
+            (Either::Right(input.parse::<ObjectMethod>()?), input.parse()?)
+        };
+
         Ok(Self {
-            call_type: input
-                .parse::<StaticMethod>()
-                .map(|i| Either::Left(i))
-                .or_else(|_| input.parse::<ObjectMethod>().map(|i| Either::Right(i)))?,
-            method_name: { input.parse()? },
+            call_type,
+            method_name,
             parameters: {
                 let arg_tokens;
                 parenthesized!(arg_tokens in input);
@@ -191,18 +195,9 @@ impl Parse for ConstructorCall {
 
 /// The call is for a static method.
 /// ```
-/// method_call!(static java.lang.String::methodName ...);
+/// call!(static java.lang.String.methodName ...);
 /// ```
 pub struct StaticMethod(pub ClassPath);
-impl Parse for StaticMethod {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        input.parse::<Token![static]>()?;
-        let path = input.parse()?;
-        // TODO: use Dot to separate Class path and method name instead
-        input.parse::<Token![::]>()?;
-        Ok(Self(path))
-    }
-}
 
 /// The call is for a Method of an existing Object, stored in a variable.
 /// If the object is more than an Ident, it must be enclosed in `parenthesis` or `braces`.
@@ -303,7 +298,7 @@ impl Display for Type {
             Self::JavaPrimitive { ty, .. } => ty.to_string(),
             // Convert form Rust to Java
             Self::RustPrimitive { ty, .. } => JavaPrimitive::from(*ty).to_string(),
-            Self::Object(class) => format!("Object({})", class.to_string_with_slashes()),
+            Self::Object(class) => format!("Object({})", class.to_jni_class_path()),
         };
         f.write_str(&s)
     }
@@ -416,7 +411,7 @@ impl Parameter {
                             &format!("Failed to set the value of Object array at index {{i}}: {{err}}"),
                             array.span(),
                         );
-                        let class_path = LitStr::new(&class.to_string_with_slashes(), array.span());
+                        let class_path = LitStr::new(&class.to_jni_class_path(), array.span());
                         // Fill the array
                         let mut elements = quote! {};
                         for (i, element) in array.iter().enumerate() {
@@ -566,7 +561,7 @@ impl Return {
             Return::Assertive(Type::Object(class))
             | Return::Option(class)
             | Return::Result(ResultType::Assertive(Type::Object(class)), _)
-            | Return::Result(ResultType::Option(class), _) => class.to_string_with_slashes(),
+            | Return::Result(ResultType::Option(class), _) => class.to_jni_class_path(),
             Return::Assertive(ty) | Return::Result(ResultType::Assertive(ty), _) => ty.to_string(),
             Return::Void(_) | Return::Result(ResultType::Void(_), _) => "void".to_string(),
         }
@@ -587,7 +582,7 @@ impl Return {
             | Return::Option(class)
             | Return::Result(ResultType::Assertive(Type::Object(class)), _)
             | Return::Result(ResultType::Option(class), _) =>
-                if class.to_string_with_slashes() == "java/lang/String" {
+                if class.to_jni_class_path() == "java/lang/String" {
                     // Wrap java.lang.String in JString
                     Some(quote! { ::jni::objects::JString::from(#value) })
                 } else {

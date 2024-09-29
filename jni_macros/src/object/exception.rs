@@ -7,7 +7,7 @@ use super::*;
 
 pub fn from_exception_struct(st: ItemStruct) -> syn::Result<TokenStream> {
     let class = get_class_attribute_required(&st.attrs, st.ident.span())?
-        .to_string_with_slashes();
+        .to_jni_class_path();
     
     let mut st_generic_params = st.generics.params.clone();
     let env_lt = get_local_lifetime(Either::Left(&st), &mut st_generic_params);
@@ -40,7 +40,7 @@ pub fn from_exception_enum(enm: ItemEnum) -> syn::Result<TokenStream> {
         .map_err(|err| errors.push(err))
         .ok()
         .and_then(|o| o)
-        .map(|class| class.to_string_with_slashes());
+        .map(|class| class.to_jni_class_path());
     let base_class_check = base_class.map(|base_class| quote_spanned! {enm.ident.span()=>
         if !env.is_assignable_from(#base_class, &__class).unwrap() {
             return Err(::ez_jni::FromObjectError::ClassMismatch {

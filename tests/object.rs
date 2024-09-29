@@ -27,7 +27,7 @@ struct MyClass2<'local> {
 }
 
 #[derive(Debug, FromObject, PartialEq, Eq)]
-#[class(me.test.Test.SumClass)]
+#[class(me.test.Test$SumClass)]
 enum MyEnumClass {
     #[class(me.test.Test$SumClass$SumClass1)]
     Variant1 { number: i32 },
@@ -84,19 +84,19 @@ impl<'local> Exception<'local> {
 fn from_exception() {
     setup_env!(env);
     assert_eq!(
-        call!(static me.test.Test::throwObj() -> Result<java.lang.Object, MyErr1>)
+        call!(static me.test.Test.throwObj() -> Result<java.lang.Object, MyErr1>)
             .unwrap_err()
             .message,
         "exception"
     );
     assert_eq!(
-        call!(static me.test.Test::throwObj() -> Result<java.lang.Object, MyErr2>)
+        call!(static me.test.Test.throwObj() -> Result<java.lang.Object, MyErr2>)
             .unwrap_err()
             .msg,
         "exception"
     );
     assert_eq!(
-        call!(static me.test.Test::throwObj() -> Result<java.lang.Object, Exception>)
+        call!(static me.test.Test.throwObj() -> Result<java.lang.Object, Exception>)
             .unwrap_err()
             .message(&mut env),
         "exception"

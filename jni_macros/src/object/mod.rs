@@ -261,7 +261,7 @@ impl FieldType {
                 sig_ty.to_token_stream()
             },
             Self::Object(class) => class.sig_type().to_token_stream(),
-            Self::Implicit(ty) => quote_spanned! {ty.span()=> format!("L{};", <#ty as ::ez_jni::FromObject>::PATH) }
+            Self::Implicit(ty) => quote_spanned! {ty.span()=> &format!("L{};", <#ty as ::ez_jni::FromObject>::PATH) }
         }
     }
     /// The same [`Self::field_sig_type()`], but for use in the getter method signature.
@@ -315,7 +315,7 @@ fn struct_constructor(fields: &Fields, class: &str) -> syn::Result<TokenStream> 
                 let sig_ty = ty.field_sig_type();
                 
                 ty.converted(quote_spanned! {field.span()=>
-                    ::ez_jni::utils::get_field(&object, #name, &#sig_ty, #getter_fallback, env)?
+                    ::ez_jni::utils::get_field(&object, #name, #sig_ty, #getter_fallback, env)?
                         .#sig_char().unwrap_or_else(|err| panic!("The method call did not return the expected type: {err}"))
                 })
             };
@@ -380,7 +380,7 @@ fn construct_variants<'a>(variants: impl Iterator<Item = &'a Variant> + 'a) -> i
         .map(|(i, variant)| {
             // Get class name for this variant
             let class = get_class_attribute_required(&variant.attrs, variant.ident.span())?
-                .to_string_with_slashes();
+                .to_jni_class_path();
 
             let ident = &variant.ident;
             // Get a constructor for this variant
