@@ -370,7 +370,7 @@ fn struct_constructor(fields: &Fields, class: &str) -> syn::Result<TokenStream> 
 /// 
 /// The returned results can be [`filter_maped`][`Iterator::filter_map()`],
 /// stripping out the error by pushing them to an *error [`Vec`]*.
-/// ```
+/// ```ignore
 /// .filter_map(|res| res.map_err(|err| errors.push(err)).ok())
 /// ```
 /// 

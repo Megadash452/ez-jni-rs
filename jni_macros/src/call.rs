@@ -194,7 +194,7 @@ impl Parse for ConstructorCall {
 }
 
 /// The call is for a static method.
-/// ```
+/// ```ignore
 /// call!(static java.lang.String.methodName ...);
 /// ```
 pub struct StaticMethod(pub ClassPath);

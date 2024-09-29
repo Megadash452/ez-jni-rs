@@ -33,9 +33,9 @@ pub fn package(input: TokenStream) -> TokenStream {
 /// The *return value* should only be a type with *integer representation*, such as a pointer (*const T or *mut T), an enum using *repr(T)*, i32, bool, etc.
 ///
 /// ### Example
-/// ```
+/// ```ignore
 /// # use jni_macros::{package, jni_fn};
-/// package!("me.author.packagename")
+/// package!("me.author.packagename");
 ///
 /// #[jni_fn("MyClass")]
 /// pub fn hello_world<'local>(s: JString<'local>) {
@@ -44,7 +44,7 @@ pub fn package(input: TokenStream) -> TokenStream {
 /// ```
 /// expands to
 ///
-/// ```
+/// ```ignore
 /// #[no_mangle]
 /// pub extern "system" fn Java_me_author_packagename_myClass_hello_1world<'local>(
 ///     mut env: ::jni::JNIEnv<'local>, _class: ::jni::objects::JClass<'local>,
@@ -170,15 +170,15 @@ pub fn jni_fn(attr_args: TokenStream, input: TokenStream) -> TokenStream {
 /// A macro that helps make JNI Method calls less verbose and easier to use in Rust.
 ///
 /// Can be used to call **static methods** on Java classes:
-/// ```text
+/// ```ignore
 /// call!(static me.author.ClassName::methodName(int(arg1), java.lang.String(arg2)) -> int)
 ///                 Primitive type parameter --->\_______/  \____________________/     \_/
 ///                   Object type parameter --------------------------^                 |
 ///                      Return type        --------------------------------------------^
 /// ```
 /// Or to call **object methods**:
-/// ```no_run
-/// call!(object.methodName() -> void)
+/// ```ignore
+/// call!(object.methodName() -> void);
 /// ```
 ///
 /// # Syntax
@@ -191,9 +191,9 @@ pub fn jni_fn(attr_args: TokenStream, input: TokenStream) -> TokenStream {
 ///
 /// To use an **object method** call, simply put a *variable name* that is of type `JObject` (or put an *expression* that resolves to a `JObject` in parentheses).
 /// Example:
-/// ```no_run
-/// call!(my_object.myMethod() -> void)
-/// call!((getObject()).myMethod() -> void)
+/// ```ignore
+/// call!(my_object.myMethod() -> void);
+/// call!((getObject()).myMethod() -> void);
 /// ```
 ///
 /// ## Parameters
@@ -205,7 +205,7 @@ pub fn jni_fn(attr_args: TokenStream, input: TokenStream) -> TokenStream {
 /// The value goes in parenthesis after the parameter type, and is any expression that resolves to the right type.
 /// For *arrays*, the value could be one of the `JPrimitiveArray`s or `JObjectArray`, or an array literal of either.
 ///
-/// ```no_run
+/// ```ignore
 /// int(2 + 2) // primitive
 /// me.author.ClassName(value) // object
 /// [bool]([true, false]) // primitive array
@@ -224,7 +224,7 @@ pub fn jni_fn(attr_args: TokenStream, input: TokenStream) -> TokenStream {
 /// - Use **`Result<Option<Type>, E>`** when the method can throw, and the return value *can be `NULL`*.
 ///
 /// Here are some examples of return types:
-/// ```no_run
+/// ```ignore
 /// -> int OR java.lang.String
 /// -> Option<java.lang.String>
 /// -> Result<int, String> OR Result<java.lang.String, String>
@@ -253,7 +253,7 @@ pub fn call(input: TokenStream) -> TokenStream {
 /// 
 /// Has similar syntax as [*calling a static method*][crate::call!], but there is no *method name* or *return value*.
 /// 
-/// ```no_run
+/// ```ignore
 /// new!(me.author.ClassName(int(arg1), java.lang.String(arg2)))
 /// ```
 /// 
@@ -263,7 +263,7 @@ pub fn call(input: TokenStream) -> TokenStream {
 /// This will make the constructor call return a `Result<JObject, E>` instead,
 /// and the exception will be caught if it occurs.
 /// 
-/// ```no_run
+/// ```ignore
 /// new!(me.author.ClassName() throws String)
 /// ```
 #[proc_macro]
