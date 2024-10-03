@@ -14,7 +14,7 @@ mod android {
     #[doc(hidden)]
     /// Does the printing for [`jni_macros::println!`].
     pub fn __println(s: String, env: &mut JNIEnv) {
-        call!(static android.util.Log::i(
+        call!(static android.util.Log.i(
             java.lang.String(env.new_string("Rust").unwrap()),
             java.lang.String(env.new_string(s).unwrap())
         ) -> int);
@@ -23,7 +23,7 @@ mod android {
     #[doc(hidden)]
     /// Does the printing for [`jni_macros::eprintln!`].
     pub fn __eprintln(s: String, env: &mut JNIEnv) {
-        call!(static android.util.Log::e(
+        call!(static android.util.Log.e(
             java.lang.String(env.new_string("Rust").unwrap()),
             java.lang.String(env.new_string(s).unwrap())
         ) -> int);

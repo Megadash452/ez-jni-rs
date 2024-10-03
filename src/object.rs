@@ -95,7 +95,7 @@ where T: ToObject<'local> {
 /// Allows converting *Java Exceptions* to Rust types that allow for better error handling.
 /// 
 /// # Derive
-/// Uses the same derive syntax as [`Class`].
+/// Uses the same derive syntax as [`FromObject`].
 /// 
 /// ```
 /// # use ez_jni::FromException;
@@ -148,7 +148,7 @@ impl FromObject<'_> for String {
     /// Get a [`String`] from some random Object.
     /// 
     /// Don't use this function, it only exist for compatibility.
-    /// Use [`get_string()`] instead because you will mostly be using it with [`JString`].
+    /// Use [`get_string()`] instead because you will mostly be using it with [`JString`][jni::objects::JString].
     fn from_object(object: &JObject, env: &mut JNIEnv) -> Result<Self, FromObjectError> {
         object_check_boilerplate(object, Self::PATH, env)?;
         // Already checked that it is java.lang.String and is not NULL

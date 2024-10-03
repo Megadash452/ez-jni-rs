@@ -33,8 +33,9 @@ pub fn package(input: TokenStream) -> TokenStream {
 /// The *return value* should only be a type with *integer representation*, such as a pointer (*const T or *mut T), an enum using *repr(T)*, i32, bool, etc.
 ///
 /// ### Example
-/// ```ignore
+/// ```
 /// # use jni_macros::{package, jni_fn};
+/// # use jni::objects::JString;
 /// package!("me.author.packagename");
 ///
 /// #[jni_fn("MyClass")]
@@ -44,13 +45,14 @@ pub fn package(input: TokenStream) -> TokenStream {
 /// ```
 /// expands to
 ///
-/// ```ignore
+/// ```
+/// # use jni::objects::JString;
 /// #[no_mangle]
 /// pub extern "system" fn Java_me_author_packagename_myClass_hello_1world<'local>(
 ///     mut env: ::jni::JNIEnv<'local>, _class: ::jni::objects::JClass<'local>,
 ///     s: JString<'local>
 /// ) {
-///     __catch_throw(&mut env, move |env| {
+///     ::ez_jni::__throw::catch_throw(&mut env, move |env| {
 ///         // body
 ///     })
 /// }
@@ -170,28 +172,30 @@ pub fn jni_fn(attr_args: TokenStream, input: TokenStream) -> TokenStream {
 /// A macro that helps make JNI Method calls less verbose and easier to use in Rust.
 ///
 /// Can be used to call **static methods** on Java classes:
-/// ```ignore
-/// call!(static me.author.ClassName::methodName(int(arg1), java.lang.String(arg2)) -> int)
-///                 Primitive type parameter --->\_______/  \____________________/     \_/
-///                   Object type parameter --------------------------^                 |
-///                      Return type        --------------------------------------------^
+/// ```text
+/// call!(static me.author.ClassName.methodName(int(arg1), java.lang.String(arg2)) -> int)
+///                Primitive type parameter --->\_______/  \____________________/     \_/
+///                  Object type parameter --------------------------^                 |
+///                     Return type        --------------------------------------------^
 /// ```
 /// Or to call **object methods**:
-/// ```ignore
+/// ```no_run
+/// # use jni_macros::call;
 /// call!(object.methodName() -> void);
 /// ```
 ///
 /// # Syntax
 ///
-/// To use the **static method** call, prepend the call with `static`, then the path to the *class name*,
-/// and finally a *PathSeparator* (`::`) to separate the class from the method name.
-/// ```nor_run
-/// call!(static me.author.ClassName::methodName() -> void)
+/// To use the **static method** call, prepend the call with `static`, then the path to the *class* and *method*,
+/// ```no_run
+/// # use jni_macros::call;
+/// call!(static me.author.ClassName.methodName() -> void);
 /// ```
 ///
 /// To use an **object method** call, simply put a *variable name* that is of type `JObject` (or put an *expression* that resolves to a `JObject` in parentheses).
 /// Example:
-/// ```ignore
+/// ```no_run
+/// # use jni_macros::call;
 /// call!(my_object.myMethod() -> void);
 /// call!((getObject()).myMethod() -> void);
 /// ```
@@ -235,11 +239,11 @@ pub fn jni_fn(attr_args: TokenStream, input: TokenStream) -> TokenStream {
 ///
 /// ### Exceptions
 ///
-/// The **`E`** in the `Result` type can be any Rust type that *implements [`FromException`]*
-/// (usually an [Error Enum](https://docs.rs/thiserror/latest/thiserror/)).
-/// See also the derive macro for [`FromException`][from_exception].
+/// The **`E`** in the `Result` type can be any Rust type that *implements [`FromException`][ez_jni::FromException]*
+/// (usually an *Error Enum*).
 ///
-/// If the Exception can't be converted to an `E`, the Exception will not be caught and the program will `panic!`.
+/// If the call to [`from_exception`][ez_jni::FromException::from_exception] fails,
+/// the Exception will not be caught and the program will `panic!`.
 /// This is similar to how in Java, if the exception is not of any type of the *catch blocks*, the exception will not be caught.
 ///
 /// When `E` is [`String`], it will catch any Exception.
@@ -253,7 +257,8 @@ pub fn call(input: TokenStream) -> TokenStream {
 /// 
 /// Has similar syntax as [*calling a static method*][crate::call!], but there is no *method name* or *return value*.
 /// 
-/// ```ignore
+/// ```no_run
+/// # use jni_macros::new;
 /// new!(me.author.ClassName(int(arg1), java.lang.String(arg2)))
 /// ```
 /// 
@@ -263,7 +268,8 @@ pub fn call(input: TokenStream) -> TokenStream {
 /// This will make the constructor call return a `Result<JObject, E>` instead,
 /// and the exception will be caught if it occurs.
 /// 
-/// ```ignore
+/// ```no_run
+/// # use jni_macros::new;
 /// new!(me.author.ClassName() throws String)
 /// ```
 #[proc_macro]
@@ -303,7 +309,7 @@ pub fn from_exception(input: TokenStream) -> TokenStream {
 /// 
 /// Use this macro instead of [`std::println!`] everywhere.
 /// 
-/// See also [eprintln!].
+/// See also [`eprintln()`].
 #[proc_macro]
 pub fn println(input: TokenStream) -> TokenStream {
     let input = proc_macro2::TokenStream::from(input);
@@ -329,7 +335,7 @@ pub fn println(input: TokenStream) -> TokenStream {
 /// 
 /// Use this macro instead of [`std::eprintln!`] everywhere.
 /// 
-/// See also [println!].
+/// See also [println()].
 #[proc_macro]
 pub fn eprintln(input: TokenStream) -> TokenStream {
     let input = proc_macro2::TokenStream::from(input);

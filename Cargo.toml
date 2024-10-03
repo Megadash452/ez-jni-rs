@@ -13,5 +13,9 @@ jni = { version = "0.21", default-features = false }
 jni_macros = { path = "./jni_macros" }
 thiserror = "1.0.63"
 
-[dev-dependencies]
+[workspace.dependencies]
+ez_jni = { path = "./" }
 jni = { version = "0.21.1", features = ["invocation"] }
+
+[dev-dependencies]
+jni = { workspace = true }

@@ -14,3 +14,7 @@ itertools = "0.13.0"
 proc-macro2 = "1.0.86"
 quote = "1.0.36"
 syn = { version = "2.0.72", features = ["full"] }
+
+[dev-dependencies]
+ez_jni = { workspace = true }
+jni = { workspace = true }

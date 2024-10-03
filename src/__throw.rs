@@ -38,7 +38,7 @@ static PANIC_LOCATION: RwLock<Option<PanicLocation>> = RwLock::new(None);
 /// This function is used by [jni_macros::jni_fn].
 pub fn catch_throw<'local, R>(
     env: &mut JNIEnv<'local>,
-    f: fn(&mut JNIEnv<'local>) -> R,
+    f: impl FnOnce(&mut JNIEnv<'local>) -> R,
 ) -> R {
     std::panic::set_hook(Box::new(|info| {
         if let Ok(mut panic_location) = PANIC_LOCATION.write() {
