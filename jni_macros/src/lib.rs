@@ -1,14 +1,16 @@
+mod jni_fn;
 mod call;
 mod object;
 mod utils;
 
 use call::{ConstructorCall, MethodCall};
 use either::Either;
+use jni_fn::JniFn;
 use proc_macro::TokenStream;
-use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
+use quote::{quote, ToTokens};
 use std::sync::RwLock;
-use syn::{spanned::Spanned, GenericParam, Ident, ItemFn, LitStr};
-use utils::{error, error_spanned, item_from_derive_input};
+use syn::LitStr;
+use utils::{error, item_from_derive_input};
 
 static PACKAGE_NAME: RwLock<Option<String>> = RwLock::new(None);
 
@@ -59,114 +61,24 @@ pub fn package(input: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro_attribute]
 pub fn jni_fn(attr_args: TokenStream, input: TokenStream) -> TokenStream {
-    let mut input = syn::parse_macro_input!(input as ItemFn);
-    let mut errors = quote! {};
+    let input = syn::parse_macro_input!(input as JniFn);
+    // Contains extra data of the Class path that is combined with PACKAGE_NAME
     let extra_package_data = if attr_args.is_empty() {
-        None
+        String::new()
     } else {
-        Some(syn::parse_macro_input!(attr_args as LitStr).value())
+        syn::parse_macro_input!(attr_args as LitStr).value()
     };
-
-    // Function must have 'pub' visibility
-    match input.vis {
-        syn::Visibility::Public(_) => {}
-        _ => errors.append_all(error_spanned(
-            input.sig.span(),
-            "Function must have 'pub' visibility",
-        )),
-    }
-
-    // Function must have one lifetime (named "local") (accumulate errors)
-    let lifetimes = input.sig.generics.lifetimes().collect::<Box<[_]>>();
-    if lifetimes.len() != 1 {
-        errors.append_all(error_spanned(
-            input.sig.ident.span(),
-            "Function must have one and only one lifetime, named \"local\"",
-        ))
-    }
-    if let Some(lifetime) = lifetimes.get(0) {
-        if lifetime.lifetime.ident.to_string() != "local" {
-            errors.append_all(error_spanned(
-                lifetimes[0].span(),
-                "The lifetime must be named \"local\"",
-            ))
-        }
-    }
-
-    // Function can't have generic types (accumulate errors)
-    input
-        .sig
-        .generics
-        .params
-        .iter()
-        .filter(|g| match g {
-            GenericParam::Const(_) | GenericParam::Type(_) => true,
-            _ => false,
-        })
-        .for_each(|generic| {
-            errors.append_all(error_spanned(
-                generic.span(),
-                "Function can't have generic constants or types",
-            ));
-        });
-
-    // Function can't have arguments named "env" or "_class" (accumulate errors)
-    input
-        .sig
-        .inputs
-        .iter()
-        .filter_map(|arg| match arg {
-            syn::FnArg::Typed(arg) => Some(arg),
-            _ => None,
-        })
-        .filter(|&arg| ["env", "_class"].contains(&arg.pat.to_token_stream().to_string().as_str()))
-        .for_each(|arg| {
-            errors.append_all(error_spanned(
-                arg.span(),
-                format!(
-                    "Function can't have an argument named {:?}",
-                    arg.pat.to_token_stream().to_string()
-                ),
-            ));
-        });
-
-    if !errors.is_empty() {
-        return errors.into();
-    }
-
-    // Change name of function
-    let class_path = match &*PACKAGE_NAME.read().unwrap() {
+    
+    let package = PACKAGE_NAME.read().unwrap();
+    let package = match package.as_ref() {
         // Process package data to use underscores (_)
-        Some(package_name) => format!(
-            "{package_name}.{}",
-            extra_package_data.unwrap_or("".to_string())
-        )
-        .replace(['.', '/'], "_"),
+        Some(package_name) => package_name,
         None => return error("Macro jni_macros::package! has not been called.").into(),
     };
-    let name = input.sig.ident.to_string().replace('_', "_1");
-    input.sig.ident = Ident::new(&format!("Java_{class_path}_{name}"), input.sig.ident.span());
-    // Convert to system ABI
-    input.attrs.push(syn::parse_quote!(#[no_mangle]));
-    input.sig.abi = Some(syn::parse_quote!(extern "system"));
-    // Add env and _class arguments
-    input.sig.inputs.insert(
-        0,
-        syn::FnArg::Typed(syn::parse_quote!(mut env: ::jni::JNIEnv<'local>)),
-    );
-    input.sig.inputs.insert(
-        1,
-        syn::FnArg::Typed(syn::parse_quote!(_class: ::jni::objects::JClass<'local>)),
-    );
-    // Wrap the block in a panic catcher
-    let unwrapped_block = *input.block;
-    input.block = Box::new(syn::parse2(
-        quote_spanned! {unwrapped_block.span()=> {
-            ::ez_jni::__throw::catch_throw(&mut env, move |env| #unwrapped_block)
-        } }
-    ).unwrap());
 
-    quote! { #input }.into()
+    jni_fn::jni_fn(input, package, &extra_package_data)
+        .into_token_stream()
+        .into()
 }
 
 /// A macro that helps make JNI Method calls less verbose and easier to use in Rust.

@@ -5,7 +5,7 @@ use itertools::Itertools;
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt as _};
 use syn::{
-    parse::Parse, punctuated::{Pair, Punctuated}, spanned::Spanned as _, Ident, ItemEnum, ItemStruct, LitStr, Token
+    parse::{discouraged::Speculative as _, Parse}, punctuated::{Pair, Punctuated}, spanned::Spanned as _, Ident, ItemEnum, ItemStruct, LitStr, Token
 };
 
 /// Create an error from a **msg** to return in a proc_macro.
@@ -308,6 +308,20 @@ impl Display for RustPrimitive {
         })
     }
 }
+impl From<JavaPrimitive> for RustPrimitive {
+    fn from(value: JavaPrimitive) -> Self {
+        match value {
+            JavaPrimitive::Boolean => RustPrimitive::Bool,
+            JavaPrimitive::Char => RustPrimitive::Char,
+            JavaPrimitive::Byte => RustPrimitive::I8,
+            JavaPrimitive::Short => RustPrimitive::I16,
+            JavaPrimitive::Int => RustPrimitive::I32,
+            JavaPrimitive::Long => RustPrimitive::I64,
+            JavaPrimitive::Float => RustPrimitive::F32,
+            JavaPrimitive::Double => RustPrimitive::F64,
+        }
+    }
+}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum JavaPrimitive {
@@ -389,6 +403,89 @@ impl From<RustPrimitive> for JavaPrimitive {
             RustPrimitive::F32  => JavaPrimitive::Float,
             RustPrimitive::F64  => JavaPrimitive::Double,
         }
+    }
+}
+
+/// A Type is an [`Ident`] of one of the following Variants in lowercase, or a [`Type::Object`].
+///
+/// Note that `Void` isn't a variant here.
+/// Since [`Type`] is used by both [`Parameter`] and [`Return`],
+/// and [`Paramter`] can't be void, the void variant was moved to [`Return`] (and by extension [`ResultType`]).
+pub enum Type {
+    JavaPrimitive { ident: Ident, ty: JavaPrimitive },
+    RustPrimitive { ident: Ident, ty: RustPrimitive },
+    Object(ClassPath),
+}
+impl Type {
+    pub fn span(&self) -> Span {
+        match self {
+            Self::JavaPrimitive { ident, .. } | Self::RustPrimitive { ident, .. } => ident.span(),
+            Self::Object(class) => class.span(),
+        }
+    }
+}
+impl SigType for Type {
+    fn sig_char(&self) -> Ident {
+        match self {
+            Self::JavaPrimitive { ident, ty } => {
+                let mut sig_char = ty.sig_char();
+                sig_char.set_span(ident.span());
+                sig_char
+            },
+            Self::RustPrimitive { ident, ty, .. } => {
+                let mut sig_char = JavaPrimitive::from(*ty).sig_char();
+                sig_char.set_span(ident.span());
+                sig_char
+            },
+            Self::Object(class) => class.sig_char(),
+        }
+    }
+    fn sig_type(&self) -> LitStr {
+        match self {
+            Self::JavaPrimitive { ident, ty } => {
+                let mut sig_type = ty.sig_type();
+                sig_type.set_span(ident.span());
+                sig_type
+            },
+            Self::RustPrimitive { ident, ty } => {
+                let mut sig_type = JavaPrimitive::from(*ty).sig_type();
+                sig_type.set_span(ident.span());
+                sig_type
+            },
+            Self::Object(class) => class.sig_type(),
+        }
+    }
+}
+impl Parse for Type {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let fork = input.fork();
+        let ident = fork.parse::<Ident>()?;
+        let ident_str = ident.to_string();
+        match RustPrimitive::from_str(&ident_str).ok() {
+            Some(ty) => {
+                input.advance_to(&fork);
+                Ok(Self::RustPrimitive { ident, ty })
+            },
+            // JavaPrimitive::Char will never be constructued here because the RustPrimitive takes priority
+            None => match JavaPrimitive::from_str(&ident_str).ok() {
+                Some(ty) => {
+                    input.advance_to(&fork);
+                    Ok(Self::JavaPrimitive { ident, ty })
+                }
+                None => return Ok(Self::Object(input.parse()?)),
+            },
+        }
+    }
+}
+impl Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::JavaPrimitive { ty, .. } => ty.to_string(),
+            // Convert form Rust to Java
+            Self::RustPrimitive { ty, .. } => JavaPrimitive::from(*ty).to_string(),
+            Self::Object(class) => format!("Object({})", class.to_jni_class_path()),
+        };
+        f.write_str(&s)
     }
 }
 
