@@ -4,8 +4,8 @@ use quote::quote;
 use syn::{ItemEnum, ItemStruct};
 use super::*;
 
-pub fn from_object_st(st: ItemStruct) -> syn::Result<TokenStream> {
-    let class = get_class_attribute_required(&st.attrs, st.ident.span())?
+pub fn from_object_st(mut st: ItemStruct) -> syn::Result<TokenStream> {
+    let class = get_class_attribute_required(&mut st.attrs, st.ident.span())?
         .to_jni_class_path();
     
     let mut st_generic_params = st.generics.params.clone();
@@ -39,11 +39,11 @@ pub fn from_object_st(st: ItemStruct) -> syn::Result<TokenStream> {
     })
 }
 
-pub fn from_object_enum(enm: ItemEnum) -> syn::Result<TokenStream> {
+pub fn from_object_enum(mut enm: ItemEnum) -> syn::Result<TokenStream> {
     let mut errors = Vec::new();
 
     // TODO: make this optional somehow
-    let base_class = get_class_attribute_required(&enm.attrs, enm.ident.span())
+    let base_class = get_class_attribute_required(&mut enm.attrs, enm.ident.span())
         .map_err(|err| errors.push(err))
         .ok()
         .map(|base_class| base_class.to_jni_class_path());
@@ -52,7 +52,7 @@ pub fn from_object_enum(enm: ItemEnum) -> syn::Result<TokenStream> {
         errors.push(syn::Error::new(Span::call_site(), "Enum must have at least 1 variant"));
     }
 
-    let class_checks = construct_variants(enm.variants.iter())
+    let class_checks = construct_variants(enm.variants.iter_mut())
         .filter_map(|res| res.map_err(|err| errors.push(err)).ok())
         .collect::<Box<[_]>>();
 

@@ -2,83 +2,77 @@ mod jni_fn;
 mod call;
 mod object;
 mod utils;
+mod types;
 
 use call::{ConstructorCall, MethodCall};
 use either::Either;
-use jni_fn::JniFn;
 use proc_macro::TokenStream;
 use quote::{quote, ToTokens};
-use std::sync::RwLock;
-use syn::LitStr;
-use utils::{error, item_from_derive_input};
+use utils::item_from_derive_input;
 
-static PACKAGE_NAME: RwLock<Option<String>> = RwLock::new(None);
-
-/// Defines the name of the package name to use in the names of exported JNI functions.
+/// Converts a Rust function to one that can be called from external Java code.
+/// 
+/// The *arguments* and *return type* must be **Java Types** (or Rust primitives like u8).
+/// 
+/// You can also do multiple function definitions in one macro call.
+/// 
+/// ### Requirements
+/// 
+/// Requires that the function
+/// 1. be defined with `pub` visibility,
+/// 2. have exactly *one lifetime* (named `local`),
+/// 3. no generic constants or types,
+/// 4. and no arguments named `env` or `_class`.
 ///
-/// Must be all lowercase and have no hyphens.
+/// The function must also have a `class` attribute with the *full name* of a Java Class (e.g. `java.lang.String`).
 ///
-/// Example: `package!("me.author.packagename")`
-#[proc_macro]
-pub fn package(input: TokenStream) -> TokenStream {
-    let package_name = syn::parse_macro_input!(input as LitStr).value();
-    *PACKAGE_NAME.write().unwrap() = Some(package_name);
-    return TokenStream::new();
-}
-
-/// Changes a function's signature so that it can be called from external Java code.
-/// Requires that the function be defined with `pub` visibility, exactly *one lifetime* (named "local"), no generic constants or types, and no arguments named "env" or "_class".
-///
-/// Also takes the name of a Java Class or extra package data where this function is defined in the Java side.
-///
-/// Also puts the *block* of the function inside a function that catches `panics!` and throws a Java `Exception` with the panic message.
-/// The *return value* should only be a type with *integer representation*, such as a pointer (*const T or *mut T), an enum using *repr(T)*, i32, bool, etc.
-///
+/// ### Panic catching
+/// 
+/// The *block* of the function will be wrapped with a *[special function](ez_jni::__throw::catch_throw)*
+/// that catches `panics!` and throws them as Java `Exception`s with the panic message.
+/// 
+/// When a panic is caught and the exception is *thrown*,
+/// the function will return a *[zeroed](std::mem::zeroed)* representation of the return type.
+/// 
+/// ### Mark of the sig
+/// 
+/// A doc-comment will be appended to the function definition with the *Java method signature* that must be used to call the function.
+/// This is done in case some external library wants to parse and collect functions exported by a jni lib.
+/// 
 /// ### Example
 /// ```
-/// # use jni_macros::{package, jni_fn};
-/// # use jni::objects::JString;
-/// package!("me.author.packagename");
-///
-/// #[jni_fn("MyClass")]
-/// pub fn hello_world<'local>(s: JString<'local>) {
-///     // body
+/// # use jni_macros::jni_fn;
+/// jni_fn! {
+///     #[class(me.author.MyClass)]
+///     pub fn hello_world<'local>(s: java.lang.String) -> java.lang.String {
+///         // body
+///     }
 /// }
 /// ```
 /// expands to
 ///
 /// ```
-/// # use jni::objects::JString;
+/// /// (Ljava/lang/String;)Ljava/lang/String;
 /// #[no_mangle]
-/// pub extern "system" fn Java_me_author_packagename_myClass_hello_1world<'local>(
+/// pub extern "system" fn Java_me_author_MyClass_hello_1world<'local>(
 ///     mut env: ::jni::JNIEnv<'local>, _class: ::jni::objects::JClass<'local>,
-///     s: JString<'local>
-/// ) {
+///     s: ::jni::objects::JString<'local>,
+/// ) -> ::jni::sys::jstring {
 ///     ::ez_jni::__throw::catch_throw(&mut env, move |env| {
 ///         // body
 ///     })
 /// }
 /// ```
-#[proc_macro_attribute]
-pub fn jni_fn(attr_args: TokenStream, input: TokenStream) -> TokenStream {
-    let input = syn::parse_macro_input!(input as JniFn);
-    // Contains extra data of the Class path that is combined with PACKAGE_NAME
-    let extra_package_data = if attr_args.is_empty() {
-        String::new()
-    } else {
-        syn::parse_macro_input!(attr_args as LitStr).value()
-    };
-    
-    let package = PACKAGE_NAME.read().unwrap();
-    let package = match package.as_ref() {
-        // Process package data to use underscores (_)
-        Some(package_name) => package_name,
-        None => return error("Macro jni_macros::package! has not been called.").into(),
-    };
-
-    jni_fn::jni_fn(input, package, &extra_package_data)
-        .into_token_stream()
-        .into()
+#[proc_macro]
+pub fn jni_fn(input: TokenStream) -> TokenStream {
+    match syn::parse::Parser::parse(jni_fn::jni_fn, input) {
+        Ok(output) => output
+            .into_iter()
+            .map(|f| f.into_token_stream())
+            .collect::<proc_macro2::TokenStream>()
+            .into(),
+        Err(error) => error.to_compile_error().into()
+    }
 }
 
 /// A macro that helps make JNI Method calls less verbose and easier to use in Rust.

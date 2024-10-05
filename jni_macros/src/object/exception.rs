@@ -5,8 +5,8 @@ use syn::{ItemEnum, ItemStruct};
 use crate::utils::merge_errors;
 use super::*;
 
-pub fn from_exception_struct(st: ItemStruct) -> syn::Result<TokenStream> {
-    let class = get_class_attribute_required(&st.attrs, st.ident.span())?
+pub fn from_exception_struct(mut st: ItemStruct) -> syn::Result<TokenStream> {
+    let class = get_class_attribute_required(&mut st.attrs, st.ident.span())?
         .to_jni_class_path();
     
     let mut st_generic_params = st.generics.params.clone();
@@ -36,10 +36,10 @@ pub fn from_exception_struct(st: ItemStruct) -> syn::Result<TokenStream> {
     })
 }
 
-pub fn from_exception_enum(enm: ItemEnum) -> syn::Result<TokenStream> {
+pub fn from_exception_enum(mut enm: ItemEnum) -> syn::Result<TokenStream> {
     let mut errors = Vec::new();
 
-    let base_class = get_class_attribute(&enm.attrs)
+    let base_class = take_class_attribute(&mut enm.attrs)
         .map_err(|err| errors.push(err))
         .ok()
         .and_then(|o| o)
@@ -57,7 +57,7 @@ pub fn from_exception_enum(enm: ItemEnum) -> syn::Result<TokenStream> {
         errors.push(syn::Error::new(Span::call_site(), "Enum must have at least 1 variant"));
     }
 
-    let class_checks = construct_variants(enm.variants.iter())
+    let class_checks = construct_variants(enm.variants.iter_mut())
         .filter_map(|res| res.map_err(|err| errors.push(err)).ok())
         .collect::<Box<[_]>>();
 

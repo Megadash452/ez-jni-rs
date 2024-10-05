@@ -2,60 +2,18 @@ mod class;
 mod exception;
 
 pub use class::*;
-use convert_case::{Case, Casing};
 pub use exception::*;
 
 use either::Either;
+use convert_case::{Case, Casing};
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
 use syn::{parse::Parse, punctuated::Punctuated, spanned::Spanned, AngleBracketedGenericArguments, Field, Fields, GenericArgument, GenericParam, Generics, Ident, ItemEnum, ItemStruct, Lifetime, LitStr, Token, Type, TypePath, Variant};
-use crate::utils::{merge_errors, ClassPath, JavaPrimitive, RustPrimitive, SigType};
 use std::str::FromStr;
-
-/// Same as [`get_class_attribute()`], but requires that the attribute is present.
-/// 
-/// Takes the [`Span`] of the struct or enum variant's Name for errors.
-fn get_class_attribute_required(attributes: &[syn::Attribute], item_span: Span) -> syn::Result<ClassPath> {
-    get_class_attribute(attributes)
-        .and_then(|res| res.ok_or_else(|| syn::Error::new(item_span, "Must have \"class\" attribute")))
-}
-
-/// Find the `class` attribute of the **struct** or **enum variant** and return the Path to the Java Class.
-/// 
-/// Returns [`None`] if there is no `class` attribute.
-fn get_class_attribute(attributes: &[syn::Attribute]) -> syn::Result<Option<ClassPath>> {
-    let mut iter = attributes.iter()
-        .filter(|attr| {
-            attr.path()
-                .get_ident()
-                .is_some_and(|ident| ident.to_string() == "class")
-        });
-    let attr = match iter.next() {
-        Some(attr) => attr,
-        None => return Ok(None)
-    };
-    if let Some(attr) = iter.next() {
-        return Err(syn::Error::new(
-            attr.span(),
-            "must have only 1 \"class\" attribute",
-        ));
-    }
-
-    // Get attribute value
-    Ok(Some(match &attr.meta {
-        // Can be #[class(java.class.path)] or #[class("java.class.path")]
-        syn::Meta::List(syn::MetaList { tokens, .. }) => match syn::parse2::<LitStr>(tokens.clone()).ok() {
-            Some(s) => syn::parse_str::<ClassPath>(&s.value())?,
-            None => syn::parse2::<ClassPath>(tokens.clone())?
-        },
-        // Can only be #[class("java.class.path")]
-        syn::Meta::NameValue(syn::MetaNameValue { value, .. }) => match value {
-            syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(value), .. }) => syn::parse_str::<ClassPath>(&value.value())?,
-            _ => return Err(syn::Error::new(value.span(), "Try using a string literal here"))
-        },
-        syn::Meta::Path(path) => return Err(syn::Error::new(path.span(), "\"class\" attribute must have a value of a Java ClassPath (e.g. #[class(java.lang.Exception)])")) 
-    }))
-}
+use crate::{
+    utils::{take_class_attribute, get_class_attribute_required, merge_errors},
+    types::{ClassPath, JavaPrimitive, RustPrimitive, SigType}
+};
 
 /// Find the JObject field with a lifetime, and use that lifetime's name for the JNIEnv lifetime,
 /// Defaults to `'local` if such object could not be found, and **appends** the lifetime to the *generics*.
@@ -375,11 +333,11 @@ fn struct_constructor(fields: &Fields, class: &str) -> syn::Result<TokenStream> 
 /// ```
 /// 
 /// The constructor literal is built by [`struct_constructor()`].
-fn construct_variants<'a>(variants: impl Iterator<Item = &'a Variant> + 'a) -> impl Iterator<Item = syn::Result<TokenStream>> + 'a {
+fn construct_variants<'a>(variants: impl Iterator<Item = &'a mut Variant> + 'a) -> impl Iterator<Item = syn::Result<TokenStream>> + 'a {
     variants.enumerate()
         .map(|(i, variant)| {
             // Get class name for this variant
-            let class = get_class_attribute_required(&variant.attrs, variant.ident.span())?
+            let class = get_class_attribute_required(&mut variant.attrs, variant.ident.span())?
                 .to_jni_class_path();
 
             let ident = &variant.ident;

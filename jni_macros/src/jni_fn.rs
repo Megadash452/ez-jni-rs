@@ -1,68 +1,85 @@
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
-use syn::{braced, parenthesized, parse::Parse, punctuated::Punctuated, spanned::Spanned, Attribute, GenericParam, Generics, Ident, ItemFn, LifetimeParam, Token};
-use crate::utils::{merge_errors, RustPrimitive, Type};
+use syn::{braced, parenthesized, parse::{Parse, ParseStream}, punctuated::Punctuated, spanned::Spanned, Attribute, GenericParam, Generics, Ident, ItemFn, LifetimeParam, LitStr, Token};
+use crate::{
+    utils::{gen_signature, get_class_attribute_required, merge_errors},
+    types::{ClassPath, RustPrimitive, SigType, Type}
+};
 
-/// Processes the input for [`crate::jni_fn`].
+/// Processes the input for [`crate::jni_fns`].
 /// Converts the parsed [`JniFn`] to a regular function used in Rust.
-pub fn jni_fn(input: JniFn, package: &str, class_path: &str) -> ItemFn {
-    let name = {
-        // Process package data to use underscores (_)
-        let full_class = format!("{package}_{class_path}")
-            .replace(['.', '/'], "_");
-        let name = input.name.to_string().replace('_', "_1");
+pub fn jni_fn(input: ParseStream) -> syn::Result<Vec<ItemFn>> {
+    let mut inputs = Vec::new();
+    let mut errors = Vec::new();
 
-        Ident::new(&format!("Java_{full_class}_{name}"), input.name.span())
-    };
-
-    let output = match &input.output {
-        Some(output) => {
-            // Convert Class to *jobject (or *jstring) and leave primitives alone
-            let ty = match output {
-                Type::RustPrimitive { ident, ty } => Ident::new(&ty.to_string(), ident.span()).into_token_stream(),
-                Type::JavaPrimitive { ident, ty } => Ident::new(&RustPrimitive::from(*ty).to_string(), ident.span()).into_token_stream(),
-                Type::Object(class) =>
-                    if class.to_string() == "java.lang.String" {
-                        quote_spanned! {class.span()=> ::jni::sys::jstring}
-                    } else {
-                        quote_spanned! {class.span()=> ::jni::sys::jobject}
-                    }
-            };
-            quote!(-> #ty)
-        },
-        None => quote!()
-    };
-
-    let attrs = &input.attrs;
-    let lifetime = &input.lifetime;
-    let inputs = &input.inputs;
-    let content = &input.content;
-
-    syn::parse_quote! {
-        #[no_mangle]
-        #(#attrs)*
-        pub extern "system" fn #name<#lifetime>(mut _env: ::jni::JNIEnv<'local>, _class: ::jni::objects::JClass<'local>, #inputs) #output {
-            ::ez_jni::__throw::catch_throw(&mut _env, move |env| { #content })
+    // Parse multiple jni_fn
+    while !input.is_empty() {
+        match input.parse::<JniFn>() {
+            Ok(f) => inputs.push(f),
+            Err(error) => errors.push(error),
         }
     }
+
+    merge_errors(errors)?;
+
+    // Convert all JniFn to ItemFn 
+    Ok(inputs.into_iter()
+        .map(|f| f.to_rust_fn())
+        .collect()
+    )
 }
 
 // TODO: Allow generics in the arguments and return type if they are a Java Class
+
+// TODO: support arrays
 
 /// A rust function that uses Java types (or some Rust types) and is called by Java Code.
 /// 
 /// A [`JniFn`] is one that MUST be exported by the user library.
 pub struct JniFn {
     pub attrs: Vec<Attribute>,
+    /// The Java Class the function is a method of.
+    /// This takes the form of an attribute that is removed after parsing.
+    class: ClassPath,
     pub name: Ident,
     pub lifetime: LifetimeParam,
     pub inputs: Punctuated<JniFnArg, Token![,]>,
     // pub variadic: Option<Variadic>, Should this be allowed?
-    pub output: Option<Type>,
+    pub output: JniReturn,
     pub content: TokenStream,
 }
+impl JniFn {
+    pub fn to_rust_fn(&self) -> ItemFn {
+        let name = {
+            let class = self.class.to_string()
+                .replace('.', "_");
+            let name = self.name.to_string().replace('_', "_1");
+    
+            Ident::new(&format!("Java_{class}_{name}"), self.name.span())
+        };
+
+        // Build a java method signature, something like (Ljava.lang.String;)I
+        let method_sig = gen_signature(self.inputs.iter().map(|i| &i.ty), &self.output).value();
+
+        let attrs = &self.attrs;
+        let lifetime = &self.lifetime;
+        let inputs = &self.inputs;
+        let output = &self.output;
+        let content = &self.content;
+
+        syn::parse_quote! {
+            #(#attrs)*
+            #[doc = ""]
+            #[doc = #method_sig]
+            #[no_mangle]
+            pub extern "system" fn #name<#lifetime>(mut env: ::jni::JNIEnv<'local>, _class: ::jni::objects::JClass<'local>, #inputs) #output {
+                ::ez_jni::__throw::catch_throw(&mut env, move |env| { #content })
+            }
+        }
+    }
+}
 impl Parse for JniFn {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
         static LIFETIME_ERROR: &str = "jni_fn must have one and only one lifetime, named \"local\"";
 
         // -- Parse input function. Collect multiple errors
@@ -82,7 +99,7 @@ impl Parse for JniFn {
         input.parse::<Token![fn]>()?;
 
         // Parse function name
-        let name = input.parse()
+        let name = input.parse::<Ident>()
             .map_err(|err|
                 syn::Error::new(err.span(), format!("{err}; Expected function name"))
             )?;
@@ -105,11 +122,9 @@ impl Parse for JniFn {
         };
 
         // Parse return arrow `->` and return type (is void if there is none)
-        let output = if input.parse::<Token![->]>().is_ok() {
-            Some(input.parse::<Type>()?)
-        } else {
-            None
-        };
+        let output = input.parse::<JniReturn>()
+            .map_err(|err| errors.push(err))
+            .ok();
 
         // Parse the content of the function inside the braces `{ ... }`
         let content = {
@@ -121,11 +136,17 @@ impl Parse for JniFn {
         merge_errors(errors)?;
 
         // If there were any errors, the function did eraly return, so all tokens were parsed successfully.
-        let attrs = attrs.unwrap();
+        let mut attrs = attrs.unwrap();
         let inputs = inputs.unwrap();
+        let output = output.unwrap();
 
         // -- Perform checks on the successfully parsed function
         errors = Vec::new();
+
+        // jni_fn must have a `class` attribute
+        let class = get_class_attribute_required(&mut attrs, name.span())
+            .map_err(|err| errors.push(err))
+            .ok();
 
         let generics = generics.unwrap();
         let mut iter = generics.params.iter();
@@ -166,7 +187,15 @@ impl Parse for JniFn {
 
         merge_errors(errors)?;
 
-        Ok(Self { attrs, name, lifetime: lifetime.unwrap(), inputs, output, content })
+        let class = class.unwrap();
+        let lifetime = lifetime.unwrap();
+
+        Ok(Self { attrs, class, name, lifetime, inputs, output, content })
+    }
+}
+impl ToTokens for JniFn {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        tokens.append_all(self.to_rust_fn().into_token_stream())
     }
 }
 
@@ -176,7 +205,7 @@ pub struct JniFnArg {
     pub ty: Type
 }
 impl Parse for JniFnArg {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
         Ok(Self {
             attrs: Attribute::parse_outer(input)?,
             name: input.parse()?,
@@ -190,11 +219,6 @@ impl Parse for JniFnArg {
 impl ToTokens for JniFnArg {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         tokens.append_all(&self.attrs);
-        // // Add a doc attribute to preserve the Class (if any) of the argument
-        // if let Type::Object(class) = &self.ty {
-        //     let class = class.to_string();
-        //     tokens.append_all(quote!(#[doc = #class]));
-        // }
         tokens.append(self.name.clone());
         tokens.append_all(quote!(:));
         
@@ -209,5 +233,55 @@ impl ToTokens for JniFnArg {
                     quote_spanned! {class.span()=> ::jni::objects::JObject<'local>}
                 }
         })
+    }
+}
+
+pub enum JniReturn {
+    Void,
+    Type(Type)
+}
+impl SigType for JniReturn {
+    fn sig_char(&self) -> Ident {
+        match self {
+            Self::Void => Ident::new("v", Span::call_site()),
+            Self::Type(ty) => ty.sig_char()
+        }
+    }
+    fn sig_type(&self) -> LitStr {
+        match self {
+            Self::Void => LitStr::new("V", Span::call_site()),
+            Self::Type(ty) => ty.sig_type()
+        }
+    }
+}
+impl Parse for JniReturn {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        // Parse return arrow `->` and return type (is void if there is none)
+        Ok(if input.parse::<Token![->]>().is_ok() {
+            Self::Type(input.parse()?)
+        } else {
+            Self::Void
+        })
+    }
+}
+impl ToTokens for JniReturn {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match self {
+            Self::Void => { }, // Void return has no tokens
+            Self::Type(output) => {
+                // Convert Class to *jobject (or *jstring) and leave primitives alone
+                let ty = match output {
+                    Type::RustPrimitive { ident, ty } => Ident::new(&ty.to_string(), ident.span()).into_token_stream(),
+                    Type::JavaPrimitive { ident, ty } => Ident::new(&RustPrimitive::from(*ty).to_string(), ident.span()).into_token_stream(),
+                    Type::Object(class) =>
+                        if class.to_string() == "java.lang.String" {
+                            quote_spanned! {class.span()=> ::jni::sys::jstring}
+                        } else {
+                            quote_spanned! {class.span()=> ::jni::sys::jobject}
+                        }
+                };
+                tokens.append_all(quote_spanned!(output.span()=> -> #ty))
+            },
+        }
     }
 }

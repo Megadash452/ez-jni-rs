@@ -8,7 +8,10 @@ use syn::{
     spanned::Spanned,
     Expr, Ident, LitInt, LitStr, Token,
 };
-use crate::utils::{first_char_uppercase, ClassPath, JavaPrimitive, RustPrimitive, SigType, Type};
+use crate::{
+    utils::{first_char_uppercase, gen_signature},
+    types::{ClassPath, JavaPrimitive, RustPrimitive, SigType, Type}
+};
 
 /// Processes input for macro call [super::call!].
 pub fn jni_call(call: MethodCall) -> TokenStream {
@@ -377,6 +380,22 @@ impl Parameter {
         tt
     }
 }
+impl SigType for Parameter {
+    fn sig_char(&self) -> Ident {
+        // An array is always an Object
+        Ident::new("l", self.ty().span())
+    }
+    fn sig_type(&self) -> LitStr {
+        let mut buf = String::new();
+        // Array types in signature have an opening bracket prepended to the type
+        if self.is_array() {
+            buf.push('[');
+        }
+        buf.push_str(&self.ty().sig_type().value());
+
+        LitStr::new(&buf, self.ty().span())
+    }
+}
 impl Parse for Parameter {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         // Check if the Type is wrapped in Brackets (Array)
@@ -621,19 +640,4 @@ fn gen_arguments<'a>(params: impl Iterator<Item = &'a Parameter>) -> TokenStream
             param.variant(Ident::new(&format!("__param_{i}"), param.value().span()))
         });
     quote! { &[ #( #params ),* ] }
-}
-
-/// Generate the signature string for a JNI call.
-fn gen_signature<'a>(params: impl Iterator<Item = &'a Parameter>, return_type: &Return) -> LitStr {
-    let mut buf = String::from("(");
-    for param in params {
-        // Array types in signature have an opening bracket prepended to the type
-        if param.is_array() {
-            buf.push('[');
-        }
-        buf.push_str(&param.ty().sig_type().value());
-    }
-    buf.push(')');
-    buf.push_str(&return_type.sig_type().value());
-    LitStr::new(&buf, Span::call_site())
 }
