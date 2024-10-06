@@ -28,7 +28,7 @@ use utils::item_from_derive_input;
 ///
 /// ### Panic catching
 /// 
-/// The *block* of the function will be wrapped with a *[special function](ez_jni::__throw::catch_throw)*
+/// The *block* of the function will be wrapped with a *[special function](https://docs.rs/ez_jni/latest/ez_jni/__throw/fn.catch_throw.html)*
 /// that catches `panics!` and throws them as Java `Exception`s with the panic message.
 /// 
 /// When a panic is caught and the exception is *thrown*,
@@ -52,7 +52,7 @@ use utils::item_from_derive_input;
 /// expands to
 ///
 /// ```
-/// /// (Ljava/lang/String;)Ljava/lang/String;
+/// /// (Ljava/lang/String;)I;
 /// #[no_mangle]
 /// pub extern "system" fn Java_me_author_MyClass_hello_1world<'local>(
 ///     mut env: ::jni::JNIEnv<'local>, _class: ::jni::objects::JClass<'local>,
@@ -142,10 +142,10 @@ pub fn jni_fn(input: TokenStream) -> TokenStream {
 ///
 /// ### Exceptions
 ///
-/// The **`E`** in the `Result` type can be any Rust type that *implements [`FromException`][ez_jni::FromException]*
+/// The **`E`** in the `Result` type can be any Rust type that *implements [`FromException`](https://docs.rs/ez_jni/latest/ez_jni/trait.FromException.html)*
 /// (usually an *Error Enum*).
 ///
-/// If the call to [`from_exception`][ez_jni::FromException::from_exception] fails,
+/// If the call to [`from_exception`](https://docs.rs/ez_jni/latest/ez_jni/trait.FromException.html#method.from_exception) fails,
 /// the Exception will not be caught and the program will `panic!`.
 /// This is similar to how in Java, if the exception is not of any type of the *catch blocks*, the exception will not be caught.
 ///
@@ -179,7 +179,7 @@ pub fn new(input: TokenStream) -> TokenStream {
     call::jni_call_constructor(call).into()
 }
 
-/// See [`ez_jni::FromObject`].
+/// See [`ez_jni::FromObject`](https://docs.rs/ez_jni/latest/ez_jni/trait.FromObject.html).
 #[proc_macro_derive(FromObject, attributes(class, field))]
 pub fn from_object(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
@@ -191,7 +191,7 @@ pub fn from_object(input: TokenStream) -> TokenStream {
     }.into()
 }
 
-/// See [`ez_jni::FromException`].
+/// See [`ez_jni::FromException`](https://docs.rs/ez_jni/latest/ez_jni/trait.FromException.html).
 #[proc_macro_derive(FromException, attributes(class, field))]
 pub fn from_exception(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
@@ -203,14 +203,16 @@ pub fn from_exception(input: TokenStream) -> TokenStream {
     }.into()
 }
 
-/// Print output. See [`std::println!`].
+/// Print output. See [`std::println!`](https://doc.rust-lang.org/std/macro.println.html).
 /// 
 /// In Android, printing to `STDOUT` does not work because apparently it redirects to `/dev/null`.
 /// This macro will instead crate a String and send it to `android.util.Log`.
 /// 
-/// Use this macro instead of [`std::println!`] everywhere.
+/// Requires the [`env`][jni::JNIEnv] argument be present in the calling function.
 /// 
-/// See also [`eprintln()`].
+/// Use this macro instead of [`std::println!`](https://doc.rust-lang.org/std/macro.println.html) everywhere.
+/// 
+/// See also [`eprintln!`].
 #[proc_macro]
 pub fn println(input: TokenStream) -> TokenStream {
     let input = proc_macro2::TokenStream::from(input);
@@ -229,14 +231,16 @@ pub fn println(input: TokenStream) -> TokenStream {
     }.into()
 }
 
-/// Print error. See [`std::eprintln!`].
+/// Print error. See [`std::eprintln!`](https://doc.rust-lang.org/std/macro.eprintln.html).
 /// 
 /// In Android, printing to `STDERR` does not work because apparently it redirects to `/dev/null`.
 /// This macro will instead crate a String and send it to `android.util.Log`.
 /// 
-/// Use this macro instead of [`std::eprintln!`] everywhere.
+/// Requires the [`env`][jni::JNIEnv] argument be present in the calling function.
 /// 
-/// See also [println()].
+/// Use this macro instead of [`std::eprintln!`](https://doc.rust-lang.org/std/macro.eprintln.html) everywhere.
+/// 
+/// See also [`println!`].
 #[proc_macro]
 pub fn eprintln(input: TokenStream) -> TokenStream {
     let input = proc_macro2::TokenStream::from(input);
