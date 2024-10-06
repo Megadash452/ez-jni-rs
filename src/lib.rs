@@ -49,5 +49,5 @@ pub mod utils;
 mod object;
 extern crate self as ez_jni;
 
-pub use jni_macros::*;
+pub use ez_jni_macros::*;
 pub use object::*;

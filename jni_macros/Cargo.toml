@@ -1,8 +1,10 @@
 [package]
-name = "jni_macros"
+name = "ez_jni_macros"
 version = "0.1.0"
 edition = "2021"
-description = "Provides macros for the ez-jni crate"
+description = "Provides macros for the ez_jni crate"
+repository = "https://github.com/Megadash452/ez-jni-rs"
+license-file = "../LICENSE"
 
 [lib]
 proc-macro = true

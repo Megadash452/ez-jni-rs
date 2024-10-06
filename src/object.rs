@@ -1,8 +1,8 @@
 use either::Either;
 use jni::{objects::{JObject, JThrowable, JValue}, JNIEnv};
-use jni_macros::{call, new};
 use thiserror::Error;
 use std::io;
+use ez_jni_macros::{call, new};
 use crate::{__throw::panic_uncaught_exception, utils::get_string};
 
 #[derive(Debug, Error)]

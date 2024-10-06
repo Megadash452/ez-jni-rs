@@ -41,7 +41,7 @@ use utils::item_from_derive_input;
 /// 
 /// ### Example
 /// ```
-/// # use jni_macros::jni_fn;
+/// # use ez_jni_macros::jni_fn;
 /// jni_fn! {
 ///     #[class(me.author.MyClass)]
 ///     pub fn hello_world<'local>(s: java.lang.String) -> int {
