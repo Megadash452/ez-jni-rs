@@ -44,8 +44,8 @@ use utils::item_from_derive_input;
 /// # use jni_macros::jni_fn;
 /// jni_fn! {
 ///     #[class(me.author.MyClass)]
-///     pub fn hello_world<'local>(s: java.lang.String) -> java.lang.String {
-///         // body
+///     pub fn hello_world<'local>(s: java.lang.String) -> int {
+///         3
 ///     }
 /// }
 /// ```
@@ -57,9 +57,9 @@ use utils::item_from_derive_input;
 /// pub extern "system" fn Java_me_author_MyClass_hello_1world<'local>(
 ///     mut env: ::jni::JNIEnv<'local>, _class: ::jni::objects::JClass<'local>,
 ///     s: ::jni::objects::JString<'local>,
-/// ) -> ::jni::sys::jstring {
+/// ) -> i32 {
 ///     ::ez_jni::__throw::catch_throw(&mut env, move |env| {
-///         // body
+///         3
 ///     })
 /// }
 /// ```
@@ -85,23 +85,20 @@ pub fn jni_fn(input: TokenStream) -> TokenStream {
 ///                     Return type        --------------------------------------------^
 /// ```
 /// Or to call **object methods**:
-/// ```no_run
-/// # use jni_macros::call;
+/// ```ignore
 /// call!(object.methodName() -> void);
 /// ```
 ///
 /// # Syntax
 ///
 /// To use the **static method** call, prepend the call with `static`, then the path to the *class* and *method*,
-/// ```no_run
-/// # use jni_macros::call;
+/// ```ignore
 /// call!(static me.author.ClassName.methodName() -> void);
 /// ```
 ///
 /// To use an **object method** call, simply put a *variable name* that is of type `JObject` (or put an *expression* that resolves to a `JObject` in parentheses).
 /// Example:
-/// ```no_run
-/// # use jni_macros::call;
+/// ```ignore
 /// call!(my_object.myMethod() -> void);
 /// call!((getObject()).myMethod() -> void);
 /// ```
@@ -163,8 +160,7 @@ pub fn call(input: TokenStream) -> TokenStream {
 /// 
 /// Has similar syntax as [*calling a static method*][crate::call!], but there is no *method name* or *return value*.
 /// 
-/// ```no_run
-/// # use jni_macros::new;
+/// ```ignore
 /// new!(me.author.ClassName(int(arg1), java.lang.String(arg2)))
 /// ```
 /// 
@@ -174,8 +170,7 @@ pub fn call(input: TokenStream) -> TokenStream {
 /// This will make the constructor call return a `Result<JObject, E>` instead,
 /// and the exception will be caught if it occurs.
 /// 
-/// ```no_run
-/// # use jni_macros::new;
+/// ```ignore
 /// new!(me.author.ClassName() throws String)
 /// ```
 #[proc_macro]

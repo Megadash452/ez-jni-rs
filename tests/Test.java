@@ -45,4 +45,13 @@ public final class Test {
             public String str;
         }
     }
+
+    public void testNativeMethods() {
+        this.test_jni_fn_1();
+        this.test_jni_fn_2("Hello, World!");
+        this.test_jni_fn_3("Hello, World!");
+    }
+    private native void test_jni_fn_1();
+    private native int test_jni_fn_2(String s);
+    private native String test_jni_fn_3(String s);
 }
