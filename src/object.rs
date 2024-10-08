@@ -378,6 +378,58 @@ impl<'local> ToObject<'local> for f64 {
     }
 }
 
-// TODO: missing unsigned integer types
+// Implementation for unsigned number types
+impl FromObject<'_> for u8 {
+    const PATH: &'static str = "java/lang/Byte";
+
+    fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
+        object_check_boilerplate(object, Self::PATH, env)?;
+        Ok(call!(object.byteValue() -> u8))
+    }
+}
+impl<'local> ToObject<'local> for u8 {
+    fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        new!(java.lang.Byte(u8(*self)))
+    }
+}
+impl FromObject<'_> for u16 {
+    const PATH: &'static str = "java/lang/Short";
+
+    fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
+        object_check_boilerplate(object, Self::PATH, env)?;
+        Ok(call!(object.shortValue() -> u16))
+    }
+}
+impl<'local> ToObject<'local> for u16 {
+    fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        new!(java.lang.Short(u16(*self)))
+    }
+}
+impl FromObject<'_> for u32 {
+    const PATH: &'static str = "java/lang/Integer";
+
+    fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
+        object_check_boilerplate(object, Self::PATH, env)?;
+        Ok(call!(object.intValue() -> u32))
+    }
+}
+impl<'local> ToObject<'local> for u32 {
+    fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        new!(java.lang.Integer(u32(*self)))
+    }
+}
+impl FromObject<'_> for u64 {
+    const PATH: &'static str = "java/lang/Long";
+
+    fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
+        object_check_boilerplate(object, Self::PATH, env)?;
+        Ok(call!(object.longValue() -> u64))
+    }
+}
+impl<'local> ToObject<'local> for u64 {
+    fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        new!(java.lang.Long(u64(*self)))
+    }
+}
 
 // TODO: missing array types

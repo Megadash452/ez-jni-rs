@@ -48,14 +48,14 @@ fn implementations() {
     assert_eq!((F as f32), f32::from_object(&obj, &mut env).unwrap());
     obj = (F as f64).to_object(&mut env);
     assert_eq!((F as f64), f64::from_object(&obj, &mut env).unwrap());
-    // obj = (UN as u8).to_object(&mut env);
-    // assert_eq!((UN as u8), u8::from_object(&obj, &mut env).unwrap());
-    // obj = (UN as u16).to_object(&mut env);
-    // assert_eq!((UN as u16), u16::from_object(&obj, &mut env).unwrap());
-    // obj = (UN as u32).to_object(&mut env);
-    // assert_eq!((UN as u32), u32::from_object(&obj, &mut env).unwrap());
-    // obj = (UN as u64).to_object(&mut env);
-    // assert_eq!((UN as u64), u64::from_object(&obj, &mut env).unwrap());
+    obj = (UN as u8).to_object(&mut env);
+    assert_eq!((UN as u8), u8::from_object(&obj, &mut env).unwrap());
+    obj = (UN as u16).to_object(&mut env);
+    assert_eq!((UN as u16), u16::from_object(&obj, &mut env).unwrap());
+    obj = (UN as u32).to_object(&mut env);
+    assert_eq!((UN as u32), u32::from_object(&obj, &mut env).unwrap());
+    obj = (UN as u64).to_object(&mut env);
+    assert_eq!((UN as u64), u64::from_object(&obj, &mut env).unwrap());
 }
 
 #[derive(FromObject)]
