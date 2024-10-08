@@ -322,6 +322,7 @@ impl Parameter {
                     Type::JavaPrimitive { ty, .. } => primitive_array(Either::Right(*ty)),
                     Type::RustPrimitive { ty, .. } => primitive_array(Either::Left(*ty)),
                     Type::Object(class) => {
+                        // Build array for object type
                         let new_array_err = LitStr::new(
                             &format!("Failed to create Java Object \"{}\" array: {{err}}", class.to_string()),
                             array.span(),
@@ -331,20 +332,22 @@ impl Parameter {
                             array.span(),
                         );
                         let class_path = LitStr::new(&class.to_jni_class_path(), array.span());
-                        // Fill the array
-                        let mut elements = quote! {};
-                        for (i, element) in array.iter().enumerate() {
-                            let element = quote_spanned! {array[i].span()=>
-                                env.set_object_array_element(&array, #i, #element)
-                                    .inspect_err(|err| println!(#set_val_err)).unwrap()
-                            };
-                            elements = quote! { #elements #element }
-                        }
-                        // Return the array
+
+                        // Do nothing if array is empty
+                        let filler = if array.is_empty() {
+                            quote! { }
+                        } else {
+                            quote_spanned! {array.span()=> 
+                                for (i, element) in [#array].into_iter().enumerate() {
+                                    env.set_object_array_element(&array, i as ::jni::sys::jsize, element)
+                                        .inspect_err(|err| println!(#set_val_err)).unwrap();
+                                }
+                            }
+                        };
                         quote_spanned! {array.span()=> {
                             let array = env.new_object_array(#len, #class_path, unsafe { ::jni::objects::JObject::from_raw(::std::ptr::null_mut()) } )
                                 .inspect_err(|err| println!(#new_array_err)).unwrap();
-                            #elements
+                            #filler
                             ::jni::objects::JObject::from(array)
                         } }
                     }
