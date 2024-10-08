@@ -1,8 +1,18 @@
 package me.test;
 
 public final class Test {
+    Test() {
+        this.memberField = 3;
+    }
     Test(int member) {
         this.memberField = member;
+    }
+    Test(String len) throws NullPointerException {
+        if (len == null) {
+            throw new NullPointerException("String was null");
+        } else {
+            this.memberField = len.length();
+        }
     }
 
     public int memberField;
@@ -30,6 +40,15 @@ public final class Test {
     
     public static void multiArg(boolean z, char c, byte b, short s, int i, long j, float f, double d, Object l) { }
     public static void arrayArg(boolean[] z, char[] c, byte[] b, short[] s, int[] i, long[] j, float[] f, double[] d, Object[] l) { }
+
+    public static class Inner {
+        Inner() {}
+        // Just test one primitive and one object this time
+        public boolean getBoolean() { return true; }
+        public Object getObject() { return new Object(); }
+        public void args(boolean z, Object l) { }
+        public void arrayArgs(boolean[] z, Object[] l) { }
+    }
 
     public static sealed class SumClass {
         public static final class SumClass1 extends SumClass {

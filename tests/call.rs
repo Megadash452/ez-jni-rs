@@ -1,7 +1,7 @@
 mod common;
 
 use jni::objects::{JObject, JString};
-use ez_jni::call;
+use ez_jni::{call, new};
 
 #[test]
 fn return_primitives() {
@@ -81,7 +81,7 @@ fn arguments() {
         [long]([1i64, 2]),
         [float]([1f32, 2.0]),
         [double]([1f64, 2.0]),
-        [java.lang.Object]([])
+        [java.lang.Object]([new!(java.lang.Object()), JObject::null()])
     ) -> void);
     call!(static me.test.Test.arrayArg(
         [bool]([true, false]),
@@ -98,10 +98,35 @@ fn arguments() {
 
 #[test]
 fn constructor() {
-    // todo!()
+    setup_env!(env);
+    
+    new!(me.test.Test());
+    new!(me.test.Test(int(3)));
+    new!(me.test.Test(java.lang.String(env.new_string("Hello, World!").unwrap())));
+    new!(me.test.Test(java.lang.String(env.new_string("Hello, World!").unwrap())) throws String).unwrap();
+    new!(me.test.Test(java.lang.String(JObject::null())) throws String).unwrap_err();
+
+    // Test other class
+    new!(java.lang.Object());
+}
+#[test]
+#[should_panic]
+fn constructor_fail() {
+    setup_env!(env);
+    // Should panic if theconstructor throws, but user did not indicate that the constructor could throw
+    new!(me.test.Test(java.lang.String(JObject::null())));
 }
 
 #[test]
 fn obj_method() {
-    
+    setup_env!(env);
+
+    let obj: JObject<'_> = new!(me.test.Test$Inner());
+    call!(obj.getBoolean() -> boolean);
+    call!(obj.getObject() -> java.lang.Object);
+    call!(obj.args(boolean(true), java.lang.Object(JObject::null())) -> void);
+    call!(obj.arrayArgs([boolean]([true, false]), [java.lang.Object]([JObject::null()])) -> void);
+    // Test object expression
+    call!((obj).getBoolean() -> boolean);
+    call!({ obj }.getBoolean() -> boolean);
 }

@@ -183,7 +183,7 @@ impl FromException<'_> for String {
             .unwrap_or_else(|err| panic!("Failed to get exception's class: {err}"));
         let class = get_string(call!(class.getName() -> java.lang.String), env);
 
-        let msg = get_string(call!(exception.getMessage() -> java.lang.String), env);
+        let msg = get_string(call!(exception.getMessage() -> Option<java.lang.String>).unwrap_or_default(), env);
 
         Ok(format!("{class}: {msg}"))
     }
@@ -230,7 +230,7 @@ impl FromObject<'_> for std::io::Error {
             .expect("Failed to get Object's class");
         let class_str = get_string(call!(class.getName() -> java.lang.String), env);
 
-        let msg = get_string(call!(object.getMessage() -> java.lang.String), env);
+        let msg = get_string(call!(object.getMessage() -> Option<java.lang.String>).unwrap_or_default(), env);
 
         // All classes in map extend java.io.IOException.
         // Check this before the classes in map to avoid a bunch of pointless JNI calls
