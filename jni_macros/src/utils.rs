@@ -1,5 +1,8 @@
+//! Common functions used by all macros in this crate.
+
 use either::Either;
-use proc_macro2::Span;
+use proc_macro2::{TokenStream, Span};
+use quote::{ToTokens, TokenStreamExt as _};
 use syn::{spanned::Spanned as _, ItemEnum, ItemStruct, LitStr};
 use crate::types::{ClassPath, SigType};
 
@@ -16,6 +19,20 @@ pub fn merge_errors(mut errors: Vec<syn::Error>) -> syn::Result<()> {
     } else {
         Ok(())
     }
+}
+
+/// Creates a span by collecting all spans into one, similar to [`Span::join()`].
+/// 
+/// This is done by building a [`TokenStream`] with fake tokens with the spans,
+/// and then returning the span of that [`TokenStream`].
+/// 
+/// See [this page](https://docs.rs/syn/latest/syn/spanned/index.html#limitations) for why this doesn't really work.
+pub fn join_spans(spans: impl IntoIterator<Item = Span>) -> Span {
+    let mut tt = TokenStream::new();
+    for span in spans {
+        tt.append_all(syn::Ident::new("a", span).to_token_stream())
+    }
+    tt.span()
 }
 
 /// Converts the Derive input into a real *struct or enum*.

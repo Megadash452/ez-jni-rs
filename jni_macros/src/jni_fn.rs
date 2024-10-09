@@ -3,7 +3,7 @@ use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
 use syn::{braced, parenthesized, parse::{Parse, ParseStream}, punctuated::Punctuated, spanned::Spanned, Attribute, GenericParam, Generics, Ident, ItemFn, LifetimeParam, LitStr, Token};
 use crate::{
     utils::{gen_signature, get_class_attribute_required, merge_errors},
-    types::{ClassPath, RustPrimitive, SigType, Type}
+    types::{ClassPath, RustPrimitive, SigType, InnerType}
 };
 
 /// Processes the input for [`crate::jni_fns`].
@@ -202,7 +202,7 @@ impl ToTokens for JniFn {
 pub struct JniFnArg {
     pub attrs: Vec<Attribute>,
     pub name: Ident,
-    pub ty: Type
+    pub ty: InnerType
 }
 impl Parse for JniFnArg {
     fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -224,9 +224,9 @@ impl ToTokens for JniFnArg {
         
         // Convert Class to JObject (java.lang.String to JString) and leave primitives alone
         tokens.append_all(match &self.ty {
-            Type::RustPrimitive { ident, ty } => Ident::new(&ty.to_string(), ident.span()).into_token_stream(),
-            Type::JavaPrimitive { ident, ty } => Ident::new(&RustPrimitive::from(*ty).to_string(), ident.span()).into_token_stream(),
-            Type::Object(class) =>
+            InnerType::RustPrimitive { ident, ty } => Ident::new(&ty.to_string(), ident.span()).into_token_stream(),
+            InnerType::JavaPrimitive { ident, ty } => Ident::new(&RustPrimitive::from(*ty).to_string(), ident.span()).into_token_stream(),
+            InnerType::Object(class) =>
                 if class.to_string() == "java.lang.String" {
                     quote_spanned! {class.span()=> ::jni::objects::JString<'local>}
                 } else {
@@ -238,7 +238,7 @@ impl ToTokens for JniFnArg {
 
 pub enum JniReturn {
     Void,
-    Type(Type)
+    Type(InnerType)
 }
 impl SigType for JniReturn {
     fn sig_char(&self) -> Ident {
@@ -271,9 +271,9 @@ impl ToTokens for JniReturn {
             Self::Type(output) => {
                 // Convert Class to *jobject (or *jstring) and leave primitives alone
                 let ty = match output {
-                    Type::RustPrimitive { ident, ty } => Ident::new(&ty.to_string(), ident.span()).into_token_stream(),
-                    Type::JavaPrimitive { ident, ty } => Ident::new(&RustPrimitive::from(*ty).to_string(), ident.span()).into_token_stream(),
-                    Type::Object(class) =>
+                    InnerType::RustPrimitive { ident, ty } => Ident::new(&ty.to_string(), ident.span()).into_token_stream(),
+                    InnerType::JavaPrimitive { ident, ty } => Ident::new(&RustPrimitive::from(*ty).to_string(), ident.span()).into_token_stream(),
+                    InnerType::Object(class) =>
                         if class.to_string() == "java.lang.String" {
                             quote_spanned! {class.span()=> ::jni::sys::jstring}
                         } else {

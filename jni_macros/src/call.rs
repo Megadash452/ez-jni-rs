@@ -1,16 +1,17 @@
+use std::fmt::Display;
 use either::Either;
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
 use syn::{
-    braced, bracketed, parenthesized,
+    braced, parenthesized,
     parse::{discouraged::Speculative, Parse},
     punctuated::Punctuated,
-    spanned::Spanned,
-    Expr, Ident, LitInt, LitStr, Token,
+    Ident, LitStr, Token,
+    spanned::Spanned as _,
 };
 use crate::{
-    utils::{first_char_uppercase, gen_signature},
-    types::{ClassPath, JavaPrimitive, RustPrimitive, SigType, Type}
+    types::{ArrayType, ClassPath, InnerType, JavaPrimitive, SigType, SpecialCaseConversion, Type},
+    utils::{first_char_uppercase, gen_signature, join_spans}
 };
 
 /// Processes input for macro call [super::call!].
@@ -29,16 +30,26 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
             Either::Right(ObjectMethod(_)) => format!("Failed to call {name}(): {{err}}"),
         };
         // Induce panic when the returned value is not the expected type
-        let incorrect_type_msg = format!("Expected {name}() to return {}: {{err}}", call.return_type.inner_type());
+        let incorrect_type_msg = format!("Expected {name}() to return {}: {{err}}", call.return_type.inner());
         let sig_char = Ident::new(&call.return_type.sig_char().to_string(), call.return_type.span());
-        // Some Types need to be converted because they are a special case
-        let conversion = match (call.return_type.special_case_conversions(quote!(v)), call.return_type.sig_char().to_string().as_str()) {
-            // Move the result of the method call to an Option if it is Object because it could be null.
-            (Some(conversion), "l") => quote! { .map(|v| (!v.is_null()).then_some(#conversion)) },
-            (None, "l") => quote! { .map(|v| (!v.is_null()).then_some(v)) },
-            (Some(conversion), _) => quote! { .map(|v| #conversion) },
-            (None, _) => quote!()
+        // Apply special case conversion
+        // Also convert value to Option<_> if it is any kind of Object because it could be null.
+        let conversion = {
+            let conversion = call.return_type.inner().special_case_conversions(quote!(v));
+
+            if call.return_type.sig_char().to_string().as_str() == "l" {
+                match conversion {
+                    Some(conversion) => quote! { .map(|v| (!v.is_null()).then_some(#conversion)) },
+                    None => quote! { .map(|v| (!v.is_null()).then_some(v)) },
+                }
+            } else {
+                match conversion {
+                    Some(conversion) => quote! { .map(|v| #conversion) },
+                    None => quote!()
+                }
+            }
         };
+
         quote! {
             .unwrap_or_else(|err| panic!(#call_failed_msg))
             .#sig_char() #conversion
@@ -73,37 +84,47 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
         let __call = #jni_call;
     };
     match call.return_type {
-        Return::Assertive(Type::Object(_)) => quote! { {
-            #initial
-            ::ez_jni::__throw::panic_uncaught_exception(env.borrow_mut(), #target, #name);
-            __call #common
-                .unwrap_or_else(|| panic!(#non_null_msg))
-        } },
-        Return::Assertive(_) | Return::Void(_) | Return::Option(_) => quote! { {
-            #initial
-            ::ez_jni::__throw::panic_uncaught_exception(env.borrow_mut(), #target, #name);
-            __call #common
-        } },
-        // Move the result of the method call to a Result if the caller expects that the method could throw.
-        Return::Result(ResultType::Assertive(Type::Object(_)), err) => quote! { {
-            #initial
-            ::ez_jni::__throw::catch::<#err>(env.borrow_mut())
-                .map(|_| __call #common
+        // For return types that are not Result
+        Return::Assertive(ty) => match ty {
+            ReturnableType::Assertive(Type::Single(InnerType::Object(_)) | Type::Array(_)) => quote! { {
+                #initial
+                ::ez_jni::__throw::panic_uncaught_exception(env.borrow_mut(), #target, #name);
+                __call #common
                     .unwrap_or_else(|| panic!(#non_null_msg))
-                )
-        } },
-        Return::Result(ResultType::Assertive(_) | ResultType::Void(_) | ResultType::Option(_), err) => quote! { {
-            #initial
-            ::ez_jni::__throw::catch::<#err>(env.borrow_mut())
-                .map(|_| __call #common)
-        } },
+            } },
+            ReturnableType::Void(_)
+            | ReturnableType::Assertive(_)
+            | ReturnableType::Option(_) => quote! { {
+                #initial
+                ::ez_jni::__throw::panic_uncaught_exception(env.borrow_mut(), #target, #name);
+                __call #common
+            } },
+        }
+        // Move the result of the method call to a Result if the caller expects that the method could throw.
+        Return::Result { ty, err_ty, ..} => match ty {
+            ReturnableType::Assertive(Type::Single(InnerType::Object(_)) | Type::Array(_)) => quote! { {
+                #initial
+                ::ez_jni::__throw::catch::<#err_ty>(env.borrow_mut())
+                    .map(|_| __call #common
+                        .unwrap_or_else(|| panic!(#non_null_msg))
+                    )
+            } },
+            ReturnableType::Void(_)
+            | ReturnableType::Assertive(_)
+            | ReturnableType::Option(_) => quote! { {
+                #initial
+                ::ez_jni::__throw::catch::<#err_ty>(env.borrow_mut())
+                    .map(|_| __call #common)
+            } },
+        }
+        
     }
 }
 
 /// Processes input for macro call [super::new!].
 pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
     let class = call.class.to_jni_class_path();
-    let signature = gen_signature(call.parameters.iter(), &Return::Void(Ident::new("void", Span::call_site())));
+    let signature = gen_signature(call.parameters.iter(), &Return::new_void(Span::call_site()));
     let param_vars = gen_arg_vars_defs(call.parameters.iter());
     let arguments = gen_arguments(call.parameters.iter());
     let method_name = format!("constructor{}", signature.value());
@@ -223,141 +244,25 @@ impl Parse for ObjectMethod {
     }
 }
 
-/// Parameter to a JNI method call, such as `int(value)` or `java.lang.String(value)`.
-pub enum Parameter {
-    /// `int(value)` or `java.lang.String(value)`
-    Single { ty: Type, value: TokenStream },
-    /// `[int](value)` or `[java.lang.String](value)`
-    Array { ty: Type, value: TokenStream },
-    /// `[int]([value1, value2])` or `[java.lang.String]([value1, value2])`
-    ArrayLiteral {
-        ty: Type,
-        array: Punctuated<Expr, Token![,]>,
-    },
+/// Parameter to a JNI method call, such as `java.lang.String(value)`.
+/// Holds a [`Type`] that can be an [`ArrayType`], or a regular *single* [`InnerType`].
+/// Can accept an **Array Literal** if the [`Type`] is array.
+pub struct Parameter {
+    ty: Type,
+    value: TokenStream,
 }
 impl Parameter {
-    /// Returns the [`Type`] of the parameter, or the *inner type* if it is an `Array`.
-    pub fn ty(&self) -> &Type {
-        match self {
-            Self::Single { ty, .. } => ty,
-            Self::Array { ty, .. } => ty,
-            Self::ArrayLiteral { ty, .. } => ty,
-        }
-    }
-    /// Returns whether the parameter represents an Array (literal or by value).
-    pub fn is_array(&self) -> bool {
-        match self {
-            Self::Single { .. } => false,
-            Self::Array { .. } | Self::ArrayLiteral { .. } => true,
-        }
-    }
-    /// Returns whether the [`Type`] of the perameter is a *primitive*.
-    /// Returns `false` if this is an `Array`.
-    pub fn is_primitive(&self) -> bool {
-        match self {
-            Self::Single { ty: Type::RustPrimitive { .. } | Type::JavaPrimitive { .. }, .. } => true,
-            _ => false,
-        }
-    }
-
     /// Returns the expression that will be put inside the `JValue::Variant(expr)` in the parameter list, a.k.a the *parameter's value*.
-    pub fn value(&self) -> TokenStream {
-        fn primitive_conversion(ty: Either<RustPrimitive, JavaPrimitive>, value: TokenStream) -> Option<TokenStream> {
-            match ty {
-                // Transmute unsigned integers
-                Either::Left(ty) if ty.is_unsigned() => Some(quote_spanned!(value.span()=> unsafe { ::std::mem::transmute(#value) })),
-                // Bool must be cast to u8
-                Either::Right(JavaPrimitive::Boolean)
-                | Either::Left(RustPrimitive::Bool) => Some(quote_spanned!(value.span()=> #value as u8)),
-                // Char must be encoded to UTF-16 (will panic! if the conversion fails)
-                Either::Right(JavaPrimitive::Char)
-                | Either::Left(RustPrimitive::Char) => Some(quote_spanned!(value.span()=> #value.encode_utf16(&mut [0;1])[0])), 
-                _ => None,
-            }
-        }
-        
-        match self {
-            Self::Single { ty, value } => match ty {
-                Type::JavaPrimitive { ty, .. } => primitive_conversion(Either::Right(*ty), value.clone())
-                    .unwrap_or_else(|| value.clone()),
-                Type::RustPrimitive { ty, .. } => primitive_conversion(Either::Left(*ty), value.clone())
-                    .unwrap_or_else(|| value.clone()),
-                Type::Object(_) => value.clone(),
-            },
-            Self::Array { value, .. } => value.clone(),
-            // Create an Java Array from a Rust array literal
-            Self::ArrayLiteral { ty, array } => {
-                let len = LitInt::new(&array.iter().count().to_string(), array.span());
-                
-                let primitive_array = |ty: Either<RustPrimitive, JavaPrimitive>| {
-                    let values = match primitive_conversion(ty, quote!(v)) {
-                        Some(conversion) => quote_spanned!(array.span()=> &[#array].map(|v| #conversion)),
-                        None => quote_spanned!(array.span()=> &[#array])
-                    };
-                    let ty = ty.right_or_else(|ty| JavaPrimitive::from(ty));
-                    // Can only use JavaPrimitive from here on
-                    
-                    let new_array_fn = Ident::new(&format!("new_{ty}_array"), array.span());
-                    let new_array_err = LitStr::new(
-                        &format!("Failed to create Java {ty} array: {{err}}"),
-                        array.span(),
-                    );
-                    let fill_array_fn =
-                        Ident::new(&format!("set_{ty}_array_region"), array.span());
-                    let fill_array_err = LitStr::new(
-                        &format!("Error filling {ty} array: {{err}}"),
-                        array.span(),
-                    );
-                    // Create a Java array Object from the array literal
-                    quote_spanned! {array.span()=> {
-                        let array = env.#new_array_fn(#len)
-                            .inspect_err(|err| println!(#new_array_err)).unwrap();
-                        env.#fill_array_fn(&array, 0, #values)
-                            .inspect_err(|err| println!(#fill_array_err)).unwrap();
-                        ::jni::objects::JObject::from(array)
-                    } }
-                };
-
-                match ty {
-                    Type::JavaPrimitive { ty, .. } => primitive_array(Either::Right(*ty)),
-                    Type::RustPrimitive { ty, .. } => primitive_array(Either::Left(*ty)),
-                    Type::Object(class) => {
-                        // Build array for object type
-                        let new_array_err = LitStr::new(
-                            &format!("Failed to create Java Object \"{}\" array: {{err}}", class.to_string()),
-                            array.span(),
-                        );
-                        let set_val_err = LitStr::new(
-                            &format!("Failed to set the value of Object array at index {{i}}: {{err}}"),
-                            array.span(),
-                        );
-                        let class_path = LitStr::new(&class.to_jni_class_path(), array.span());
-
-                        // Do nothing if array is empty
-                        let filler = if array.is_empty() {
-                            quote! { }
-                        } else {
-                            quote_spanned! {array.span()=> 
-                                for (i, element) in [#array].into_iter().enumerate() {
-                                    env.set_object_array_element(&array, i as ::jni::sys::jsize, element)
-                                        .inspect_err(|err| println!(#set_val_err)).unwrap();
-                                }
-                            }
-                        };
-                        quote_spanned! {array.span()=> {
-                            let array = env.new_object_array(#len, #class_path, unsafe { ::jni::objects::JObject::from_raw(::std::ptr::null_mut()) } )
-                                .inspect_err(|err| println!(#new_array_err)).unwrap();
-                            #filler
-                            ::jni::objects::JObject::from(array)
-                        } }
-                    }
-                }
-            }
-        }
+    /// 
+    /// Don't return the expression wrapped in `JValue::Variant` because the *value* needs to be put in a variable first
+    /// to avoid mutable borrowing `env` multiple times and to keep the reference to the *value* alive.
+    pub fn expanded_value(&self) -> TokenStream {
+        self.ty.convert_rust_to_java(&self.value)
+            .unwrap_or_else(|| self.value.clone())
     }
     /// Conver the parameter to a `Jvalue` enum variant that will be used in the JNI call parameter list.
     /// The variant will have one of the parameter variables as the inner value.
-    pub fn variant(&self, var_name: Ident) -> TokenStream {
+    pub fn jni_variant(&self, var_name: Ident) -> TokenStream {
         fn primitive_variant(ty: JavaPrimitive, span: Span) -> TokenStream {
             Ident::new(
                 &if ty == JavaPrimitive::Boolean {
@@ -369,13 +274,13 @@ impl Parameter {
                 .to_token_stream()
         }
         
-        let (ty_span, ty_variant) = match self {
-            Self::Single { ty, .. } => match ty {
-                Type::JavaPrimitive { ident, ty } => (ident.span(), primitive_variant(*ty, ident.span())),
-                Type::RustPrimitive { ident, ty } => (ident.span(), primitive_variant(JavaPrimitive::from(*ty), ident.span())),
-                Type::Object(class) => (class.span(), quote!(Object)),
+        let (ty_span, ty_variant) = match &self.ty {
+            Type::Single(ty) => match ty {
+                InnerType::JavaPrimitive { ident, ty } => (ident.span(), primitive_variant(*ty, ident.span())),
+                InnerType::RustPrimitive { ident, ty } => (ident.span(), primitive_variant(JavaPrimitive::from(*ty), ident.span())),
+                InnerType::Object(class) => (class.span(), quote!(Object)),
             },
-            Self::Array { ty, .. } | Self::ArrayLiteral { ty, .. } => (ty.span(), quote!(Object)),
+            Type::Array(ty) => (ty.span(), quote!(Object)),
         };
         let mut tt = quote! {};
         tt.append_all(quote_spanned! {ty_span=> ::jni::objects::JValue::#ty_variant });
@@ -385,63 +290,23 @@ impl Parameter {
 }
 impl SigType for Parameter {
     fn sig_char(&self) -> Ident {
-        // An array is always an Object
-        Ident::new("l", self.ty().span())
+        self.ty.sig_char()
     }
     fn sig_type(&self) -> LitStr {
-        let mut buf = String::new();
-        // Array types in signature have an opening bracket prepended to the type
-        if self.is_array() {
-            buf.push('[');
-        }
-        buf.push_str(&self.ty().sig_type().value());
-
-        LitStr::new(&buf, self.ty().span())
+        self.ty.sig_type()
     }
 }
 impl Parse for Parameter {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        // Check if the Type is wrapped in Brackets (Array)
-        Ok(if input.lookahead1().peek(syn::token::Bracket) {
-            let ty = {
-                let inner;
-                bracketed!(inner in input);
-                inner.parse::<Type>()?
-            };
-            let value_tokens;
-            parenthesized!(value_tokens in input);
-            if value_tokens.is_empty() {
-                return Err(value_tokens.error("Must provide a parameter value"));
-            }
-            // Check if the Value is wrapped in Brackets (ArrayLiteral)
-            if value_tokens.lookahead1().peek(syn::token::Bracket) {
-                Self::ArrayLiteral {
-                    ty,
-                    array: {
-                        let inner;
-                        bracketed!(inner in value_tokens);
-                        Punctuated::parse_terminated(&inner)?
-                    },
-                }
-            } else {
-                Self::Array {
-                    ty,
-                    value: value_tokens.parse::<TokenStream>()?,
-                }
-            }
-        } else {
-            Self::Single {
-                ty: input.parse::<Type>()?,
-                value: {
-                    let value_tokens;
-                    parenthesized!(value_tokens in input);
-                    if value_tokens.is_empty() {
-                        return Err(value_tokens.error("Must provide a parameter value"));
-                    }
-                    value_tokens.parse::<TokenStream>()?
-                },
-            }
-        })
+        let ty = input.parse()?;
+        let value_tokens;
+        parenthesized!(value_tokens in input);
+
+        if value_tokens.is_empty() {
+            return Err(value_tokens.error("Must provide a parameter value"));
+        }
+
+        Ok(Self { ty, value: value_tokens.parse()? })
     }
 }
 
@@ -454,102 +319,138 @@ impl Parse for Parameter {
 /// 3. `Result<Type | void | Option<ClassPath>, E>` if the method call can throw an **Exception**,
 ///    where `E` is any Rust type that *implements [`FromException`]*.
 pub enum Return {
-    Void(Ident),
-    Assertive(Type),
-    Option(ClassPath),
+    /// The method being called can't throw (will `panic!` if it does).
+    Assertive(ReturnableType),
     /// Holds the Ok Type (a Type or Option), and the Err Type.
-    Result(ResultType, syn::Path),
+    Result {
+        result: Ident,
+        ty: ReturnableType,
+        err_ty: syn::Path
+    },
 }
 impl Return {
-    /// Helper function that parses the content of the option variant.
-    /// Helps avoid code repetition.
-    fn parse_option(
-        input: syn::parse::ParseStream,
-        fork: syn::parse::ParseStream,
-    ) -> syn::Result<ClassPath> {
-        input.advance_to(&fork);
-        // Parse generic arguement
-        input
-            .parse::<Token![<]>()
-            .map_err(|err| input.error(format!("Option takes generic arguments; {err}")))?;
-        let class = match input.parse::<Type>()? {
-            Type::Object(path) => path,
-            t => return Err(syn::Error::new(
-                t.span(),
-                "Option cannot be used with primitives, only Classes.",
-            ))
-        };
-        input
-            .parse::<Token![>]>()
-            .map_err(|err| input.error(format!("Option takes only 1 generic argument; {err}")))?;
-        Ok(class)
+    /// Create a new [`Return`] Type that is **Void**.
+    pub fn new_void(span: Span) -> Self {
+        Self::Assertive(ReturnableType::Void(Ident::new("void", span)))
     }
-
+    /// Returns the inner [`ReturnableType`].
+    pub fn inner(&self) -> &ReturnableType {
+        match self {
+            Self::Assertive(ty)
+            | Self::Result { ty, .. } => ty
+        }
+    }
+    /// Returns the [`Span`] of the *return type's* tokens.
     pub fn span(&self) -> Span {
         match self {
-            Self::Void(ident) | Self::Result(ResultType::Void(ident), _) => ident.span(),
-            Self::Assertive(ty) | Self::Result(ResultType::Assertive(ty), _) => ty.span(),
-            Self::Option(class) | Self::Result(ResultType::Option(class), _) => class.span(),
-        }
-    }
-
-    /// Returns the string representation of the Return type of the Java method (`void`, `primitive`, or `Object`).
-    pub fn inner_type(&self) -> String {
-        match self {
-            Return::Assertive(Type::Object(class))
-            | Return::Option(class)
-            | Return::Result(ResultType::Assertive(Type::Object(class)), _)
-            | Return::Result(ResultType::Option(class), _) => class.to_jni_class_path(),
-            Return::Assertive(ty) | Return::Result(ResultType::Assertive(ty), _) => ty.to_string(),
-            Return::Void(_) | Return::Result(ResultType::Void(_), _) => "void".to_string(),
-        }
-    }
-    
-    /// Handle special cases of the call's return value.
-    /// e.g. wrap `java.lang.String` in `JString`.
-    /// 
-    /// **value** is the tokens representing the value that will be *operated on*.
-    pub fn special_case_conversions(&self, value: TokenStream) -> Option<TokenStream> {
-        match self {
-            // Special cases for RustPrimitives
-            Return::Assertive(Type::RustPrimitive { ty, .. })
-            | Return::Result(ResultType::Assertive(Type::RustPrimitive { ty, .. }), _)
-                => ty.special_case_conversion(value),
-            // Special cases for Java Objects
-            Return::Assertive(Type::Object(class))
-            | Return::Option(class)
-            | Return::Result(ResultType::Assertive(Type::Object(class)), _)
-            | Return::Result(ResultType::Option(class), _) =>
-                if class.to_jni_class_path() == "java/lang/String" {
-                    // Wrap java.lang.String in JString
-                    Some(quote! { ::jni::objects::JString::from(#value) })
-                } else {
-                    None
-                },
-            _ => None
+            Self::Assertive(ty) => ty.span(),
+            Self::Result { result, ty, err_ty } =>
+                join_spans([result.span(), ty.span(), err_ty.span()])
         }
     }
 }
 impl SigType for Return {
     fn sig_char(&self) -> Ident {
         match self {
-            Self::Void(ident) | Self::Result(ResultType::Void(ident), _) => Ident::new("v", ident.span()),
-            Self::Assertive(ty) | Self::Result(ResultType::Assertive(ty), _) => ty.sig_char(),
-            Self::Option(class) | Self::Result(ResultType::Option(class), _) => class.sig_char(),
+            Self::Assertive(ty)
+            | Self::Result { ty, .. } => ty.sig_char()
         }
     }
     fn sig_type(&self) -> LitStr {
         match self {
-            Self::Void(ident)
-            | Self::Result(ResultType::Void(ident), _) => LitStr::new("V", ident.span()),
             Self::Assertive(ty)
-            | Self::Result(ResultType::Assertive(ty), _) => ty.sig_type(),
-            Self::Option(class)
-            | Self::Result(ResultType::Option(class), _) => class.sig_type(),
+            | Self::Result{ ty, .. } => ty.sig_type()
         }
     }
 }
 impl Parse for Return {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let fork = input.fork();
+        // Check if caller uses Result as the return type
+        Ok(match fork.parse::<Ident>() {
+            Ok(ident) => match ident.to_string().as_str() {
+                "Result" => {
+                    input.advance_to(&fork);
+                    // Parse generic arguements
+                    input.parse::<Token![<]>().map_err(|err| {
+                        input.error(format!("Result takes generic arguments; {err}"))
+                    })?;
+                    let ty = input.parse()?;
+                    input.parse::<Token![,]>().map_err(|err| {
+                        input.error(format!("Result takes 2 generic arguments; {err}"))
+                    })?;
+                    let err_ty = input.parse::<syn::Path>()?;
+                    input.parse::<Token![>]>()?;
+                    Self::Result { result: ident, ty, err_ty }
+                }
+                _ => Self::Assertive(input.parse()?),
+            },
+            // The return type did not start with Ident... weird, but let's continue
+            Err(_) => Self::Assertive(input.parse()?),
+        })
+    }
+}
+
+/// A type that can be in the *return type* of `call!`.
+/// This is the inner type of [`Return`].
+/// 
+/// Don't parse this type, as it denies `Result`.
+/// Parse [`Return`] instead.
+pub enum ReturnableType {
+    Void(Ident),
+    /// Asserts that the returned value can't be `null`.
+    /// Will cause a `panic!` if `call!` returns `null`.
+    Assertive(Type),
+    Option(OptionType)
+}
+/// A type that can be in the `Option` of the [*return type*](ReturnableType).
+/// Can't have *primitive* types themselves, but can have *array of primitive*.
+pub enum OptionType {
+    Object(ClassPath),
+    Array(ArrayType)
+}
+impl ReturnableType {
+    /// Returns the [`Span`] of the *return type's* tokens.
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Void(ident) => ident.span(),
+            Self::Assertive(ty) => ty.span(),
+            Self::Option(OptionType::Object(class)) => class.span(),
+            Self::Option(OptionType::Array(array)) => array.span(),
+        }
+    }
+    /// Handle special cases of the call's return value.
+    /// 
+    /// See [`SpecialCaseConversion::convert_java_to_rust()`].
+    pub fn special_case_conversions(&self, value: TokenStream) -> Option<TokenStream> {
+        match self {
+            Self::Assertive(ty) => ty.convert_java_to_rust(&value),
+            Self::Option(OptionType::Object(class)) => class.convert_java_to_rust(&value),
+            Self::Option(OptionType::Array(array)) => array.convert_java_to_rust(&value),
+            Self::Void(_) => None,
+        }
+    }
+}
+impl SigType for ReturnableType {
+    fn sig_char(&self) -> Ident {
+        match self {
+            Self::Void(ident) => Ident::new("v", ident.span()),
+            Self::Assertive(ty) => ty.sig_char(),
+            // Option is always l because it can only hold Objects
+            Self::Option(OptionType::Object(class)) => class.sig_char(),
+            Self::Option(OptionType::Array(array)) => array.sig_char(),
+        }
+    }
+    fn sig_type(&self) -> LitStr {
+        match self {
+            Self::Void(ident) => LitStr::new("V", ident.span()),
+            Self::Assertive(ty) => ty.sig_type(),
+            Self::Option(OptionType::Object(class)) => class.sig_type(),
+            Self::Option(OptionType::Array(array)) => array.sig_type(),
+        }
+    }
+}
+impl Parse for ReturnableType {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let fork = input.fork();
         // Check if caller uses Option or Result as the return type
@@ -559,45 +460,24 @@ impl Parse for Return {
                     input.advance_to(&fork);
                     Self::Void(ident)
                 }
-                "Option" => Self::Option(Self::parse_option(input, &fork)?),
-                "Result" => {
+                "Option" => {
                     input.advance_to(&fork);
-                    // Parse generic arguements
-                    input.parse::<Token![<]>().map_err(|err| {
-                        input.error(format!("Result takes generic arguments; {err}"))
-                    })?;
-                    let ok_type = input.parse()?;
-                    input.parse::<Token![,]>().map_err(|err| {
-                        input.error(format!("Result takes 2 generic arguments; {err}"))
-                    })?;
-                    let err_type = input.parse::<syn::Path>()?;
-                    input.parse::<Token![>]>()?;
-                    Self::Result(ok_type, err_type)
-                }
-                _ => Self::Assertive(input.parse()?),
-            },
-            // The return type did not start with Ident... weird, but let's continue
-            Err(_) => Self::Assertive(input.parse()?),
-        })
-    }
-}
+                    // Parse inner type of Option
+                    input.parse::<Token![<]>()
+                        .map_err(|err| input.error(format!("Option takes generic arguments; {err}")))?;
+                    let option_ty = match input.parse::<Type>()? {
+                        Type::Single(InnerType::Object(class)) => OptionType::Object(class),
+                        Type::Array(array) => OptionType::Array(array),
+                        t => return Err(syn::Error::new(
+                            t.span(),
+                            "Option cannot be used with primitives, only Classes.",
+                        ))
+                    };
+                    input.parse::<Token![>]>()
+                        .map_err(|err| input.error(format!("Option takes only 1 generic argument; {err}")))?;
 
-/// The `Ok` Type of a [`Return::Result`] could be a regular type ([`Void`][ResultType::Void] or [`Assertive`][ResultType::Assertive]), or nullable [`Option`].
-pub enum ResultType {
-    Void(Ident),
-    Assertive(Type),
-    Option(ClassPath),
-}
-impl Parse for ResultType {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let fork = input.fork();
-        Ok(match fork.parse::<Ident>() {
-            Ok(ident) => match ident.to_string().as_str() {
-                "void" => {
-                    input.advance_to(&fork);
-                    Self::Void(ident)
-                }
-                "Option" => Self::Option(Return::parse_option(input, &fork)?),
+                    Self::Option(option_ty)
+                },
                 "Result" => return Err(syn::Error::new(
                     ident.span(),
                     "Can't nest a Result within a Result",
@@ -607,6 +487,16 @@ impl Parse for ResultType {
             // The return type did not start with Ident... weird, but let's continue
             Err(_) => Self::Assertive(input.parse()?),
         })
+    }
+}
+impl Display for ReturnableType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Void(ident) => Display::fmt(ident, f),
+            Self::Assertive(ty) => Display::fmt(ty, f),
+            Self::Option(OptionType::Object(class)) => Display::fmt(class, f),
+            Self::Option(OptionType::Array(array)) => Display::fmt(array, f)
+        }
     }
 }
 
@@ -623,10 +513,10 @@ fn gen_arg_vars_defs<'a>(params: impl Iterator<Item = &'a Parameter>) -> TokenSt
     params
         .enumerate()
         .map(|(i, param)| {
-            let value = param.value();
+            let value = param.expanded_value();
             let var_name = Ident::new(&format!("__param_{i}"), value.span());
             // Parameters of type object must always be passed by reference.
-            if param.is_primitive() {
+            if param.ty.is_primitive() {
                 quote_spanned! {value.span()=> let #var_name = #value; }
             } else {
                 quote_spanned! {value.span()=> let #var_name = &(#value); }
@@ -640,7 +530,7 @@ fn gen_arguments<'a>(params: impl Iterator<Item = &'a Parameter>) -> TokenStream
     let params = params
         .enumerate()
         .map(|(i, param)| {
-            param.variant(Ident::new(&format!("__param_{i}"), param.value().span()))
+            param.jni_variant(Ident::new(&format!("__param_{i}"), param.expanded_value().span()))
         });
     quote! { &[ #( #params ),* ] }
 }

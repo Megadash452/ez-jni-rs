@@ -11,8 +11,7 @@ use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
 use syn::{parse::Parse, punctuated::Punctuated, spanned::Spanned, AngleBracketedGenericArguments, Field, Fields, GenericArgument, GenericParam, Generics, Ident, ItemEnum, ItemStruct, Lifetime, LitStr, Token, Type, TypePath, Variant};
 use std::str::FromStr;
 use crate::{
-    utils::{take_class_attribute, get_class_attribute_required, merge_errors},
-    types::{ClassPath, JavaPrimitive, RustPrimitive, SigType}
+    types::{ClassPath, JavaPrimitive, RustPrimitive, SigType, SpecialCaseConversion}, utils::{get_class_attribute_required, merge_errors, take_class_attribute}
 };
 
 /// Find the JObject field with a lifetime, and use that lifetime's name for the JNIEnv lifetime,
@@ -239,7 +238,7 @@ impl FieldType {
 
     pub fn converted(&self, value: TokenStream) -> TokenStream {
         match self {
-            FieldType::Prim(_, prim) => prim.special_case_conversion(value.clone())
+            FieldType::Prim(_, prim) => prim.convert_rust_to_java(&value)
                 .unwrap_or(value),
             FieldType::Implicit(ty) => quote_spanned! {ty.span()=> <#ty as ::ez_jni::FromObject>::from_object(&#value, env)? },
             FieldType::Object(_) => quote_spanned! {value.span()=> #value.into() }

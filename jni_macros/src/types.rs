@@ -1,8 +1,10 @@
 use proc_macro2::{Span, TokenStream};
-use quote::{quote_spanned, ToTokens as _, TokenStreamExt as _};
-use syn::{parse::{discouraged::Speculative as _, Parse}, punctuated::{Pair, Punctuated}, spanned::Spanned as _, Ident, LitStr, Token};
+use quote::quote_spanned;
+use syn::{bracketed, parse::{discouraged::Speculative as _, Parse}, punctuated::Punctuated, spanned::Spanned as _, token::Bracket, Ident, LitStr, Token};
 use itertools::Itertools as _;
 use std::{fmt::{Display, Debug}, str::FromStr};
+
+use crate::utils::join_spans;
 
 /// Indicates that a type is data about Java Type signature, such as a *parameter type* or *return type*
 pub trait SigType {
@@ -15,25 +17,317 @@ pub trait SigType {
     fn sig_type(&self) -> LitStr;
 }
 
-/// A Type is an [`Ident`] of one of the following Variants in lowercase, or a [`Type::Object`].
-///
-/// Note that `Void` isn't a variant here.
-/// Since [`Type`] is used by both [`Parameter`] and [`Return`],
-/// and [`Paramter`] can't be void, the void variant was moved to [`Return`] (and by extension [`ResultType`]).
+/// Perform some kind of necessary conversion between *Rust* and *Java* values.
+/// For example, convert a *slice* to a *Java Array*, convert *UTF-8* to *UTF-16*, etc.
+pub trait SpecialCaseConversion {
+    /// Returns code that handles *special case conversion* for a **Java** value to be converted to a **Rust** value.
+    /// In other words, if a macro expects a [`Type`], run some middle step on a *Java value* to obtain a valid instance of this [`Type`].
+    /// 
+    /// Returns [`None`] if no conversion is necessary.
+    /// 
+    /// **value** is the tokens/expression representing the value that must be converted.
+    /// 
+    /// This is used for the *return* type.
+    fn convert_java_to_rust(&self, value: &TokenStream) -> Option<TokenStream>;
+    /// Returns code that handles *special case conversion* for a **Rust** value to be converted to a **Java** value.
+    /// 
+    /// Returns [`None`] if no conversion is necessary.
+    /// 
+    /// **value** is the tokens/expression representing the value that must be converted.
+    /// 
+    /// This is used for the *parameter* type.
+    fn convert_rust_to_java(&self, value: &TokenStream) -> Option<TokenStream>;
+}
+
 pub enum Type {
-    JavaPrimitive { ident: Ident, ty: JavaPrimitive },
-    RustPrimitive { ident: Ident, ty: RustPrimitive },
-    Object(ClassPath),
+    Single(InnerType),
+    Array(ArrayType),
+    // Might also add generics
 }
 impl Type {
     pub fn span(&self) -> Span {
         match self {
-            Self::JavaPrimitive { ident, .. } | Self::RustPrimitive { ident, .. } => ident.span(),
-            Self::Object(class) => class.span(),
+            Self::Single(ty) => ty.span(),
+            Self::Array(array) => array.span()
+        }
+    }
+    /// Returns whether the [`InnerType`] of the type is a *primitive*.
+    /// Returns `false` if this is an [`Array`][Type::Array].
+    pub fn is_primitive(&self) -> bool {
+        match self {
+            Self::Single(InnerType::RustPrimitive { .. } | InnerType::JavaPrimitive { .. }) => true,
+            Self::Single(_) | Self::Array(_) => false,
         }
     }
 }
 impl SigType for Type {
+    fn sig_char(&self) -> Ident {
+        match self {
+            Self::Single(ty) => ty.sig_char(),
+            Self::Array(array) => array.sig_char(),
+        }
+    }
+    fn sig_type(&self) -> LitStr {
+        match self {
+            Self::Single(ty) => ty.sig_type(),
+            Self::Array(array) => array.sig_type(),
+        }
+    }
+}
+impl SpecialCaseConversion for Type {
+    fn convert_java_to_rust(&self, value: &TokenStream) -> Option<TokenStream> {
+        match self {
+            Self::Single(ty) => ty.convert_java_to_rust(value),
+            Self::Array(array) => array.convert_java_to_rust(value)
+        }
+    }
+    fn convert_rust_to_java(&self, value: &TokenStream) -> Option<TokenStream> {
+        match self {
+            Self::Single(ty) => ty.convert_rust_to_java(value),
+            Self::Array(array) => array.convert_rust_to_java(value)
+        }
+    }
+}
+impl Parse for Type {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        // Check if the Type is wrapped in Brackets (Array)
+        Ok(if input.lookahead1().peek(syn::token::Bracket) {
+            Self::Array(input.parse()?)
+        } else {
+            Self::Single(input.parse()?)
+        })
+    }
+}
+impl Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Single(ty) => Display::fmt(ty, f),
+            Self::Array(array) => Display::fmt(array, f)
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct ArrayType {
+    pub brackets: Bracket,
+    pub ty: InnerType
+}
+impl ArrayType {
+    pub fn span(&self) -> Span {
+        join_spans([self.brackets.span.span(), self.ty.span()])
+    }
+}
+impl SigType for ArrayType {
+    /// Returns 'l' because Arrays are Objects.
+    /// See [`origin`](SigType::sig_char()).
+    fn sig_char(&self) -> Ident {
+        Ident::new("l", self.ty.span())
+    }
+    fn sig_type(&self) -> LitStr {
+        let sig_type = self.ty.sig_type();
+        LitStr::new(&format!("[{}", sig_type.value()), sig_type.span())
+    }
+}
+impl SpecialCaseConversion for ArrayType {
+    /// Returns code that converts a *Java Array* to a *Rust [`Box`]*.
+    /// 
+    /// Always returns [`Some`].
+    /// 
+    /// See [`origin`](SpecialCaseConversion::convert_java_to_rust()).
+    fn convert_java_to_rust(&self, value: &TokenStream) -> Option<TokenStream> {
+        // There are different JNI functions for each primitive array and Object arrays
+        Some(match &self.ty {
+            // Build a Rust boxed slice from a Java Array in which the inner type is a primitive.
+            InnerType::JavaPrimitive { .. }
+            | InnerType::RustPrimitive { .. } => {
+                // Use the Java Primitive to build the names of the JNI functions
+                // Use the Rust Primitive for the special case conversion
+                let (j_prim, r_prim) = match &self.ty {
+                    InnerType::JavaPrimitive { ty, .. } => (*ty, RustPrimitive::from(*ty)),
+                    InnerType::RustPrimitive { ty, .. } => (JavaPrimitive::from(*ty), *ty),
+                    InnerType::Object(_) => panic!("Passed Object to function that clearly wants a primitive")
+                };
+
+                let inner_ty = j_prim.sig_type();
+                // The name of the JNI function that puts the Java Array's elements in the slice
+                let fill_slice = Ident::new(&format!("get_{j_prim}_array_region"), value.span());
+                // The inner type of the array might require some conversion
+                let conversion = {
+                    let element_tokens = quote_spanned!(value.span()=> v); 
+                    // Must also convert to Rust bool (jni, why only here?)
+                    if r_prim == RustPrimitive::Bool {
+                        quote_spanned!(element_tokens.span()=> #element_tokens != 0)
+                    } else {
+                        // Convert using the variable
+                        r_prim.convert_java_to_rust(&element_tokens)
+                            .unwrap_or(element_tokens)
+                    }
+                };
+
+                quote_spanned! {value.span()=> {
+                    use ::std::borrow::BorrowMut as _;
+                    let _array = ::jni::objects::JPrimitiveArray::from(#value);
+                    let _len = ::ez_jni::utils::__obj_array_len(&_array, #inner_ty, env.borrow_mut());
+                    let mut _box = vec![unsafe { std::mem::zeroed() }; _len].into_boxed_slice();
+                    env.#fill_slice(&_array, 0, &mut _box)
+                        .unwrap_or_else(|err| panic!("Failed to read Array elements: {err}"));
+                    _box.into_vec()
+                        .into_iter()
+                        .map(|v| #conversion)
+                        .collect::<::std::boxed::Box<[_]>>()
+                } }
+            },
+            // Build a Rust boxed slice from a Java Array in which the inner type is an Object.
+            InnerType::Object(class) => {
+                let inner_ty = class.sig_type();
+
+                // The inner Class of the array might require some conversion
+                let conversion = {
+                    let element_tokens = quote_spanned!(value.span()=> _element); 
+                    // Convert using the variable
+                    class.convert_java_to_rust(&element_tokens)
+                        .unwrap_or(element_tokens)
+                };
+
+                quote_spanned! {value.span() => {
+                    use ::std::borrow::BorrowMut as _;
+                    let _array = ::jni::objects::JObjectArray::from(#value);
+                    let _len = ::ez_jni::utils::__obj_array_len(&_array, #inner_ty, env.borrow_mut());
+                    let mut _vec = ::std::vec::Vec::with_capacity(_len);
+                    for i in 0.._len {
+                        let _element = env.get_object_array_element(&_array, i as ::jni::sys::jsize)
+                            .unwrap_or_else(|err| panic!("Failed to read Array elements: {err}"));
+                        _vec[i] = #conversion;
+                    }
+                    _vec.into_boxed_slice()
+                } }
+            }
+        })
+    }
+    /// Returns code that converts a *Rust slice* to a *Java Array*.
+    /// 
+    /// Always returns [`Some`].
+    /// 
+    /// See [`origin`](SpecialCaseConversion::convert_java_to_rust()).
+    fn convert_rust_to_java(&self, value: &TokenStream) -> Option<TokenStream> {
+        // There are different JNI functions for each primitive array and Object arrays
+        Some(match &self.ty {
+            // Build a Java Array in which the inner type is a primitive.
+            InnerType::JavaPrimitive { .. }
+            | InnerType::RustPrimitive { .. } => {
+                // Use the java primitive to build the names of the JNI functions
+                let j_prim = match &self.ty {
+                    InnerType::JavaPrimitive { ty, .. } => *ty,
+                    InnerType::RustPrimitive { ty, .. } => JavaPrimitive::from(*ty),
+                    InnerType::Object(_) => panic!("Passed Object to function that clearly wants a primitive")
+                };
+                
+                let new_array_fn = Ident::new(&format!("new_{j_prim}_array"), value.span());
+                let new_array_err = LitStr::new(
+                    &format!("Failed to create Java {j_prim} array: {{err}}"),
+                    value.span(),
+                );
+                let fill_array_fn =
+                    Ident::new(&format!("set_{j_prim}_array_region"), value.span());
+                let fill_array_err = LitStr::new(
+                    &format!("Error filling {j_prim} array: {{err}}"),
+                    value.span(),
+                );
+                // The inner type of the array might require some conversion
+                let conversion = {
+                    match self.ty.convert_rust_to_java(&quote_spanned! {value.span()=> v}) {
+                        Some(conversion) => &quote_spanned!(value.span()=>
+                            #value.iter()
+                                .map(|&v| #conversion)
+                                .collect::<::std::boxed::Box<[_]>>()
+                        ),
+                        None => value
+                    }
+                };
+    
+                quote_spanned! {value.span()=> {
+                    let _slice = &(#conversion) as &[_];
+                    let _jarray = env.#new_array_fn(_slice.len() as ::jni::sys::jsize)
+                        .unwrap_or_else(|err| panic!(#new_array_err));
+                    env.#fill_array_fn(&_jarray, 0, _slice)
+                        .inspect_err(|err| println!(#fill_array_err)).unwrap();
+                    ::jni::objects::JObject::from(_jarray)
+                } }
+            },
+            // Build a Java Array in which the inner type is an Object.
+            InnerType::Object(class) => {
+                let new_array_err = LitStr::new(
+                    &format!("Failed to create Java Object \"{}\" array: {{err}}", class.to_string()),
+                    value.span(),
+                );
+                let set_val_err = LitStr::new(
+                    &format!("Failed to set the value of Object array at index {{_i}}: {{err}}"),
+                    value.span(),
+                );
+                let class_path = LitStr::new(&class.to_jni_class_path(), value.span());
+                // The inner Class of the array might require some conversion
+                let conversion = {
+                    let element_tokens = quote_spanned!(value.span()=> _element); 
+                    // Convert using the variable
+                    class.convert_rust_to_java(&element_tokens)
+                        .unwrap_or(element_tokens)
+                };
+
+                quote_spanned! {value.span()=> {
+                    let _slice = &(#value) as &[::jni::objects::JObject<'_>];
+                    let _jarray = env.new_object_array(
+                        _slice.len() as ::jni::sys::jsize,
+                        #class_path,
+                        unsafe { ::jni::objects::JObject::from_raw(::std::ptr::null_mut()) }
+                    )
+                        .unwrap_or_else(|err| panic!(#new_array_err));
+                    for (_i, _element) in _slice.into_iter().enumerate() {
+                        env.set_object_array_element(&_jarray, _i as ::jni::sys::jsize, #conversion)
+                            .unwrap_or_else(|err| panic!(#set_val_err));
+                    }
+                    ::jni::objects::JObject::from(_jarray)
+                } }
+            },
+        })
+    }
+}
+impl Parse for ArrayType {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let inner;
+        Ok(Self {
+            brackets: bracketed!(inner in input),
+            ty: inner.parse()?
+        })
+    }
+}
+impl Display for ArrayType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[{}]", self.ty)
+    }
+}
+
+
+/// An InnerType is a top-level type that can be used for **arrays** and **generics**
+/// 
+/// [`Parameter`]: crate::call::Parameter
+/// [`Return`]: crate::call::Return
+/// [`ResultType`]: crate::call::ResultType
+#[derive(Debug, Clone)]
+pub enum InnerType {
+    JavaPrimitive { ident: Ident, ty: JavaPrimitive },
+    RustPrimitive { ident: Ident, ty: RustPrimitive },
+    Object(ClassPath),
+}
+impl InnerType {
+    pub fn span(&self) -> Span {
+        match self {
+            Self::JavaPrimitive { ident, .. }
+            | Self::RustPrimitive { ident, .. } => ident.span(),
+            Self::Object(class) => class.span(),
+        }
+    }
+}
+impl SigType for InnerType {
     fn sig_char(&self) -> Ident {
         match self {
             Self::JavaPrimitive { ident, ty } => {
@@ -65,7 +359,23 @@ impl SigType for Type {
         }
     }
 }
-impl Parse for Type {
+impl SpecialCaseConversion for InnerType {
+    fn convert_java_to_rust(&self, value: &TokenStream) -> Option<TokenStream> {
+        match self {
+            Self::RustPrimitive { ty, .. } => ty.convert_java_to_rust(value),
+            Self::JavaPrimitive { ty, .. } => RustPrimitive::from(*ty).convert_java_to_rust(value),
+            Self::Object(class) => class.convert_java_to_rust(value),
+        }
+    }
+    fn convert_rust_to_java(&self, value: &TokenStream) -> Option<TokenStream> {
+        match self {
+            Self::RustPrimitive { ty, .. } => ty.convert_rust_to_java(value),
+            Self::JavaPrimitive { ty, .. } => RustPrimitive::from(*ty).convert_rust_to_java(value),
+            Self::Object(class) => class.convert_rust_to_java(value),
+        }
+    }
+}
+impl Parse for InnerType {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let fork = input.fork();
         let ident = fork.parse::<Ident>()?;
@@ -86,7 +396,7 @@ impl Parse for Type {
         }
     }
 }
-impl Display for Type {
+impl Display for InnerType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
             Self::JavaPrimitive { ty, .. } => ty.to_string(),
@@ -104,12 +414,14 @@ impl Display for Type {
 /// Must have *at least one* package ident, so it will need at least 2 idents in total.
 ///
 /// Example: `MyClass`, `java.lang.` are not allowed.
+#[derive(Clone)]
 pub struct ClassPath {
     pub packages: Vec<(Ident, Token![.])>,
     /// The last Ident in the Punctuated list.
     pub class: Ident,
     pub nested_path: Option<NestedPath>
 }
+#[derive(Clone)]
 pub struct NestedPath {
     pub classes: Vec<(Ident, Token![$])>,
     pub final_class: Ident
@@ -117,14 +429,19 @@ pub struct NestedPath {
 impl ClassPath {
     /// Builds a [`TokenStream`] out of this path's items and returns its [`span`][TokenStream::span()].
     pub fn span(&self) -> Span {
-        let mut tt = TokenStream::new();
-        tt.append_all(self.packages.iter().map(|(t, p)| Pair::new(t, Some(p))));
-        tt.append_all(self.class.to_token_stream());
+        let mut spans = Vec::new();
+        spans.extend(self.packages.iter()
+            .map(|(ident, dot)| join_spans([ident.span(), dot.span]))
+        );
+        spans.push(self.class.span());
         if let Some(nested_path) = &self.nested_path {
-            tt.append_all(nested_path.classes.iter().map(|(t, p)| Pair::new(t, Some(p))));
-            tt.append_all(nested_path.final_class.to_token_stream());
+            spans.extend(nested_path.classes.iter()
+                .map(|(ident, dol)| join_spans([ident.span(), dol.span]))
+            );
+            spans.push(nested_path.final_class.span())
         }
-        tt.span()
+        
+        join_spans(spans.into_iter())
     }
 
     /// Parses the [`ClassPath`] with [`Parse::parse()`], but the final path *component* is a method name.
@@ -158,7 +475,6 @@ impl ClassPath {
 
     /// Converts the [`ClassPath`] to a string used by `JNI`, where each component is separated by a slash.
     /// e.g. `java/lang/String` or `me/author/Class$Nested`.
-    #[allow(unstable_name_collisions)]
     pub fn to_jni_class_path(&self) -> String {
         self.to_string_helper("/", "$")
     }
@@ -196,6 +512,20 @@ impl SigType for ClassPath {
     }
     fn sig_type(&self) -> LitStr {
         LitStr::new(&format!("L{};", self.to_jni_class_path()), self.span())
+    }
+}
+impl SpecialCaseConversion for ClassPath {
+    fn convert_java_to_rust(&self, value: &TokenStream) -> Option<TokenStream> {
+        // Special cases for Java Objects
+        if self.to_jni_class_path() == "java/lang/String" {
+            // Wrap java.lang.String in JString
+            Some(quote_spanned! {value.span()=> ::jni::objects::JString::from(#value) })
+        } else {
+            None
+        }
+    }
+    fn convert_rust_to_java(&self, _value: &TokenStream) -> Option<TokenStream> {
+        None
     }
 }
 impl Parse for ClassPath {
@@ -277,24 +607,37 @@ impl RustPrimitive {
             _ => false,
         }
     }
-    /// Handle special cases of primitives that must be converted from another type to get the target type.
-    /// Returns [`None`] if the primitive doesn't need any conversion.
-    /// 
-    /// **value** is the tokens representing the value that will be *operated on*.
-    pub fn special_case_conversion(self, value: TokenStream) -> Option<TokenStream> {
-        if self.is_unsigned() {
-            // Transmute to the unsigned type
-            let target_ty = Ident::new(&self.to_string(), Span::call_site());
-            Some(quote_spanned! {value.span()=> unsafe { ::std::mem::transmute::<_, #target_ty>(#value) } })
-        } else if self == RustPrimitive::Char {
+}
+impl SpecialCaseConversion for RustPrimitive {
+    fn convert_java_to_rust(&self, value: &TokenStream) -> Option<TokenStream> {
+        match *self {
+            // // jni::sys::jboolean (u8) must be converted to rust bool
+            // Self::Bool => Some(quote_spanned!(value.span()=> bool::from(#value))),
             // Decode UTF-16
-            Some(quote_spanned! {value.span()=>
+            Self::Char => Some(quote_spanned! {value.span()=>
                 char::decode_utf16(Some(#value))
                     .next().unwrap()
                     .unwrap_or(char::REPLACEMENT_CHARACTER)
-            })
-        } else {
-            None
+            }),
+            // Transmute from the regular (signed) Java Type to the unsigned type
+            _ if self.is_unsigned() => {
+                let target_ty = Ident::new(&self.to_string(), Span::call_site());
+                Some(quote_spanned! {value.span()=> unsafe { ::std::mem::transmute::<_, #target_ty>(#value) } })
+            },
+            // No more conversion
+            _ => None
+        }
+    }
+    fn convert_rust_to_java(&self, value: &TokenStream) -> Option<TokenStream> {
+        match *self {
+            // Bool must be cast to jni::sys::jboolean (u8)
+            Self::Bool => Some(quote_spanned!(value.span()=> #value as ::jni::sys::jboolean)),
+            // Char must be encoded to UTF-16 (will panic! if the conversion fails)
+            Self::Char => Some(quote_spanned!(value.span()=> #value.encode_utf16(&mut [0;1])[0])),
+            // Transmute Rust unsigned integers to Java signed integers
+            _ if self.is_unsigned() => Some(quote_spanned!(value.span()=> unsafe { ::std::mem::transmute(#value) })),
+            // No more conversion
+            _ => None
         }
     }
 }
