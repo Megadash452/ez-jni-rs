@@ -106,6 +106,31 @@ pub fn get_field<'local>(
         })
 }
 
+/// Checks that a [`JObject`] is an **Array** (class name starts with `'['`),
+/// and returns the **length** of the Array.
+/// 
+/// Will `panic!` if `obj` is not the correct type.
+#[doc(hidden)]
+pub fn __obj_array_len(obj: &JObject, inner_ty: &str, env: &mut JNIEnv) -> usize {
+    let class = env.get_object_class(obj)
+        .unwrap_or_else(|err| panic!("Failed to get Object's class: {err}"));
+
+    let sig = get_string(call!(class.getName() -> java.lang.String), env);
+
+    if !sig.chars().next().is_some_and(|c| c == '[') {
+        panic!("Expected object to be an Array, but is actually \"{sig}\"")
+    }
+
+    let inner = &sig[1..];
+    if inner != inner_ty {
+        panic!("Expected Array's inner type to be \"{inner_ty}\", but is actually \"{inner}\"")
+    }
+
+    env.get_array_length(<&jni::objects::JObjectArray>::from(obj))
+        .unwrap_or_else(|err| panic!("Failed to check Array's length: {err}"))
+        as usize
+}
+
 /// Convert the first letter of a String into uppercase
 fn first_char_uppercase(s: &str) -> String {
     let mut c = s.chars();
