@@ -179,7 +179,9 @@ impl SpecialCaseConversion for ArrayType {
             },
             // Build a Rust boxed slice from a Java Array in which the inner type is an Object.
             InnerType::Object(class) => {
-                let inner_ty = class.sig_type();
+                // For some reason, class.getName() returns a ClassPath with .dots. instead of /slashes/, so can't use sig_type().
+                // This is the only place where this happens. why??
+                let inner_ty = LitStr::new(&format!("L{};", class.to_string()), class.span());
 
                 // The inner Class of the array might require some conversion
                 let conversion = {
@@ -197,7 +199,7 @@ impl SpecialCaseConversion for ArrayType {
                     for i in 0.._len {
                         let _element = env.get_object_array_element(&_array, i as ::jni::sys::jsize)
                             .unwrap_or_else(|err| panic!("Failed to read Array elements: {err}"));
-                        _vec[i] = #conversion;
+                        _vec.push(#conversion);
                     }
                     _vec.into_boxed_slice()
                 } }
@@ -234,7 +236,7 @@ impl SpecialCaseConversion for ArrayType {
                     value.span(),
                 );
                 // The inner type of the array might require some conversion
-                let conversion = {
+                let converted = {
                     match self.ty.convert_rust_to_java(&quote_spanned! {value.span()=> v}) {
                         Some(conversion) => &quote_spanned!(value.span()=>
                             #value.iter()
@@ -246,7 +248,8 @@ impl SpecialCaseConversion for ArrayType {
                 };
     
                 quote_spanned! {value.span()=> {
-                    let _slice = &(#conversion) as &[_];
+                    let _slice = &(#converted);
+                    let _slice = ::std::convert::AsRef::<[_]>::as_ref(_slice);
                     let _jarray = env.#new_array_fn(_slice.len() as ::jni::sys::jsize)
                         .unwrap_or_else(|err| panic!(#new_array_err));
                     env.#fill_array_fn(&_jarray, 0, _slice)
@@ -274,7 +277,8 @@ impl SpecialCaseConversion for ArrayType {
                 };
 
                 quote_spanned! {value.span()=> {
-                    let _slice = &(#value) as &[::jni::objects::JObject<'_>];
+                    let _slice = &(#value);
+                    let _slice = ::std::convert::AsRef::<[::jni::objects::JObject<'_>]>::as_ref(_slice);
                     let _jarray = env.new_object_array(
                         _slice.len() as ::jni::sys::jsize,
                         #class_path,

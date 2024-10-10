@@ -39,7 +39,7 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
 
             if call.return_type.sig_char().to_string().as_str() == "l" {
                 match conversion {
-                    Some(conversion) => quote! { .map(|v| (!v.is_null()).then_some(#conversion)) },
+                    Some(conversion) => quote! { .map(|v| (!v.is_null()).then(|| #conversion)) },
                     None => quote! { .map(|v| (!v.is_null()).then_some(v)) },
                 }
             } else {

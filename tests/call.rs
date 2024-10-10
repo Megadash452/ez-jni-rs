@@ -37,11 +37,12 @@ fn return_other() {
     // Object
     let _: JObject = call!(static me.test.Test.getObject() -> java.lang.Object);
     let _: JString = call!(static me.test.Test.getString() -> java.lang.String);
-    // Result
+    // Result Primitive
     let r: Result<bool, String> = call!(static me.test.Test.getBoolean() -> Result<bool, String>);
     r.unwrap();
     let r: Result<bool, String> = call!(static me.test.Test.throwPrim() -> Result<bool, String>);
     r.unwrap_err();
+    // Result Object
     let r: Result<JObject, String> = call!(static me.test.Test.getObject() -> Result<java.lang.Object, String>);
     r.unwrap();
     let r: Result<JObject, String> = call!(static me.test.Test.throwObj() -> Result<java.lang.Object, String>);
@@ -52,7 +53,73 @@ fn return_other() {
     let r: Option<JObject> = call!(static me.test.Test.nullable() -> Option<java.lang.Object>);
     assert!(r.is_none());
     // Result<Option<_>, _>
-    let _: Result<Option<JObject>, String> = call!(static me.test.Test.getObject() -> Result<Option<java.lang.Object>, String>);
+    let r: Result<Option<JObject>, String> = call!(static me.test.Test.getObject() -> Result<Option<java.lang.Object>, String>);
+    r.unwrap().unwrap();
+    let r: Result<Option<JObject>, String> = call!(static me.test.Test.nullable() -> Result<Option<java.lang.Object>, String>);
+    assert!(r.unwrap().is_none());
+}
+
+#[test]
+fn return_arrays() {
+    setup_env!(env);
+    // Java primitives
+    let _: Box<[bool]> = call!(static me.test.Test.getBooleanArray() -> [boolean]);
+    let _: Box<[char]> = call!(static me.test.Test.getCharArray() -> [char]);
+    let _: Box<[i8]> = call!(static me.test.Test.getByteArray() -> [byte]);
+    let _: Box<[i16]> = call!(static me.test.Test.getShortArray() -> [short]);
+    let _: Box<[i32]> = call!(static me.test.Test.getIntArray() -> [int]);
+    let _: Box<[i64]> = call!(static me.test.Test.getLongArray() -> [long]);
+    let _: Box<[f32]> = call!(static me.test.Test.getFloatArray() -> [float]);
+    let _: Box<[f64]> = call!(static me.test.Test.getDoubleArray() -> [double]);
+    // Rust primitives
+    let _: Box<[bool]> = call!(static me.test.Test.getBooleanArray() -> [bool]);
+    let _: Box<[char]> = call!(static me.test.Test.getCharArray() -> [char]);
+    let _: Box<[u8]> = call!(static me.test.Test.getByteArray() -> [u8]);
+    let _: Box<[u16]> = call!(static me.test.Test.getShortArray() -> [u16]);
+    let _: Box<[u32]> = call!(static me.test.Test.getIntArray() -> [u32]);
+    let _: Box<[u64]> = call!(static me.test.Test.getLongArray() -> [u64]);
+    let _: Box<[i8]> = call!(static me.test.Test.getByteArray() -> [i8]);
+    let _: Box<[i16]> = call!(static me.test.Test.getShortArray() -> [i16]);
+    let _: Box<[i32]> = call!(static me.test.Test.getIntArray() -> [i32]);
+    let _: Box<[i64]> = call!(static me.test.Test.getLongArray() -> [i64]);
+    let _: Box<[f32]> = call!(static me.test.Test.getFloatArray() -> [f32]);
+    let _: Box<[f64]> = call!(static me.test.Test.getDoubleArray() -> [f64]);
+}
+
+#[test]
+fn return_arrays_other() {
+    setup_env!(env);
+    // Object
+    let _: Box<[JObject]> = call!(static me.test.Test.getObjectArray() -> [java.lang.Object]);
+    let _: Box<[JString]> = call!(static me.test.Test.getStringArray() -> [java.lang.String]);
+    // Result Primitive
+    let r: Result<Box<[bool]>, String> = call!(static me.test.Test.getBooleanArray() -> Result<[bool], String>);
+    r.unwrap();
+    let r: Result<Box<[bool]>, String> = call!(static me.test.Test.throwPrimArray() -> Result<[bool], String>);
+    r.unwrap_err();
+    // Result Object
+    let r: Result<Box<[JObject]>, String> = call!(static me.test.Test.getObjectArray() -> Result<[java.lang.Object], String>);
+    r.unwrap();
+    let r: Result<Box<[JObject]>, String> = call!(static me.test.Test.throwObjArray() -> Result<[java.lang.Object], String>);
+    r.unwrap_err();
+    // Option
+    let r: Option<Box<[bool]>> = call!(static me.test.Test.getBooleanArray() -> Option<[bool]>);
+    r.unwrap();
+    let r: Option<Box<[bool]>> = call!(static me.test.Test.nullPrimArray() -> Option<[bool]>);
+    assert!(r.is_none());
+    let r: Option<Box<[JObject]>> = call!(static me.test.Test.getObjectArray() -> Option<[java.lang.Object]>);
+    r.unwrap();
+    let r: Option<Box<[JObject]>> = call!(static me.test.Test.nullObjArray() -> Option<[java.lang.Object]>);
+    assert!(r.is_none());
+    // Result<Option<_>, _>
+    let r: Result<Option<Box<[bool]>>, String> = call!(static me.test.Test.getBooleanArray() -> Result<Option<[bool]>, String>);
+    r.unwrap().unwrap();
+    let r: Result<Option<Box<[bool]>>, String> = call!(static me.test.Test.nullPrimArray() -> Result<Option<[bool]>, String>);
+    assert!(r.unwrap().is_none());
+    let r: Result<Option<Box<[JObject]>>, String> = call!(static me.test.Test.getObjectArray() -> Result<Option<[java.lang.Object]>, String>);
+    r.unwrap().unwrap();
+    let r: Result<Option<Box<[JObject]>>, String> = call!(static me.test.Test.nullObjArray() -> Result<Option<[java.lang.Object]>, String>);
+    assert!(r.unwrap().is_none());
 }
 
 #[test]
@@ -61,17 +128,19 @@ fn arguments() {
     // Arguments
     call!(static me.test.Test.multiArg(boolean(true), char('a'), byte(1i8), short(1i16), int(1i32), long(1i64), float(1f32), double(1f64), java.lang.Object(JObject::null())) -> void);
     call!(static me.test.Test.multiArg(bool(true), char('a'), u8(1u8), u16(1u16), u32(1u32), u64(1u64), f32(1f32), f64(1f64), java.lang.Object(JObject::null())) -> void);
-    call!(static me.test.Test.arrayArg(
-        [boolean](env.new_boolean_array(0).unwrap()),
-        [char](env.new_char_array(0).unwrap()),
-        [byte](env.new_byte_array(0).unwrap()),
-        [short](env.new_short_array(0).unwrap()),
-        [int](env.new_int_array(0).unwrap()),
-        [long](env.new_long_array(0).unwrap()),
-        [float](env.new_float_array(0).unwrap()),
-        [double](env.new_int_array(0).unwrap()),
-        [java.lang.Object](JObject::null())
-    ) -> void);
+    // Rust slices stored in variables
+    // Also tests types that can be coerced to slice
+    let z = Box::new([true, false]);
+    let c = vec!['a', 'b'];
+    let b = &[1i8, 2];
+    let s = [1i16, 2];
+    let i = [1i32, 2];
+    let j = [1i64, 2];
+    let f = [1f32, 2.0];
+    let d = [1f64, 2.0];
+    let l = [new!(java.lang.Object()), JObject::null()];
+    call!(static me.test.Test.arrayArg([boolean](&z), [char](c), [byte](b), [short](s), [int](i), [long](j), [float](f), [double](d), [java.lang.Object](l)) -> void);
+    // Array literals
     call!(static me.test.Test.arrayArg(
         [boolean]([true, false]),
         [char](['a', 'b']),
@@ -83,6 +152,8 @@ fn arguments() {
         [double]([1f64, 2.0]),
         [java.lang.Object]([new!(java.lang.Object()), JObject::null()])
     ) -> void);
+    // Arrays with Rust primitive as Inner type
+    // Also tests Arrays with unsigned Rust integers
     call!(static me.test.Test.arrayArg(
         [bool]([true, false]),
         [char](['a', 'b']),
@@ -121,7 +192,7 @@ fn constructor_fail() {
 fn obj_method() {
     setup_env!(env);
 
-    let obj: JObject<'_> = new!(me.test.Test$Inner());
+    let obj: JObject<'_> = new!(me.test.Test$Instanced());
     call!(obj.getBoolean() -> boolean);
     call!(obj.getObject() -> java.lang.Object);
     call!(obj.args(boolean(true), java.lang.Object(JObject::null())) -> void);
