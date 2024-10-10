@@ -54,8 +54,8 @@ public final class Test {
     public static boolean[] throwPrimArray() throws Exception { throw new Exception("exception"); }
     public static Object[]  throwObjArray()   throws Exception { throw new Exception("exception"); }
     
-    public static void multiArg(boolean z, char c, byte b, short s, int i, long j, float f, double d, Object l) { }
-    public static void arrayArg(boolean[] z, char[] c, byte[] b, short[] s, int[] i, long[] j, float[] f, double[] d, Object[] l) { }
+    public static void multiArg(boolean z, char c, byte b, short s, int i, long j, float f, double d, Object l, String S) { }
+    public static void arrayArg(boolean[] z, char[] c, byte[] b, short[] s, int[] i, long[] j, float[] f, double[] d, Object[] l, String[] S) { }
 
     public static class Instanced {
         Instanced() {}

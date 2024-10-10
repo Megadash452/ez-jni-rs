@@ -278,7 +278,7 @@ impl SpecialCaseConversion for ArrayType {
 
                 quote_spanned! {value.span()=> {
                     let _slice = &(#value);
-                    let _slice = ::std::convert::AsRef::<[::jni::objects::JObject<'_>]>::as_ref(_slice);
+                    let _slice = ::std::convert::AsRef::<[_]>::as_ref(_slice);
                     let _jarray = env.new_object_array(
                         _slice.len() as ::jni::sys::jsize,
                         #class_path,
@@ -416,6 +416,8 @@ impl Display for InnerType {
 ///
 /// Parsed as [`Punctuated`] Tokens of [`Ident`]s and `Dot`s, disallowing trailing Dots.
 /// Must have *at least one* package ident, so it will need at least 2 idents in total.
+/// 
+/// There is one exception: this can parse `String`, which will be converted to `java.lang.String`.
 ///
 /// Example: `MyClass`, `java.lang.` are not allowed.
 #[derive(Clone)]
@@ -528,8 +530,15 @@ impl SpecialCaseConversion for ClassPath {
             None
         }
     }
-    fn convert_rust_to_java(&self, _value: &TokenStream) -> Option<TokenStream> {
-        None
+    fn convert_rust_to_java(&self, value: &TokenStream) -> Option<TokenStream> {
+        match self.to_jni_class_path().as_str() {
+            // Convert Rust String to Java String
+            "java/lang/String" => Some(quote_spanned! {value.span()=>
+                env.new_string(::std::convert::AsRef::<str>::as_ref(&#value))
+                    .unwrap_or_else(|err| panic!("Failed to create convert Rust String to Java String: {err}"))
+            }),
+            _ => None
+        }
     }
 }
 impl Parse for ClassPath {
@@ -553,12 +562,20 @@ impl Parse for ClassPath {
             Some(class) => class.into_value(),
             None => return Err(syn::Error::new(path.span(), "Java Class Path must not be empty"))
         };
-        if path.is_empty() {
-            return Err(syn::Error::new(path.span(), "Java Class Path must have more than one component, such as `me.author`"))
-        }
-        // Take the rest of the path components
-        let packages = punctuated_to_pairs(path);
-
+        let packages = if path.is_empty() {
+            // ClassPath can be `String`, make it into `java.lang.String`
+            if class.to_string() == "String" {
+                punctuated_to_pairs::<Ident, Token![.]>(
+                    syn::parse_quote_spanned!(class.span()=> java.lang.)
+                )
+            } else {
+                return Err(syn::Error::new(class.span(), "Java Class Path must have more than one component, such as `me.author`"))
+            }
+        } else {
+            // Take the rest of the path components
+            punctuated_to_pairs(path)
+        };
+        
         // Path could have Nested classes, separated by `$`
         let nested_path = if input.parse::<Token![$]>().is_ok() {
             // Parse the Nested Class part of the path `Nested$Nested2`.

@@ -126,8 +126,8 @@ fn return_arrays_other() {
 fn arguments() {
     setup_env!(env);
     // Arguments
-    call!(static me.test.Test.multiArg(boolean(true), char('a'), byte(1i8), short(1i16), int(1i32), long(1i64), float(1f32), double(1f64), java.lang.Object(JObject::null())) -> void);
-    call!(static me.test.Test.multiArg(bool(true), char('a'), u8(1u8), u16(1u16), u32(1u32), u64(1u64), f32(1f32), f64(1f64), java.lang.Object(JObject::null())) -> void);
+    call!(static me.test.Test.multiArg(boolean(true), char('a'), byte(1i8), short(1i16), int(1i32), long(1i64), float(1f32), double(1f64), java.lang.Object(JObject::null()), java.lang.String("hi")) -> void);
+    call!(static me.test.Test.multiArg(bool(true), char('a'), u8(1u8), u16(1u16), u32(1u32), u64(1u64), f32(1f32), f64(1f64), java.lang.Object(JObject::null()), java.lang.String(String::from("hi"))) -> void);
     // Rust slices stored in variables
     // Also tests types that can be coerced to slice
     let z = Box::new([true, false]);
@@ -139,7 +139,8 @@ fn arguments() {
     let f = [1f32, 2.0];
     let d = [1f64, 2.0];
     let l = [new!(java.lang.Object()), JObject::null()];
-    call!(static me.test.Test.arrayArg([boolean](&z), [char](c), [byte](b), [short](s), [int](i), [long](j), [float](f), [double](d), [java.lang.Object](l)) -> void);
+    let t = ["Hello", "World"];
+    call!(static me.test.Test.arrayArg([boolean](&z), [char](c), [byte](b), [short](s), [int](i), [long](j), [float](f), [double](d), [java.lang.Object](l), [java.lang.String](t)) -> void);
     // Array literals
     call!(static me.test.Test.arrayArg(
         [boolean]([true, false]),
@@ -150,7 +151,8 @@ fn arguments() {
         [long]([1i64, 2]),
         [float]([1f32, 2.0]),
         [double]([1f64, 2.0]),
-        [java.lang.Object]([new!(java.lang.Object()), JObject::null()])
+        [java.lang.Object]([new!(java.lang.Object()), JObject::null()]),
+        [java.lang.String](["Hello", "World"])
     ) -> void);
     // Arrays with Rust primitive as Inner type
     // Also tests Arrays with unsigned Rust integers
@@ -163,7 +165,8 @@ fn arguments() {
         [u64]([1u64, 2]),
         [f32]([1f32, 2.0]),
         [f64]([1f64, 2.0]),
-        [java.lang.Object]([])
+        [java.lang.Object](&[] as &[JObject]),
+        [String]([] as [&str;0])
     ) -> void);
 }
 
@@ -173,9 +176,9 @@ fn constructor() {
     
     new!(me.test.Test());
     new!(me.test.Test(int(3)));
-    new!(me.test.Test(java.lang.String(env.new_string("Hello, World!").unwrap())));
-    new!(me.test.Test(java.lang.String(env.new_string("Hello, World!").unwrap())) throws String).unwrap();
-    new!(me.test.Test(java.lang.String(JObject::null())) throws String).unwrap_err();
+    new!(me.test.Test(java.lang.String("Hello, World!")));
+    new!(me.test.Test(java.lang.String("Hello, World!")) throws String).unwrap();
+    new!(me.test.Test(java.lang.String(NULL)) throws String).unwrap_err();
 
     // Test other class
     new!(java.lang.Object());
