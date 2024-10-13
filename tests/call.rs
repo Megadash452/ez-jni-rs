@@ -1,6 +1,6 @@
 mod common;
 
-use jni::objects::{JObject, JString};
+use jni::objects::JObject;
 use ez_jni::{call, new};
 
 #[test]
@@ -36,7 +36,8 @@ fn return_other() {
     setup_env!(env);
     // Object
     let _: JObject = call!(static me.test.Test.getObject() -> java.lang.Object);
-    let _: JString = call!(static me.test.Test.getString() -> java.lang.String);
+    let _: String = call!(static me.test.Test.getString() -> java.lang.String);
+    let _: String = call!(static me.test.Test.getString() -> String);
     // Result Primitive
     let r: Result<bool, String> = call!(static me.test.Test.getBoolean() -> Result<bool, String>);
     r.unwrap();
@@ -91,7 +92,8 @@ fn return_arrays_other() {
     setup_env!(env);
     // Object
     let _: Box<[JObject]> = call!(static me.test.Test.getObjectArray() -> [java.lang.Object]);
-    let _: Box<[JString]> = call!(static me.test.Test.getStringArray() -> [java.lang.String]);
+    let _: Box<[String]> = call!(static me.test.Test.getStringArray() -> [java.lang.String]);
+    let _: Box<[String]> = call!(static me.test.Test.getStringArray() -> [String]);
     // Result Primitive
     let r: Result<Box<[bool]>, String> = call!(static me.test.Test.getBooleanArray() -> Result<[bool], String>);
     r.unwrap();
@@ -125,9 +127,12 @@ fn return_arrays_other() {
 #[test]
 fn arguments() {
     setup_env!(env);
-    // Arguments
-    call!(static me.test.Test.multiArg(boolean(true), char('a'), byte(1i8), short(1i16), int(1i32), long(1i64), float(1f32), double(1f64), java.lang.Object(JObject::null()), java.lang.String("hi")) -> void);
-    call!(static me.test.Test.multiArg(bool(true), char('a'), u8(1u8), u16(1u16), u32(1u32), u64(1u64), f32(1f32), f64(1f64), java.lang.Object(JObject::null()), java.lang.String(String::from("hi"))) -> void);
+    // -- Non-Array Arguments
+    call!(static me.test.Test.primArgs(boolean(true), char('a'), byte(1i8), short(1i16), int(1i32), long(1i64), float(1f32), double(1f64)) -> void);
+    call!(static me.test.Test.objArgs(java.lang.Object(new!(java.lang.Object())), java.lang.String("hi")) -> void);
+    call!(static me.test.Test.objArgs(java.lang.Object(JObject::null()), java.lang.String(String::from("hi"))) -> void);
+    call!(static me.test.Test.objArgs(java.lang.Object(null), java.lang.String(null)) -> void);
+    // -- Primitive Array Arguments
     // Rust slices stored in variables
     // Also tests types that can be coerced to slice
     let z = Box::new([true, false]);
@@ -138,11 +143,9 @@ fn arguments() {
     let j = [1i64, 2];
     let f = [1f32, 2.0];
     let d = [1f64, 2.0];
-    let l = [new!(java.lang.Object()), JObject::null()];
-    let t = ["Hello", "World"];
-    call!(static me.test.Test.arrayArg([boolean](&z), [char](c), [byte](b), [short](s), [int](i), [long](j), [float](f), [double](d), [java.lang.Object](l), [java.lang.String](t)) -> void);
+    call!(static me.test.Test.primArrayArgs([boolean](&z), [char](c), [byte](b), [short](s), [int](i), [long](j), [float](f), [double](d)) -> void);
     // Array literals
-    call!(static me.test.Test.arrayArg(
+    call!(static me.test.Test.primArrayArgs(
         [boolean]([true, false]),
         [char](['a', 'b']),
         [byte]([1i8, 2]),
@@ -151,12 +154,20 @@ fn arguments() {
         [long]([1i64, 2]),
         [float]([1f32, 2.0]),
         [double]([1f64, 2.0]),
-        [java.lang.Object]([new!(java.lang.Object()), JObject::null()]),
-        [java.lang.String](["Hello", "World"])
     ) -> void);
     // Arrays with Rust primitive as Inner type
-    // Also tests Arrays with unsigned Rust integers
-    call!(static me.test.Test.arrayArg(
+    call!(static me.test.Test.primArrayArgs(
+        [bool]([0 != 0, 1 != 0]),
+        [char](['a', 'b']),
+        [i8]([i8::MIN, i8::MAX]),
+        [i16]([i16::MIN, i16::MAX]),
+        [i32]([i32::MIN, i32::MAX]),
+        [i64]([i64::MIN, i64::MAX]),
+        [f32]([f32::MIN, f32::MAX]),
+        [f64]([f64::MIN, f64::MAX]),
+    ) -> void);
+    // Arrays with unsigned Rust integers
+    call!(static me.test.Test.primArrayArgs(
         [bool]([true, false]),
         [char](['a', 'b']),
         [u8]([1u8, 2]),
@@ -165,9 +176,31 @@ fn arguments() {
         [u64]([1u64, 2]),
         [f32]([1f32, 2.0]),
         [f64]([1f64, 2.0]),
+    ) -> void);
+
+    // -- Object Array Arguments
+    // Rust slices stored in variables
+    let l = [new!(java.lang.Object()), JObject::null()];
+    let s = ["Hello", "World"];
+    call!(static me.test.Test.objArrayArgs([java.lang.Object](l), [java.lang.String](s)) -> void);
+    // Array literals
+    call!(static me.test.Test.objArrayArgs(
+        [java.lang.Object]([new!(java.lang.Object()), JObject::null()]),
+        [java.lang.String](["Hello", "World"])
+    ) -> void);
+    // Empty Array literal
+    call!(static me.test.Test.objArrayArgs(
         [java.lang.Object](&[] as &[JObject]),
         [String]([] as [&str;0])
     ) -> void);
+    // Null keyword
+    call!(static me.test.Test.objArrayArgs(
+        [java.lang.Object]([new!(java.lang.Object()), null]),
+        [java.lang.String](["Hello", null])
+    ) -> void);
+    //Optional Strings
+    let s = [Some("Hello"), None];
+    call!(static me.test.Test.objArrayArgs([java.lang.Object]([null, null]), [java.lang.String](s)) -> void);
 }
 
 #[test]
@@ -178,7 +211,7 @@ fn constructor() {
     new!(me.test.Test(int(3)));
     new!(me.test.Test(java.lang.String("Hello, World!")));
     new!(me.test.Test(java.lang.String("Hello, World!")) throws String).unwrap();
-    new!(me.test.Test(java.lang.String(NULL)) throws String).unwrap_err();
+    new!(me.test.Test(java.lang.String(null)) throws String).unwrap_err();
 
     // Test other class
     new!(java.lang.Object());
@@ -188,7 +221,7 @@ fn constructor() {
 fn constructor_fail() {
     setup_env!(env);
     // Should panic if theconstructor throws, but user did not indicate that the constructor could throw
-    new!(me.test.Test(java.lang.String(JObject::null())));
+    new!(me.test.Test(java.lang.String(null)));
 }
 
 #[test]

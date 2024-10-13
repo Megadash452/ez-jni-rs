@@ -10,7 +10,7 @@ use syn::{
     spanned::Spanned as _,
 };
 use crate::{
-    types::{ArrayType, ClassPath, InnerType, JavaPrimitive, SigType, SpecialCaseConversion, Type},
+    types::{NULL_KEYWORD, ArrayType, ClassPath, InnerType, JavaPrimitive, SigType, SpecialCaseConversion, Type},
     utils::{first_char_uppercase, gen_signature, join_spans}
 };
 
@@ -249,7 +249,16 @@ impl Parse for ObjectMethod {
 /// Can accept an **Array Literal** if the [`Type`] is array.
 pub struct Parameter {
     ty: Type,
-    value: TokenStream,
+    value: ParamValue,
+}
+#[derive(Debug)]
+pub enum ParamValue {
+    /// The value is `JObject::null()`.
+    /// 
+    /// *value* [`Null`][ParamValue::Null] and *type* [`Type::is_primitive()`] are mutually exclusive.
+    /// This is checked by [`Parameter::parse()`].
+    Null(Ident),
+    Value(TokenStream)
 }
 impl Parameter {
     /// Returns the expression that will be put inside the `JValue::Variant(expr)` in the parameter list, a.k.a the *parameter's value*.
@@ -257,8 +266,12 @@ impl Parameter {
     /// Don't return the expression wrapped in `JValue::Variant` because the *value* needs to be put in a variable first
     /// to avoid mutable borrowing `env` multiple times and to keep the reference to the *value* alive.
     pub fn expanded_value(&self) -> TokenStream {
-        self.ty.convert_rust_to_java(&self.value)
-            .unwrap_or_else(|| self.value.clone())
+        // Already checked (in parse) that value is not 'null' when ty is primitive.
+        match &self.value {
+            ParamValue::Value(value) => self.ty.convert_rust_to_java(value)
+                .unwrap_or_else(|| value.clone()),
+            ParamValue::Null(null) => quote_spanned!(null.span()=> ::jni::objects::JObject::null()),
+        }
     }
     /// Conver the parameter to a `Jvalue` enum variant that will be used in the JNI call parameter list.
     /// The variant will have one of the parameter variables as the inner value.
@@ -298,7 +311,7 @@ impl SigType for Parameter {
 }
 impl Parse for Parameter {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let ty = input.parse()?;
+        let ty = input.parse::<Type>()?;
         let value_tokens;
         parenthesized!(value_tokens in input);
 
@@ -306,7 +319,41 @@ impl Parse for Parameter {
             return Err(value_tokens.error("Must provide a parameter value"));
         }
 
-        Ok(Self { ty, value: value_tokens.parse()? })
+        // Check if parameter value is 'null'.
+        let fork = value_tokens.fork();
+        let value = match fork.parse::<Ident>() {
+            Ok(ident) if ident.to_string() == NULL_KEYWORD => {
+                value_tokens.advance_to(&fork);
+                ParamValue::Null(ident)
+            },
+            _ => ParamValue::Value(value_tokens.parse()?)
+        };
+
+        // Check that user did not pass 'null' as the value of a primitive type.
+        if let ParamValue::Null(null) = &value {
+            if ty.is_primitive() {
+                return Err(syn::Error::new(null.span(), "Can't use 'null' as value of primitive parameter type"))
+            }
+        }
+
+        // If user treis to pass in an expression that resolves to `JObject::null()`, tell them to use 'null' keyword.
+        if let ParamValue::Value(value) = &value {
+            let v_str = value.to_string().replace(|c: char| c.is_whitespace(), "");
+            if v_str.ends_with("::null()")
+            || v_str.ends_with("::null_mut()") {
+                // If ty is any of these, it will not accept the expression of a null value, so use 'null' instead.
+                let should_use_null = match &ty {
+                    Type::Array(ArrayType { ty: InnerType::Object(class), .. })
+                    | Type::Single(InnerType::Object(class))  => class.to_jni_class_path() == "java/lang/String",
+                    _ => false,
+                };
+                if should_use_null {
+                    return Err(syn::Error::new_spanned(value, format!("This expression resolves to a raw object, which is not allowed here. If you want to pass a null value, try using the '{NULL_KEYWORD}' as the value.")))
+                }
+            }
+        }
+
+        Ok(Self { ty, value })
     }
 }
 

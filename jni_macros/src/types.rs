@@ -1,10 +1,12 @@
 use proc_macro2::{Span, TokenStream};
-use quote::quote_spanned;
-use syn::{bracketed, parse::{discouraged::Speculative as _, Parse}, punctuated::Punctuated, spanned::Spanned as _, token::Bracket, Ident, LitStr, Token};
+use quote::{quote_spanned, ToTokens};
+use syn::{bracketed, parse::{discouraged::Speculative as _, Parse, Parser}, punctuated::Punctuated, spanned::Spanned as _, token::Bracket, Ident, LitStr, Token};
 use itertools::Itertools as _;
 use std::{fmt::{Display, Debug}, str::FromStr};
-
 use crate::utils::join_spans;
+
+/// A keyword only used in the *[`Parameter`] value* to indicate that the value is `JOBject::null()`.
+pub static NULL_KEYWORD: &str = "null";
 
 /// Indicates that a type is data about Java Type signature, such as a *parameter type* or *return type*
 pub trait SigType {
@@ -269,29 +271,84 @@ impl SpecialCaseConversion for ArrayType {
                     value.span(),
                 );
                 let class_path = LitStr::new(&class.to_jni_class_path(), value.span());
-                // The inner Class of the array might require some conversion
-                let conversion = {
-                    let element_tokens = quote_spanned!(value.span()=> _element); 
-                    // Convert using the variable
-                    class.convert_rust_to_java(&element_tokens)
-                        .unwrap_or(element_tokens)
-                };
 
-                quote_spanned! {value.span()=> {
-                    let _slice = &(#value);
-                    let _slice = ::std::convert::AsRef::<[_]>::as_ref(_slice);
-                    let _jarray = env.new_object_array(
-                        _slice.len() as ::jni::sys::jsize,
-                        #class_path,
-                        unsafe { ::jni::objects::JObject::from_raw(::std::ptr::null_mut()) }
-                    )
-                        .unwrap_or_else(|err| panic!(#new_array_err));
-                    for (_i, _element) in _slice.into_iter().enumerate() {
-                        env.set_object_array_element(&_jarray, _i as ::jni::sys::jsize, #conversion)
-                            .unwrap_or_else(|err| panic!(#set_val_err));
-                    }
-                    ::jni::objects::JObject::from(_jarray)
-                } }
+                // Build the array from Rust Strings (Option allowed).
+                if class.to_jni_class_path() == "java/lang/String" {
+                    // Handle NULL keyword in Array literals
+                    let value = match Parser::parse2(syn::ExprArray::parse, value.clone()) {
+                        Ok(mut array) => {
+                            // Convert [String] to [Option<String>] and convert NULLs to None
+                            for elem in &mut array.elems {
+                                *elem = syn::Expr::Verbatim(if elem.to_token_stream().to_string() == NULL_KEYWORD {
+                                    quote_spanned!(elem.span()=> None)
+                                } else {
+                                    quote_spanned!(elem.span()=> Some(#elem))
+                                })
+                            }
+                            array.into_token_stream()
+                        },
+                        Err(_) => value.clone()
+                    };
+
+                    quote_spanned! {value.span()=> {
+                        use ::std::borrow::BorrowMut as _;
+                        use ::ez_jni::ToObject as _;
+
+                        let _slice = ::std::convert::AsRef::<[_]>::as_ref(&(#value));
+                        let _jarray = env.new_object_array(
+                            _slice.len() as ::jni::sys::jsize,
+                            #class_path,
+                            unsafe { ::jni::objects::JObject::from_raw(::std::ptr::null_mut()) }
+                        )
+                            .unwrap_or_else(|err| panic!(#new_array_err));
+                        for (_i, _element) in _slice.into_iter().enumerate() {
+                            // str, String, Option<T> implement ToObject, so use that to accept any kind of string
+                            let _element = _element.to_object(env.borrow_mut());
+                            env.set_object_array_element(&_jarray, _i as ::jni::sys::jsize, _element)
+                                .unwrap_or_else(|err| panic!(#set_val_err));
+                        }
+                        ::jni::objects::JObject::from(_jarray)
+                    } }
+                } else {
+                    // The inner Class of the array might require some conversion
+                    let conversion = {
+                        let element_tokens = quote_spanned!(value.span()=> _element); 
+                        // Convert using the variable
+                        class.convert_rust_to_java(&element_tokens)
+                            .unwrap_or(element_tokens)
+                    };
+                    // Handle NULL keyword in Array literals
+                    let value = match Parser::parse2(syn::ExprArray::parse, value.clone()) {
+                        Ok(mut array) => {
+                            // Replace NULLs in Array literal with JObject::null()
+                            for elem in &mut array.elems {
+                                if elem.to_token_stream().to_string() == NULL_KEYWORD {
+                                    *elem = syn::Expr::Verbatim(quote_spanned! {elem.span()=>
+                                        ::jni::objects::JObject::null()
+                                    })
+                                }
+                            }
+                            array.into_token_stream()
+                        },
+                        Err(_) => value.clone()
+                    };
+    
+                    quote_spanned! {value.span()=> {
+                        let _slice = &(#value);
+                        let _slice = ::std::convert::AsRef::<[_]>::as_ref(_slice);
+                        let _jarray = env.new_object_array(
+                            _slice.len() as ::jni::sys::jsize,
+                            #class_path,
+                            unsafe { ::jni::objects::JObject::from_raw(::std::ptr::null_mut()) }
+                        )
+                            .unwrap_or_else(|err| panic!(#new_array_err));
+                        for (_i, _element) in _slice.into_iter().enumerate() {
+                            env.set_object_array_element(&_jarray, _i as ::jni::sys::jsize, #conversion)
+                                .unwrap_or_else(|err| panic!(#set_val_err));
+                        }
+                        ::jni::objects::JObject::from(_jarray)
+                    } }
+                }
             },
         })
     }

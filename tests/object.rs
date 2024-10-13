@@ -31,7 +31,7 @@ fn implementations() {
     );
 
     // Testing IO Error
-    obj = new!(java.io.FileNotFoundException(java.lang.String(S.to_object(&mut env))));
+    obj = new!(java.io.FileNotFoundException(java.lang.String(S)));
     let err = std::io::Error::from_object(&obj, &mut env).unwrap();
     assert_eq!(err.to_string(), S);
     
@@ -113,7 +113,7 @@ fn from_object() {
     );
 
     const S: &str = "Hello, World!";
-    object = new!(me.test.Test$SumClass$SumClass2(java.lang.String(env.new_string(S).unwrap())));
+    object = new!(me.test.Test$SumClass$SumClass2(java.lang.String(S)));
     assert_eq!(
         MyEnumClass::from_object(&object, &mut env).unwrap(),
         MyEnumClass::Variant2 { str: S.to_string() }
