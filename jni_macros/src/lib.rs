@@ -77,72 +77,101 @@ pub fn jni_fn(input: TokenStream) -> TokenStream {
 
 /// A macro that helps make JNI Method calls less verbose and easier to use in Rust.
 ///
-/// Can be used to call **static methods** on Java classes:
+/// # Syntax
 /// ```text
 /// call!(static me.author.ClassName.methodName(int(arg1), java.lang.String(arg2)) -> int)
 ///                Primitive type parameter --->\_______/  \____________________/     \_/
 ///                  Object type parameter --------------------------^                 |
 ///                     Return type        --------------------------------------------^
 /// ```
-/// Or to call **object methods**:
-/// ```ignore
-/// call!(object.methodName() -> void);
-/// ```
 ///
-/// # Syntax
-///
-/// To use the **static method** call, prepend the call with `static`, then the path to the *class* and *method*,
+/// ## Method Types
+/// 
+/// This macro can handle calling **static** or **object** methods.
+/// 
+/// To use call a **static method**, start with the `static` keyword, then the *fully-qualified class name*, and the *method name*.
 /// ```ignore
 /// call!(static me.author.ClassName.methodName() -> void);
 /// ```
 ///
-/// To use an **object method** call, simply put a *variable name* that is of type `JObject` (or put an *expression* that resolves to a `JObject` in parentheses).
+/// To use call method on an Object (a.k.a. **object method**), simply put a *variable name* that is of type `JObject` (or put an *expression* that resolves to a `JObject` in parentheses).
 /// Example:
 /// ```ignore
 /// call!(my_object.myMethod() -> void);
 /// call!((getObject()).myMethod() -> void);
 /// ```
+/// 
+/// ## Types
+/// 
+/// The function call has *argument* and *return* **types**.
+/// 
+/// A type can be a **[Java Primitive](https://docs.oracle.com/javase/tutorial/java/nutsandbolts/datatypes.html)**,
+/// a **[Rust Primitive](std::primitive)**,
+/// a **Java Class**,
+/// or an **Array** of one of the previous types (the type wrapped in *brackets* `[]`).
+/// 
+/// For the class `java.lang.String`, use the Rust type [`String`] instead.
+/// The values will be automatically converted by the macro between Rust and Java
+/// (depending on whether the type is for an *argument* or *return*).
+/// 
+/// In the sections below, the use of `T` or `Type` means that it can accept any of the types declared above.
 ///
-/// ## Parameters
+/// ## Arguments
 ///
-/// The parameters of the method call are placed inside perentheses after the method name,
+/// The arguments of the method call are placed inside perentheses after the method name,
 /// and can be *primitive values*, *object values*, or *arrays of either* (type wrapped in brackets).
 ///
-/// All parameters have a **type**, and a **value** (wrapped in parenthesis).
-/// The value goes in parenthesis after the parameter type, and is any expression that resolves to the right type.
-/// For *arrays*, the value could be one of the `JPrimitiveArray`s or `JObjectArray`, or an array literal of either.
+/// All arguments have a **type**, and a **value** (wrapped in parenthesis).
+/// The value goes in parenthesis after the argument type, and is any expression that resolves to *primitive* or *object* of the respective type.
+/// 
+/// **Array** arguments' **values** can be any Rust Type that is `AsRef<[T]>`,
+/// i.e. the value can be read as a *slice* of said type.
+/// e.g. [slice](https://doc.rust-lang.org/std/primitive.slice.html)s, [`Vec`]s, boxed slices, etc.
+/// 
+/// Because `String` arguments only accept Rust strings (which can't be **null**),
+/// the macro creates a *custom keyword* `null` for the argument values.
+/// This is only usable for *Objects*.
+/// For *String arrays* the value can also be `&[Option<String>]`.
 ///
+/// Here are some examples of an argument:
 /// ```ignore
-/// int(2 + 2) // primitive
-/// me.author.ClassName(value) // object
-/// [bool]([true, false]) // primitive array
-/// [java.lang.String](value) // object array
+/// int(2 + 2)                   // primitive
+/// me.author.ClassName(value)   // object
+/// String("Hello, World!")      // string
+/// [bool]([true, false])        // primitive array
+/// [java.lang.Object](null)     // object array (with null)
+/// [String](["Hello", "World"]) // string array
+/// [String](["Hello", null])    // string array (with null)
 /// ```
 ///
 /// ## Return
 ///
-/// The parameters are followed by a *return arrow* `->` and the *return type*.
-/// The return type may be an assertive *void, primitive or Class*, an [`Option`] of a nullable Class, or a [`Result`] of one of the previous choices.
+/// The arguments are followed by a *return arrow* `->` and the **return type**.
+/// The return type may be *void*, one of the [`Types`](https://docs.rs/ez_jni/latest/ez_jni/macro.call.html#types) above,
+/// an [`Option`] of a Class, or a [`Result<T, E>`] of any of the previous choices.
 ///
-/// - Use the **assertive type** when the Java method being called *can't return `NULL`* or throw an *exception*,
+/// - Use the **assertive type** (`T` by itself) when the Java method being called *can't return `NULL`* or throw an *exception*,
 ///   such as when it is marked with `@NonNull`.
-/// - Use **`Option<Type>`** when the method *can return a `NULL`* value.
-/// - Use **`Result<Type, E>`** when the method can throw an *exception*, e.g. `void method() throws Exception { ... }`, and the return value *can't be `NULL`*.
-/// - Use **`Result<Option<Type>, E>`** when the method can throw, and the return value *can be `NULL`*.
-///
+/// - Use **`Option<T>`** when the method *can return a `NULL`* value, but can't throw an *exception*.
+/// - Use **`Result<T, E>`** when the method can throw an *exception*, e.g. `void method() throws Exception { ... }`, and the return value *can't be `NULL`*.
+/// - Use **`Result<Option<T>, E>`** when the method can throw an *exception*, and the return value *can be `NULL`*.
+/// 
 /// Here are some examples of return types:
 /// ```ignore
-/// -> int OR java.lang.String
+/// -> int
+/// -> java.lang.String
+/// -> [int]
+/// -> [String]
 /// -> Option<java.lang.String>
-/// -> Result<int, String> OR Result<java.lang.String, String>
-/// -> Result<Option<java.lang.String>, String>
-/// -> Result<int, MyErrorType>
+/// -> Result<int, String>
+/// -> Result<Option<String>, MyErrorType>
 /// ```
 /// Note that `Option` can't be used with *primitive types* because those can't be `NULL` in Java.
+/// However, it can be used with an *Array of primitives* because Java Arrays are *objects*.
 ///
 /// ### Exceptions
 ///
-/// The **`E`** in the `Result` type can be any Rust type that *implements [`FromException`](https://docs.rs/ez_jni/latest/ez_jni/trait.FromException.html)*
+/// The **`E`** in the [`Result`] type can be any Rust type that *implements [`FromException`](https://docs.rs/ez_jni/latest/ez_jni/trait.FromException.html)*
 /// (usually an *Error Enum*).
 ///
 /// If the call to [`from_exception`](https://docs.rs/ez_jni/latest/ez_jni/trait.FromException.html#method.from_exception) fails,

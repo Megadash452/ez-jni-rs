@@ -20,7 +20,7 @@ pub enum FromObjectError {
 /// Allows converting a *Java Object* to a Rust type by reading the Object's data.
 /// 
 /// ### Derive
-/// This trait has a **derive macro** available from [`jni_macros`].
+/// This trait has a **derive macro** available from [`ez_jni_macros`].
 /// Use it on *structs* to indicate that only 1 specific Class is expected.
 /// Use it on *enums* to expect different Classes (one for each variant).
 /// 
@@ -148,7 +148,7 @@ impl FromObject<'_> for String {
     /// Get a [`String`] from some random Object.
     /// 
     /// Don't use this function, it only exist for compatibility.
-    /// Use [`get_string()`] instead because you will mostly be using it with [`JString`][jni::objects::JString].
+    /// Use [`get_string()`][crate::utils::get_string] instead because you will mostly be using it with [`JString`][jni::objects::JString].
     fn from_object(object: &JObject, env: &mut JNIEnv) -> Result<Self, FromObjectError> {
         object_check_boilerplate(object, Self::PATH, env)?;
         // Already checked that it is java.lang.String and is not NULL

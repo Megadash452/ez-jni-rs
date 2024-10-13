@@ -35,7 +35,7 @@ static PANIC_LOCATION: RwLock<Option<PanicLocation>> = RwLock::new(None);
 /// This means that this function should only return directly to Java,
 /// or `R` should only be a type like a *pointer* or an *integer*.
 /// 
-/// This function is used by [jni_macros::jni_fn].
+/// This function is used by [ez_jni_macros::jni_fn].
 pub fn catch_throw<'local, R>(
     env: &mut JNIEnv<'local>,
     f: impl FnOnce(&mut JNIEnv<'local>) -> R,
@@ -89,7 +89,7 @@ fn throw_panic(env: &mut JNIEnv, payload: Box<dyn Any + Send>) {
 /// 
 /// See [`try_catch`] if panicking is not intended.
 ///
-/// This function is used by [jni_macros::call!].
+/// This function is used by [ez_jni_macros::call!].
 pub fn catch<'local, E: FromException<'local>>(env: &mut JNIEnv<'local>) -> Result<(), E> {
     match catch_exception(env) {
         Some(ex) => match E::from_exception(&ex, env) {
@@ -129,7 +129,7 @@ pub fn panic_exception(ex: JThrowable, env: &mut JNIEnv) -> ! {
 /// **target** is a *class* or an *object* (whose class will be determined).
 /// **method_name** is the name of the Java Method that threw the *exception*
 ///
-/// This function is used by [jni_macros::call!].
+/// This function is used by [ez_jni_macros::call!].
 pub fn panic_uncaught_exception(
     env: &mut JNIEnv,
     target: Either<&str, &JObject>,

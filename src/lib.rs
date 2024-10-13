@@ -42,7 +42,7 @@
 //! so you will only be able to print from functions that have the `env` passed into them.
 
 #[doc(hidden)]
-/// Used only by [`jni_macros`]
+/// Used only by [`ez_jni_macros`]
 pub mod __throw;
 #[macro_use]
 pub mod utils;
