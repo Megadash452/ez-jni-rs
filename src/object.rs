@@ -3,7 +3,7 @@ use jni::{objects::{JObject, JThrowable, JValue}, JNIEnv};
 use thiserror::Error;
 use std::io;
 use ez_jni_macros::{call, new};
-use crate::{__throw::panic_uncaught_exception, utils::get_string};
+use crate::__throw::panic_uncaught_exception;
 
 #[derive(Debug, Error)]
 pub enum FromObjectError {
@@ -134,7 +134,7 @@ fn object_check_boilerplate(object: &JObject, path: &'static str, env: &mut JNIE
     
     if !env.is_instance_of(object, path).unwrap() {
         return Err(FromObjectError::ClassMismatch {
-            obj_class: get_string(call!(obj_class.getName() -> java.lang.String), env),
+            obj_class: call!(obj_class.getName() -> String),
             target_class: path
         })
     }
@@ -181,9 +181,9 @@ impl FromException<'_> for String {
     fn from_exception(exception: &JThrowable, env: &mut jni::JNIEnv) -> Result<Self, FromObjectError> {
         let class = env.get_object_class(&exception)
             .unwrap_or_else(|err| panic!("Failed to get exception's class: {err}"));
-        let class = get_string(call!(class.getName() -> java.lang.String), env);
+        let class = call!(class.getName() -> String);
 
-        let msg = get_string(call!(exception.getMessage() -> Option<java.lang.String>).unwrap_or_default(), env);
+        let msg = call!(exception.getMessage() -> Option<String>).unwrap_or_default();
 
         Ok(format!("{class}: {msg}"))
     }
@@ -228,9 +228,9 @@ impl FromObject<'_> for std::io::Error {
         
         let class = env.get_object_class(&object)
             .expect("Failed to get Object's class");
-        let class_str = get_string(call!(class.getName() -> java.lang.String), env);
+        let class_str = call!(class.getName() -> String);
 
-        let msg = get_string(call!(object.getMessage() -> Option<java.lang.String>).unwrap_or_default(), env);
+        let msg = call!(object.getMessage() -> Option<String>).unwrap_or_default();
 
         // All classes in map extend java.io.IOException.
         // Check this before the classes in map to avoid a bunch of pointless JNI calls

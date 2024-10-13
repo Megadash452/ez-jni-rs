@@ -70,7 +70,7 @@ pub fn get_field<'local>(
 
     let class = env.get_object_class(object)
         .unwrap_or_else(|err| panic!("Error gettig object's Class: {err}"));
-    let class = get_string(call!(class.getName() -> java.lang.String), env);
+    let class = call!(class.getName() -> String);
 
     // What to do if FieldNotFound
     let handle_not_found = |env: &mut JNIEnv<'local>| {
@@ -115,7 +115,7 @@ pub fn __obj_array_len(obj: &JObject, inner_ty: &str, env: &mut JNIEnv) -> usize
     let class = env.get_object_class(obj)
         .unwrap_or_else(|err| panic!("Failed to get Object's class: {err}"));
 
-    let sig = get_string(call!(class.getName() -> java.lang.String), env);
+    let sig = call!(class.getName() -> String);
 
     if !sig.chars().next().is_some_and(|c| c == '[') {
         panic!("Expected object to be an Array, but is actually \"{sig}\"")

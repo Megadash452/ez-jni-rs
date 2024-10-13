@@ -78,7 +78,7 @@ fn get_local_lifetime<P: Default>(item: Either<&ItemStruct, &ItemEnum>, generics
 /// 
 /// Either *name* or *call* MUST be used if the field belongs to a Tuple struct.
 /// 
-/// Example: `#[field(call = getInt, class = java.lang.Int)] int: i32`
+/// Example: `#[field(call = getInt, class = java.lang.Integer)] int: i32`
 struct FieldAttr {
     name: Option<Ident>,
     call: Option<Ident>,

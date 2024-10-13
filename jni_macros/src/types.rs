@@ -197,6 +197,7 @@ impl SpecialCaseConversion for ArrayType {
                     let _len = ::ez_jni::utils::__obj_array_len(&_array, #inner_ty, env.borrow_mut());
                     let mut _vec = ::std::vec::Vec::with_capacity(_len);
                     for i in 0.._len {
+                        // TODO: object could be NULL
                         let _element = env.get_object_array_element(&_array, i as ::jni::sys::jsize)
                             .unwrap_or_else(|err| panic!("Failed to read Array elements: {err}"));
                         _vec.push(#conversion);
@@ -525,7 +526,10 @@ impl SpecialCaseConversion for ClassPath {
         // Special cases for Java Objects
         if self.to_jni_class_path() == "java/lang/String" {
             // Wrap java.lang.String in JString
-            Some(quote_spanned! {value.span()=> ::jni::objects::JString::from(#value) })
+            Some(quote_spanned! {value.span()=> {
+                use ::std::borrow::BorrowMut as _;
+                ::ez_jni::utils::get_string(::jni::objects::JString::from(#value), env.borrow_mut())
+            } })
         } else {
             None
         }

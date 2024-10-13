@@ -28,7 +28,7 @@ pub fn from_object_st(mut st: ItemStruct) -> syn::Result<TokenStream> {
                 
                 if !env.is_instance_of(object, Self::PATH).unwrap() {
                     return Err(::ez_jni::FromObjectError::ClassMismatch {
-                        obj_class: ::ez_jni::utils::get_string(::ez_jni::call!(__class.getName() -> java.lang.String), env),
+                        obj_class: ::ez_jni::call!(__class.getName() -> String),
                         target_class: Self::PATH
                     })
                 }
@@ -74,7 +74,7 @@ pub fn from_object_enum(mut enm: ItemEnum) -> syn::Result<TokenStream> {
                 let __class = env.get_object_class(object)
                     .unwrap_or_else(|err| panic!("Failed to get Object's class: {err}"));
                 let __class_mismatch_err = ::ez_jni::FromObjectError::ClassMismatch {
-                    obj_class: ::ez_jni::utils::get_string(::ez_jni::call!(__class.getName() -> java.lang.String), env),
+                    obj_class: ::ez_jni::call!(__class.getName() -> String),
                     target_class: Self::PATH
                 };
 

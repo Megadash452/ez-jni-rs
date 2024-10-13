@@ -25,7 +25,7 @@ pub fn from_exception_struct(mut st: ItemStruct) -> syn::Result<TokenStream> {
                 
                 if !env.is_instance_of(object, #class).unwrap() {
                     return Err(::ez_jni::FromObjectError::ClassMismatch {
-                        obj_class: ::ez_jni::utils::get_string(::ez_jni::call!(__class.getName() -> java.lang.String), env),
+                        obj_class: ::ez_jni::call!(__class.getName() -> String),
                         target_class: #class
                     })
                 }
@@ -47,7 +47,7 @@ pub fn from_exception_enum(mut enm: ItemEnum) -> syn::Result<TokenStream> {
     let base_class_check = base_class.map(|base_class| quote_spanned! {enm.ident.span()=>
         if !env.is_instance_of(object, #base_class).unwrap() {
             return Err(::ez_jni::FromObjectError::ClassMismatch {
-                obj_class: ::ez_jni::utils::get_string(::ez_jni::call!(__class.getName() -> java.lang.String), env),
+                obj_class: ::ez_jni::call!(__class.getName() -> String),
                 target_class: #base_class
             })
         }
@@ -78,7 +78,7 @@ pub fn from_exception_enum(mut enm: ItemEnum) -> syn::Result<TokenStream> {
                 #base_class_check
                 #(#class_checks)* else {
                     Err(::ez_jni::FromObjectError::ClassMismatch {
-                        obj_class: ::ez_jni::utils::get_string(::ez_jni::call!(__class.getName() -> java.lang.String), env),
+                        obj_class: ::ez_jni::call!(__class.getName() -> String),
                         target_class: ""
                     })
                 }
