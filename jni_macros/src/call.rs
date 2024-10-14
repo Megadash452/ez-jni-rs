@@ -515,9 +515,9 @@ impl Parse for ReturnableType {
                     let option_ty = match input.parse::<Type>()? {
                         Type::Single(InnerType::Object(class)) => OptionType::Object(class),
                         Type::Array(array) => OptionType::Array(array),
-                        t => return Err(syn::Error::new(
-                            t.span(),
-                            "Option cannot be used with primitives, only Classes.",
+                        _ => return Err(syn::Error::new(
+                            ident.span(),
+                            "Option can't be used with primitives, only Classes.",
                         ))
                     };
                     input.parse::<Token![>]>()
@@ -527,7 +527,7 @@ impl Parse for ReturnableType {
                 },
                 "Result" => return Err(syn::Error::new(
                     ident.span(),
-                    "Can't nest a Result within a Result",
+                    "Can't nest a Result within a Result.",
                 )),
                 _ => Self::Assertive(input.parse()?),
             },

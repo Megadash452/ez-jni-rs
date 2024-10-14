@@ -13,9 +13,9 @@ proc-macro = true
 convert_case = "0.6.0"
 either = "1.13.0"
 itertools = "0.13.0"
-proc-macro2 = "1.0.86"
-quote = "1.0.36"
-syn = { version = "2.0.72", features = ["full"] }
+proc-macro2 = { workspace = true }
+quote = { workspace = true }
+syn = { workspace = true, features = ["full"] }
 jni = { workspace = true }
 
 [dev-dependencies]

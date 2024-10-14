@@ -442,6 +442,18 @@ impl Parse for InnerType {
         let fork = input.fork();
         let ident = fork.parse::<Ident>()?;
         let ident_str = ident.to_string();
+        
+        // Found void, but is not a ClassPath
+        if ident_str == "void" && fork.parse::<Token![.]>().is_err() {
+            return Err(syn::Error::new(ident.span(), "'void' is not allowed here."))
+        }
+        if ident_str == "Result" && fork.parse::<Token![<]>().is_ok() {
+            return Err(syn::Error::new(ident.span(), "'Result' is not allowed as an inner type, it must be the outermost type."))
+        }
+        if ident_str == "Option" && fork.parse::<Token![<]>().is_ok() {
+            return Err(syn::Error::new(ident.span(), "'Option' is not allowed here."))
+        }
+
         match RustPrimitive::from_str(&ident_str).ok() {
             Some(ty) => {
                 input.advance_to(&fork);
