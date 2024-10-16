@@ -1,8 +1,8 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
-use syn::{braced, parenthesized, parse::{Parse, ParseStream}, punctuated::Punctuated, spanned::Spanned, Attribute, GenericParam, Generics, Ident, ItemFn, LifetimeParam, LitStr, Token};
+use syn::{braced, parenthesized, parse::{Parse, ParseStream}, punctuated::Punctuated, Attribute, GenericParam, Generics, Ident, ItemFn, LifetimeParam, LitStr, Token};
 use crate::{
-    utils::{gen_signature, get_class_attribute_required, merge_errors},
+    utils::{Spanned, gen_signature, get_class_attribute_required, merge_errors},
     types::{ClassPath, RustPrimitive, SigType, InnerType}
 };
 

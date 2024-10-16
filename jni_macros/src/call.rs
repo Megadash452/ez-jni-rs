@@ -3,11 +3,11 @@ use either::Either;
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
 use syn::{
-    braced, bracketed, parenthesized, parse::{discouraged::Speculative, Parse}, punctuated::Punctuated, spanned::Spanned as _, Ident, LitStr, Token
+    braced, bracketed, parenthesized, parse::{discouraged::Speculative, Parse}, punctuated::Punctuated, Ident, LitStr, Token
 };
 use crate::{
     types::{NULL_KEYWORD, ArrayType, ClassPath, InnerType, JavaPrimitive, SigType, SpecialCaseConversion, Type},
-    utils::{first_char_uppercase, gen_signature, join_spans}
+    utils::{Spanned, first_char_uppercase, gen_signature, join_spans}
 };
 
 /// Processes input for macro call [super::call!].
@@ -308,6 +308,7 @@ impl SigType for Parameter {
 }
 impl Parse for Parameter {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        // TODO: detect if user uses Option and disallow it
         let ty = input.parse::<Type>()?;
         let value_tokens;
         parenthesized!(value_tokens in input);
@@ -384,14 +385,6 @@ impl Return {
             | Self::Result { ty, .. } => ty
         }
     }
-    /// Returns the [`Span`] of the *return type's* tokens.
-    pub fn span(&self) -> Span {
-        match self {
-            Self::Assertive(ty) => ty.span(),
-            Self::Result { result, ty, err_ty } =>
-                join_spans([result.span(), ty.span(), err_ty.span()])
-        }
-    }
 }
 impl SigType for Return {
     fn sig_char(&self) -> Ident {
@@ -404,6 +397,15 @@ impl SigType for Return {
         match self {
             Self::Assertive(ty)
             | Self::Result{ ty, .. } => ty.sig_type()
+        }
+    }
+}
+impl Spanned for Return {
+    fn span(&self) -> Span {
+        match self {
+            Self::Assertive(ty) => ty.span(),
+            Self::Result { result, ty, err_ty } =>
+                join_spans([result.span(), ty.span(), err_ty.span()])
         }
     }
 }
@@ -474,16 +476,6 @@ pub enum OptionType {
     Array(ReturnArray)
 }
 impl ReturnableType {
-    /// Returns the [`Span`] of the *return type's* tokens.
-    pub fn span(&self) -> Span {
-        match self {
-            Self::Void(ident) => ident.span(),
-            Self::Assertive(ty) => ty.span(),
-            Self::Array(array) => array.span(),
-            Self::Option(OptionType::Array(array)) => array.span(),
-            Self::Option(OptionType::Object(class)) => class.span(),
-        }
-    }
     /// Handle special cases of the call's return value.
     /// 
     /// See [`SpecialCaseConversion::convert_java_to_rust()`].
@@ -514,6 +506,17 @@ impl SigType for ReturnableType {
             Self::Array(array) => array.to_array_type().sig_type(),
             Self::Option(OptionType::Array(array)) => array.to_array_type().sig_type(),
             Self::Option(OptionType::Object(class)) => class.sig_type(),
+        }
+    }
+}
+impl Spanned for ReturnableType {
+    fn span(&self) -> Span {
+        match self {
+            Self::Void(ident) => ident.span(),
+            Self::Assertive(ty) => ty.span(),
+            Self::Array(array) => array.span(),
+            Self::Option(OptionType::Array(array)) => array.span(),
+            Self::Option(OptionType::Object(class)) => class.span(),
         }
     }
 }
@@ -609,8 +612,8 @@ impl ReturnArray {
         } }
     }
 }
-impl ReturnArray {
-    pub fn span(&self) -> Span {
+impl Spanned for ReturnArray {
+    fn span(&self) -> Span {
         match self {
             Self::Assertive(ty) => ty.span(),
             Self::Option(class) => class.span(),

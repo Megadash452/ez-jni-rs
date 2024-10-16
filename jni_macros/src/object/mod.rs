@@ -8,10 +8,11 @@ use either::Either;
 use convert_case::{Case, Casing};
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
-use syn::{parse::Parse, punctuated::Punctuated, spanned::Spanned, AngleBracketedGenericArguments, Field, Fields, GenericArgument, GenericParam, Generics, Ident, ItemEnum, ItemStruct, Lifetime, LitStr, Token, Type, TypePath, Variant};
+use syn::{parse::Parse, punctuated::Punctuated, AngleBracketedGenericArguments, Field, Fields, GenericArgument, GenericParam, Generics, Ident, ItemEnum, ItemStruct, Lifetime, LitStr, Token, Type, TypePath, Variant};
 use std::str::FromStr;
 use crate::{
-    types::{ClassPath, JavaPrimitive, RustPrimitive, SigType, SpecialCaseConversion}, utils::{get_class_attribute_required, merge_errors, take_class_attribute}
+    types::{ClassPath, JavaPrimitive, RustPrimitive, SigType, SpecialCaseConversion},
+    utils::{Spanned, get_class_attribute_required, merge_errors, take_class_attribute}
 };
 
 /// Find the JObject field with a lifetime, and use that lifetime's name for the JNIEnv lifetime,

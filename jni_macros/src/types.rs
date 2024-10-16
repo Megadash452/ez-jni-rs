@@ -1,9 +1,9 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{quote_spanned, ToTokens};
-use syn::{bracketed, parse::{discouraged::Speculative as _, Parse, Parser}, punctuated::Punctuated, spanned::Spanned as _, Ident, LitStr, Token};
+use syn::{bracketed, parse::{discouraged::Speculative as _, Parse, Parser}, punctuated::Punctuated, Ident, LitStr, Token};
 use itertools::Itertools as _;
 use std::{fmt::{Display, Debug}, str::FromStr};
-use crate::utils::join_spans;
+use crate::utils::{join_spans, Spanned};
 
 /// A keyword only used in the *[`Parameter`] value* to indicate that the value is `JOBject::null()`.
 pub static NULL_KEYWORD: &str = "null";
@@ -48,13 +48,6 @@ pub enum Type {
     // Might also add generics
 }
 impl Type {
-    #[allow(unused)]
-    pub fn span(&self) -> Span {
-        match self {
-            Self::Single(ty) => ty.span(),
-            Self::Array(array) => array.span()
-        }
-    }
     /// Returns whether the [`InnerType`] of the type is a *primitive*.
     /// Returns `false` if this is an [`Array`][Type::Array].
     pub fn is_primitive(&self) -> bool {
@@ -92,6 +85,14 @@ impl SpecialCaseConversion for Type {
         }
     }
 }
+impl Spanned for Type {
+    fn span(&self) -> Span {
+        match self {
+            Self::Single(ty) => ty.span(),
+            Self::Array(array) => array.span()
+        }
+    }
+}
 impl Parse for Type {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         // Check if the Type is wrapped in Brackets (Array)
@@ -115,8 +116,8 @@ impl Display for Type {
 pub struct ArrayType {
     pub ty: InnerType
 }
-impl ArrayType {
-    pub fn span(&self) -> Span {
+impl Spanned for ArrayType {
+    fn span(&self) -> Span {
         // join_spans([self.brackets.span.span(), self.ty.span()])
         self.ty.span()
     }
@@ -389,8 +390,8 @@ pub enum InnerType {
     RustPrimitive { ident: Ident, ty: RustPrimitive },
     Object(ClassPath),
 }
-impl InnerType {
-    pub fn span(&self) -> Span {
+impl Spanned for InnerType {
+    fn span(&self) -> Span {
         match self {
             Self::JavaPrimitive { ident, .. }
             | Self::RustPrimitive { ident, .. } => ident.span(),
@@ -512,23 +513,6 @@ pub struct NestedPath {
     pub final_class: Ident
 }
 impl ClassPath {
-    /// Builds a [`TokenStream`] out of this path's items and returns its [`span`][TokenStream::span()].
-    pub fn span(&self) -> Span {
-        let mut spans = Vec::new();
-        spans.extend(self.packages.iter()
-            .map(|(ident, dot)| join_spans([ident.span(), dot.span]))
-        );
-        spans.push(self.class.span());
-        if let Some(nested_path) = &self.nested_path {
-            spans.extend(nested_path.classes.iter()
-                .map(|(ident, dol)| join_spans([ident.span(), dol.span]))
-            );
-            spans.push(nested_path.final_class.span())
-        }
-        
-        join_spans(spans.into_iter())
-    }
-
     /// Parses the [`ClassPath`] with [`Parse::parse()`], but the final path *component* is a method name.
     /// 
     /// Returns the parsed [`ClassPath`] and the **method name**.
@@ -621,6 +605,24 @@ impl SpecialCaseConversion for ClassPath {
             }),
             _ => None
         }
+    }
+}
+impl Spanned for ClassPath {
+    /// Builds a [`TokenStream`] out of this path's items and returns its [`span`][TokenStream::span()].
+    fn span(&self) -> Span {
+        let mut spans = Vec::new();
+        spans.extend(self.packages.iter()
+            .map(|(ident, dot)| join_spans([ident.span(), dot.span]))
+        );
+        spans.push(self.class.span());
+        if let Some(nested_path) = &self.nested_path {
+            spans.extend(nested_path.classes.iter()
+                .map(|(ident, dol)| join_spans([ident.span(), dol.span]))
+            );
+            spans.push(nested_path.final_class.span())
+        }
+        
+        join_spans(spans.into_iter())
     }
 }
 impl Parse for ClassPath {

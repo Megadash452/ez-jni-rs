@@ -3,8 +3,25 @@
 use either::Either;
 use proc_macro2::{TokenStream, Span};
 use quote::{ToTokens, TokenStreamExt as _};
-use syn::{spanned::Spanned as _, ItemEnum, ItemStruct, LitStr};
+use syn::{ItemEnum, ItemStruct, LitStr};
 use crate::types::{ClassPath, SigType};
+
+/// The same as [`syn::spanned::Spanned`].
+/// 
+/// Made this trait to get around the fact that implementors of [`syn::spanned::Spanned`] must also implement [`ToTokens`].
+pub trait Spanned {
+    /// Returns a `Span` covering the complete contents of this syntax tree
+    /// node, or [`Span::call_site()`] if this node is empty.
+    ///
+    /// [`Span::call_site()`]: proc_macro2::Span::call_site
+    fn span(&self) -> Span;
+}
+impl<T> Spanned for T
+where T: syn::spanned::Spanned {
+    fn span(&self) -> Span {
+        syn::spanned::Spanned::span(self)
+    }
+}
 
 /// Collect multiple syn errors into one error.
 pub fn merge_errors(mut errors: Vec<syn::Error>) -> syn::Result<()> {
