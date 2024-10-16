@@ -1,5 +1,7 @@
 mod common;
 
+use std::panic::{catch_unwind, AssertUnwindSafe};
+
 use jni::objects::JObject;
 use ez_jni::{call, new};
 
@@ -113,6 +115,17 @@ fn return_arrays_other() {
     r.unwrap();
     let r: Option<Box<[JObject]>> = call!(static me.test.Test.nullObjArray() -> Option<[java.lang.Object]>);
     assert!(r.is_none());
+    // Array Option
+    let r: Box<[Option<String>]> = call!(static me.test.Test.getStringArray() -> [Option<String>]);
+    r.into_vec().into_iter().for_each(|s| { s.unwrap(); });
+    let r: Box<[Option<String>]> = call!(static me.test.Test.getNullStringArray() -> [Option<String>]);
+    assert_eq!(&r, &(Box::new([Some("Hello".to_string()), None]) as Box<[Option<String>]>));
+    let r: Box<[Option<JObject>]> = call!(static me.test.Test.getObjectArray() -> [Option<java.lang.Object>]);
+    r.into_vec().into_iter().for_each(|s| { s.unwrap(); });
+    let r: Option<Box<[Option<String>]>> = call!(static me.test.Test.getStringArray() -> Option<[Option<String>]>);
+    r.unwrap().into_vec().into_iter().for_each(|s| { s.unwrap(); });
+    let r: Option<Box<[Option<JObject>]>> = call!(static me.test.Test.getObjectArray() -> Option<[Option<java.lang.Object>]>);
+    r.unwrap().into_vec().into_iter().for_each(|s| { s.unwrap(); });
     // Result<Option<_>, _>
     let r: Result<Option<Box<[bool]>>, String> = call!(static me.test.Test.getBooleanArray() -> Result<Option<[bool]>, String>);
     r.unwrap().unwrap();
@@ -122,6 +135,19 @@ fn return_arrays_other() {
     r.unwrap().unwrap();
     let r: Result<Option<Box<[JObject]>>, String> = call!(static me.test.Test.nullObjArray() -> Result<Option<[java.lang.Object]>, String>);
     assert!(r.unwrap().is_none());
+}
+
+#[test]
+fn return_fail() {
+    setup_env!(env);
+    catch_unwind(AssertUnwindSafe(|| call!(static me.test.Test.nullable() -> java.lang.Object)))
+        .unwrap_err();
+    catch_unwind(AssertUnwindSafe(|| call!(static me.test.Test.nullObjArray() -> [java.lang.Object])))
+        .unwrap_err();
+    catch_unwind(AssertUnwindSafe(|| call!(static me.test.Test.getNullObjectArray() -> [java.lang.Object])))
+        .unwrap_err();
+    catch_unwind(AssertUnwindSafe(|| call!(static me.test.Test.nullObjArray() -> [Option<java.lang.Object>])))
+        .unwrap_err();
 }
 
 #[test]

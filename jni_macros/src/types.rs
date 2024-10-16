@@ -187,6 +187,7 @@ impl SpecialCaseConversion for ArrayType {
                 // For some reason, class.getName() returns a ClassPath with .dots. instead of /slashes/, so can't use sig_type().
                 // This is the only place where this happens. why??
                 let inner_ty = LitStr::new(&format!("L{};", class.to_string()), class.span());
+                let null_err = format!("Array of {class} contains null elements (at {{i}}). If this is intended, wrap the Class with 'Option' (e.g. Option<{class}>)");
 
                 // The inner Class of the array might require some conversion
                 let conversion = {
@@ -202,9 +203,11 @@ impl SpecialCaseConversion for ArrayType {
                     let _len = ::ez_jni::utils::__obj_array_len(&_array, #inner_ty, env.borrow_mut());
                     let mut _vec = ::std::vec::Vec::with_capacity(_len);
                     for i in 0.._len {
-                        // TODO: object could be NULL
                         let _element = env.get_object_array_element(&_array, i as ::jni::sys::jsize)
                             .unwrap_or_else(|err| panic!("Failed to read Array elements: {err}"));
+                        if _element.is_null() {
+                            panic!(#null_err)
+                        }
                         _vec.push(#conversion);
                     }
                     _vec.into_boxed_slice()

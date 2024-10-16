@@ -46,8 +46,10 @@ public final class Test {
     public static long[]    getLongArray()    { return new long[]    {1, 2, 3}; }
     public static float[]   getFloatArray()   { return new float[]   {1.1f, 2.2f, 3.3f}; }
     public static double[]  getDoubleArray()  { return new double[]  {1.1d, 2.2d, 3.3d}; }
-    public static Object[]  getObjectArray()  { return new Object[]  {new Object(), null}; }
+    public static Object[]  getObjectArray()  { return new Object[]  {new Object()}; }
+    public static Object[]  getNullObjectArray()  { return new Object[]  {new Object(), null}; }
     public static String[]  getStringArray()  { return new String[]  {"Hello", "World"}; }
+    public static String[]  getNullStringArray()  { return new String[]  {"Hello", null}; }
 
     public static boolean[] nullPrimArray() { return null; }
     public static Object[]  nullObjArray()    { return null; }

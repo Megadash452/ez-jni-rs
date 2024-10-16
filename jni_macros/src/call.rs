@@ -482,8 +482,8 @@ impl ReturnableType {
     pub fn special_case_conversions(&self, value: TokenStream) -> Option<TokenStream> {
         match self {
             Self::Assertive(ty) => ty.convert_java_to_rust(&value),
-            Self::Array(array) => array.to_array_type().convert_java_to_rust(&value),
-            Self::Option(OptionType::Array(array)) => array.to_array_type().convert_java_to_rust(&value),
+            Self::Array(array) => array.special_case_conversions(value),
+            Self::Option(OptionType::Array(array)) => array.special_case_conversions(value),
             Self::Option(OptionType::Object(class)) => class.convert_java_to_rust(&value),
             Self::Void(_) => None,
         }
@@ -610,6 +610,45 @@ impl ReturnArray {
             Self::Assertive(ty) => ty.clone(),
             Self::Option(class) => InnerType::Object(class.clone())
         } }
+    }
+    /// Handle special cases of the call's return value,
+    /// specifically when the return is `[Option<T>]`.
+    /// 
+    /// See [`ArrayType::convert_java_to_rust()`].
+    pub fn special_case_conversions(&self, value: TokenStream) -> Option<TokenStream> {
+        match self {
+            Self::Assertive(_) => self.to_array_type().convert_java_to_rust(&value),
+            Self::Option(class) => Some({
+                // For some reason, class.getName() returns a ClassPath with .dots. instead of /slashes/, so can't use sig_type().
+                // This is the only place where this happens. why??
+                let inner_ty = LitStr::new(&format!("L{};", class.to_string()), class.span());
+
+                // The inner Class of the array might require some conversion
+                let conversion = {
+                    let element_tokens = quote_spanned!(value.span()=> _element); 
+                    // Convert using the variable
+                    class.convert_java_to_rust(&element_tokens)
+                        .unwrap_or(element_tokens)
+                };
+
+                quote_spanned! {value.span() => {
+                    use ::std::borrow::BorrowMut as _;
+                    let _array = ::jni::objects::JObjectArray::from(#value);
+                    let _len = ::ez_jni::utils::__obj_array_len(&_array, #inner_ty, env.borrow_mut());
+                    let mut _vec = ::std::vec::Vec::<::std::option::Option<_>>::with_capacity(_len);
+                    for i in 0.._len {
+                        let _element = env.get_object_array_element(&_array, i as ::jni::sys::jsize)
+                            .unwrap_or_else(|err| panic!("Failed to read Array elements: {err}"));
+                        _vec.push(if _element.is_null() {
+                            ::std::option::Option::None
+                        } else {
+                            ::std::option::Option::Some(#conversion)
+                        });
+                    }
+                    _vec.into_boxed_slice()
+                } }
+            }),
+        }
     }
 }
 impl Spanned for ReturnArray {
