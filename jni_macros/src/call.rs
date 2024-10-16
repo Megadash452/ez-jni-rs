@@ -1,13 +1,9 @@
-use std::fmt::Display;
+use std::fmt::{Display, Debug};
 use either::Either;
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
 use syn::{
-    braced, parenthesized,
-    parse::{discouraged::Speculative, Parse},
-    punctuated::Punctuated,
-    Ident, LitStr, Token,
-    spanned::Spanned as _,
+    braced, bracketed, parenthesized, parse::{discouraged::Speculative, Parse}, punctuated::Punctuated, spanned::Spanned as _, Ident, LitStr, Token
 };
 use crate::{
     types::{NULL_KEYWORD, ArrayType, ClassPath, InnerType, JavaPrimitive, SigType, SpecialCaseConversion, Type},
@@ -86,7 +82,7 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
     match call.return_type {
         // For return types that are not Result
         Return::Assertive(ty) => match ty {
-            ReturnableType::Assertive(Type::Single(InnerType::Object(_)) | Type::Array(_)) => quote! { {
+            ReturnableType::Assertive(InnerType::Object(_)) | ReturnableType::Array(_) => quote! { {
                 #initial
                 ::ez_jni::__throw::panic_uncaught_exception(env.borrow_mut(), #target, #name);
                 __call #common
@@ -102,7 +98,7 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
         }
         // Move the result of the method call to a Result if the caller expects that the method could throw.
         Return::Result { ty, err_ty, ..} => match ty {
-            ReturnableType::Assertive(Type::Single(InnerType::Object(_)) | Type::Array(_)) => quote! { {
+            ReturnableType::Assertive(InnerType::Object(_)) | ReturnableType::Array(_) => quote! { {
                 #initial
                 ::ez_jni::__throw::catch::<#err_ty>(env.borrow_mut())
                     .map(|_| __call #common
@@ -247,6 +243,7 @@ impl Parse for ObjectMethod {
 /// Parameter to a JNI method call, such as `java.lang.String(value)`.
 /// Holds a [`Type`] that can be an [`ArrayType`], or a regular *single* [`InnerType`].
 /// Can accept an **Array Literal** if the [`Type`] is array.
+#[derive(Debug)]
 pub struct Parameter {
     ty: Type,
     value: ParamValue,
@@ -437,24 +434,44 @@ impl Parse for Return {
         })
     }
 }
+impl Debug for Return {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Assertive(ty) => f.debug_tuple("Return::Aserrtive")
+                .field(ty)
+                .finish(),
+            Self::Result { result, ty, err_ty } => f.debug_struct("Return::Result")
+                .field("result", result)
+                .field("ty", ty)
+                .field("err_ty", &err_ty.to_token_stream().to_string())
+                .finish()
+        }
+    }
+}
 
 /// A type that can be in the *return type* of `call!`.
 /// This is the inner type of [`Return`].
 /// 
 /// Don't parse this type, as it denies `Result`.
 /// Parse [`Return`] instead.
+#[derive(Debug)]
 pub enum ReturnableType {
     Void(Ident),
+    /// Any **primitive** or **Class**.
+    /// 
     /// Asserts that the returned value can't be `null`.
     /// Will cause a `panic!` if `call!` returns `null`.
-    Assertive(Type),
-    Option(OptionType)
+    Assertive(InnerType),
+    Array(ReturnArray),
+    /// A Nullable **Object** or **Array**.
+    Option(OptionType),
 }
 /// A type that can be in the `Option` of the [*return type*](ReturnableType).
 /// Can't have *primitive* types themselves, but can have *array of primitive*.
+#[derive(Debug)]
 pub enum OptionType {
     Object(ClassPath),
-    Array(ArrayType)
+    Array(ReturnArray)
 }
 impl ReturnableType {
     /// Returns the [`Span`] of the *return type's* tokens.
@@ -462,8 +479,9 @@ impl ReturnableType {
         match self {
             Self::Void(ident) => ident.span(),
             Self::Assertive(ty) => ty.span(),
-            Self::Option(OptionType::Object(class)) => class.span(),
+            Self::Array(array) => array.span(),
             Self::Option(OptionType::Array(array)) => array.span(),
+            Self::Option(OptionType::Object(class)) => class.span(),
         }
     }
     /// Handle special cases of the call's return value.
@@ -472,8 +490,9 @@ impl ReturnableType {
     pub fn special_case_conversions(&self, value: TokenStream) -> Option<TokenStream> {
         match self {
             Self::Assertive(ty) => ty.convert_java_to_rust(&value),
+            Self::Array(array) => array.to_array_type().convert_java_to_rust(&value),
+            Self::Option(OptionType::Array(array)) => array.to_array_type().convert_java_to_rust(&value),
             Self::Option(OptionType::Object(class)) => class.convert_java_to_rust(&value),
-            Self::Option(OptionType::Array(array)) => array.convert_java_to_rust(&value),
             Self::Void(_) => None,
         }
     }
@@ -483,66 +502,130 @@ impl SigType for ReturnableType {
         match self {
             Self::Void(ident) => Ident::new("v", ident.span()),
             Self::Assertive(ty) => ty.sig_char(),
-            // Option is always l because it can only hold Objects
+            Self::Array(array) => array.to_array_type().sig_char(),
+            Self::Option(OptionType::Array(array)) => array.to_array_type().sig_char(),
             Self::Option(OptionType::Object(class)) => class.sig_char(),
-            Self::Option(OptionType::Array(array)) => array.sig_char(),
         }
     }
     fn sig_type(&self) -> LitStr {
         match self {
             Self::Void(ident) => LitStr::new("V", ident.span()),
             Self::Assertive(ty) => ty.sig_type(),
+            Self::Array(array) => array.to_array_type().sig_type(),
+            Self::Option(OptionType::Array(array)) => array.to_array_type().sig_type(),
             Self::Option(OptionType::Object(class)) => class.sig_type(),
-            Self::Option(OptionType::Array(array)) => array.sig_type(),
         }
     }
 }
 impl Parse for ReturnableType {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let fork = input.fork();
-        // Check if caller uses Option or Result as the return type
-        Ok(match fork.parse::<Ident>() {
-            Ok(ident) => match ident.to_string().as_str() {
-                "void" => {
+        // Check if caller uses void or Result
+        if let Ok(ident) = fork.parse::<Ident>() {
+            match ident.to_string().as_str() {
+                "void" => return {
                     input.advance_to(&fork);
-                    Self::Void(ident)
-                }
-                "Option" => {
-                    input.advance_to(&fork);
-                    // Parse inner type of Option
-                    input.parse::<Token![<]>()
-                        .map_err(|err| input.error(format!("Option takes generic arguments; {err}")))?;
-                    let option_ty = match input.parse::<Type>()? {
-                        Type::Single(InnerType::Object(class)) => OptionType::Object(class),
-                        Type::Array(array) => OptionType::Array(array),
-                        _ => return Err(syn::Error::new(
-                            ident.span(),
-                            "Option can't be used with primitives, only Classes.",
-                        ))
-                    };
-                    input.parse::<Token![>]>()
-                        .map_err(|err| input.error(format!("Option takes only 1 generic argument; {err}")))?;
-
-                    Self::Option(option_ty)
+                    Ok(Self::Void(ident))
                 },
                 "Result" => return Err(syn::Error::new(
                     ident.span(),
                     "Can't nest a Result within a Result.",
                 )),
-                _ => Self::Assertive(input.parse()?),
+                _ => {},
+            }
+        }
+        drop(fork);
+
+        // Attempt to parse the rest of the variants
+        input.parse::<ReturnArray>()
+            .map(|array| Self::Array(array))
+            .or_else(|_| input.parse::<OptionType>()
+                .map(|option| Self::Option(option))
+            )
+            .or_else(|_| input.parse::<InnerType>() // InnerType must go last
+                .map(|ty| Self::Assertive(ty))
+            )
+    }
+}
+impl Parse for OptionType {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        static ERROR: &str = "Expected 'Option'";
+        let fork = input.fork();
+
+        match fork.parse::<Ident>() {
+            Ok(ident) if ident.to_string() == "Option" => {
+                input.advance_to(&fork);
+                drop(fork);
+                // Parse inner type of Option
+                input.parse::<Token![<]>()
+                    .map_err(|err| input.error(format!("Option takes generic arguments; {err}")))?;
+                // Check if the Type is wrapped in Brackets (Array)
+                let option_ty = if input.lookahead1().peek(syn::token::Bracket) {
+                    Self::Array(input.parse()?)
+                } else {
+                    match input.parse::<InnerType>()? {
+                        InnerType::Object(class) => Self::Object(class),
+                        ty => return Err(syn::Error::new(ty.span(), "Option can't be used with primitives, only Classes."))
+                    }
+                };
+                input.parse::<Token![>]>()
+                    .map_err(|err| input.error(format!("Option takes only 1 generic argument; {err}")))?;
+
+                Ok(option_ty)
             },
-            // The return type did not start with Ident... weird, but let's continue
-            Err(_) => Self::Assertive(input.parse()?),
-        })
+            Ok(ident) => Err(syn::Error::new(ident.span(), ERROR)),
+            Err(_) => Err(input.error(ERROR))
+        }
     }
 }
 impl Display for ReturnableType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Void(ident) => Display::fmt(ident, f),
-            Self::Assertive(ty) => Display::fmt(ty, f),
-            Self::Option(OptionType::Object(class)) => Display::fmt(class, f),
-            Self::Option(OptionType::Array(array)) => Display::fmt(array, f)
+            Self::Assertive(ty)
+            | Self::Array(ReturnArray::Assertive(ty))
+            | Self::Option(OptionType::Array(ReturnArray::Assertive(ty))) => Display::fmt(ty, f),
+            Self::Array(ReturnArray::Option(class))
+            | Self::Option(OptionType::Object(class))
+            | Self::Option(OptionType::Array(ReturnArray::Option(class))) => Display::fmt(class, f),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum ReturnArray {
+    /// Regular Array with **non-null** values.
+    Assertive(InnerType),
+    /// Array with **nullable** values.
+    // TODO: Use OptionType instead when there is support for multi-dimensional Arrays
+    Option(ClassPath),
+}
+impl ReturnArray {
+    /// Creates an ArrayType to avoid reimplementing the same methods for ReturnArray.
+    fn to_array_type(&self) -> ArrayType {
+        ArrayType { ty: match self {
+            Self::Assertive(ty) => ty.clone(),
+            Self::Option(class) => InnerType::Object(class.clone())
+        } }
+    }
+}
+impl ReturnArray {
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Assertive(ty) => ty.span(),
+            Self::Option(class) => class.span(),
+        }
+    }
+}
+impl Parse for ReturnArray {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let inner;
+        bracketed!(inner in input);
+        
+        match inner.parse::<OptionType>() {
+            Ok(OptionType::Object(class)) => Ok(Self::Option(class)),
+            Ok(OptionType::Array(array)) => Err(syn::Error::new(array.span(), "Multi-dimensional Arrays not yet supported.")),
+            Err(_) => Ok(Self::Assertive(inner.parse()?))
         }
     }
 }

@@ -1,6 +1,6 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{quote_spanned, ToTokens};
-use syn::{bracketed, parse::{discouraged::Speculative as _, Parse, Parser}, punctuated::Punctuated, spanned::Spanned as _, token::Bracket, Ident, LitStr, Token};
+use syn::{bracketed, parse::{discouraged::Speculative as _, Parse, Parser}, punctuated::Punctuated, spanned::Spanned as _, Ident, LitStr, Token};
 use itertools::Itertools as _;
 use std::{fmt::{Display, Debug}, str::FromStr};
 use crate::utils::join_spans;
@@ -41,12 +41,14 @@ pub trait SpecialCaseConversion {
     fn convert_rust_to_java(&self, value: &TokenStream) -> Option<TokenStream>;
 }
 
+#[derive(Debug)]
 pub enum Type {
     Single(InnerType),
     Array(ArrayType),
     // Might also add generics
 }
 impl Type {
+    #[allow(unused)]
     pub fn span(&self) -> Span {
         match self {
             Self::Single(ty) => ty.span(),
@@ -111,12 +113,12 @@ impl Display for Type {
 
 #[derive(Clone)]
 pub struct ArrayType {
-    pub brackets: Bracket,
     pub ty: InnerType
 }
 impl ArrayType {
     pub fn span(&self) -> Span {
-        join_spans([self.brackets.span.span(), self.ty.span()])
+        // join_spans([self.brackets.span.span(), self.ty.span()])
+        self.ty.span()
     }
 }
 impl SigType for ArrayType {
@@ -356,8 +358,8 @@ impl SpecialCaseConversion for ArrayType {
 impl Parse for ArrayType {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let inner;
+        bracketed!(inner in input);
         Ok(Self {
-            brackets: bracketed!(inner in input),
             ty: inner.parse()?
         })
     }
@@ -365,6 +367,13 @@ impl Parse for ArrayType {
 impl Display for ArrayType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "[{}]", self.ty)
+    }
+}
+impl Debug for ArrayType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ArrayType")
+            .field("ty", &self.ty)
+            .finish()
     }
 }
 
