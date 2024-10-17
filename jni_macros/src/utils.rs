@@ -24,11 +24,11 @@ where T: syn::spanned::Spanned {
 }
 
 /// Collect multiple syn errors into one error.
-pub fn merge_errors(mut errors: Vec<syn::Error>) -> syn::Result<()> {
+pub fn merge_errors(errors: impl IntoIterator<Item = syn::Error>) -> syn::Result<()> {
+    let mut errors = errors.into_iter();
     // Check if there are errors
-    if let Some(last) = errors.pop() /*Order doesn't matter*/ {
-        let errors = errors.into_iter()
-            .fold(last, |mut errors, err| {
+    if let Some(first) = errors.next() {
+        let errors = errors.fold(first, |mut errors, err| {
                 errors.combine(err);
                 errors
             });

@@ -1,6 +1,6 @@
 use proc_macro2::{Span, TokenStream};
-use quote::{quote_spanned, ToTokens};
-use syn::{bracketed, parse::{discouraged::Speculative as _, Parse, Parser}, punctuated::Punctuated, Ident, LitStr, Token};
+use quote::quote_spanned;
+use syn::{bracketed, parse::{discouraged::Speculative as _, Parse}, punctuated::Punctuated, Ident, LitStr, Token};
 use itertools::Itertools as _;
 use std::{fmt::{Display, Debug}, str::FromStr};
 use crate::utils::{join_spans, Spanned};
@@ -280,22 +280,6 @@ impl SpecialCaseConversion for ArrayType {
 
                 // Build the array from Rust Strings (Option allowed).
                 if class.to_jni_class_path() == "java/lang/String" {
-                    // Handle NULL keyword in Array literals
-                    let value = match Parser::parse2(syn::ExprArray::parse, value.clone()) {
-                        Ok(mut array) => {
-                            // Convert [String] to [Option<String>] and convert NULLs to None
-                            for elem in &mut array.elems {
-                                *elem = syn::Expr::Verbatim(if elem.to_token_stream().to_string() == NULL_KEYWORD {
-                                    quote_spanned!(elem.span()=> None)
-                                } else {
-                                    quote_spanned!(elem.span()=> Some(#elem))
-                                })
-                            }
-                            array.into_token_stream()
-                        },
-                        Err(_) => value.clone()
-                    };
-
                     quote_spanned! {value.span()=> {
                         use ::std::borrow::BorrowMut as _;
                         use ::ez_jni::ToObject as _;
@@ -322,21 +306,6 @@ impl SpecialCaseConversion for ArrayType {
                         // Convert using the variable
                         class.convert_rust_to_java(&element_tokens)
                             .unwrap_or(element_tokens)
-                    };
-                    // Handle NULL keyword in Array literals
-                    let value = match Parser::parse2(syn::ExprArray::parse, value.clone()) {
-                        Ok(mut array) => {
-                            // Replace NULLs in Array literal with JObject::null()
-                            for elem in &mut array.elems {
-                                if elem.to_token_stream().to_string() == NULL_KEYWORD {
-                                    *elem = syn::Expr::Verbatim(quote_spanned! {elem.span()=>
-                                        ::jni::objects::JObject::null()
-                                    })
-                                }
-                            }
-                            array.into_token_stream()
-                        },
-                        Err(_) => value.clone()
                     };
     
                     quote_spanned! {value.span()=> {

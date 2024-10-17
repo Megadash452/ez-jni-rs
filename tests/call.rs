@@ -157,6 +157,7 @@ fn arguments() {
     call!(static me.test.Test.primArgs(boolean(true), char('a'), byte(1i8), short(1i16), int(1i32), long(1i64), float(1f32), double(1f64)) -> void);
     call!(static me.test.Test.objArgs(java.lang.Object(new!(java.lang.Object())), java.lang.String("hi")) -> void);
     call!(static me.test.Test.objArgs(java.lang.Object(JObject::null()), java.lang.String(String::from("hi"))) -> void);
+    // call!(static me.test.Test.objArgs(java.lang.Object(None), java.lang.String(Some("hi"))) -> void);
     call!(static me.test.Test.objArgs(java.lang.Object(null), java.lang.String(null)) -> void);
     // -- Primitive Array Arguments
     // Rust slices stored in variables
@@ -243,11 +244,11 @@ fn constructor() {
     new!(java.lang.Object());
 }
 #[test]
-#[should_panic]
 fn constructor_fail() {
     setup_env!(env);
-    // Should panic if theconstructor throws, but user did not indicate that the constructor could throw
-    new!(me.test.Test(java.lang.String(null)));
+    // Should panic if the constructor throws, but user did not indicate that the constructor could throw
+    catch_unwind(AssertUnwindSafe(|| new!(me.test.Test(java.lang.String(null)))))
+        .unwrap_err();
 }
 
 #[test]
