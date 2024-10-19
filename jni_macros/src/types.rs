@@ -708,9 +708,9 @@ impl SpecialCaseConversion for RustPrimitive {
     fn convert_rust_to_java(&self, value: &TokenStream) -> Option<TokenStream> {
         match *self {
             // Bool must be cast to jni::sys::jboolean (u8)
-            Self::Bool => Some(quote_spanned!(value.span()=> #value as ::jni::sys::jboolean)),
+            Self::Bool => Some(quote_spanned!(value.span()=> (#value) as ::jni::sys::jboolean)),
             // Char must be encoded to UTF-16 (will panic! if the conversion fails)
-            Self::Char => Some(quote_spanned!(value.span()=> #value.encode_utf16(&mut [0;1])[0])),
+            Self::Char => Some(quote_spanned!(value.span()=> (#value).encode_utf16(&mut [0;1])[0])),
             // Transmute Rust unsigned integers to Java signed integers
             _ if self.is_unsigned() => Some(quote_spanned!(value.span()=> unsafe { ::std::mem::transmute(#value) })),
             // No more conversion
