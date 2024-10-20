@@ -1,3 +1,4 @@
+#![allow(unused)]
 use std::{process::Command, sync::LazyLock};
 use jni::JavaVM;
 
