@@ -64,9 +64,6 @@ pub fn get_field<'local>(
     #[derive(FromException)]
     #[class(java.lang.NoSuchFieldError)]
     struct FieldNotFound;
-    #[derive(FromException)]
-    #[class(java.lang.NoSuchMethodError)]
-    struct MethodNotFound;
 
     let class = env.get_object_class(object)
         .unwrap_or_else(|err| panic!("Error gettig object's Class: {err}"));
@@ -75,21 +72,14 @@ pub fn get_field<'local>(
     // What to do if FieldNotFound
     let handle_not_found = |env: &mut JNIEnv<'local>| {
         if getter_fallback {
-            let name = format!("get{}", first_char_uppercase(name));
-            let error = FromObjectError::FieldNotFound { name: format!("{name}()"), ty: ty.to_string(), target_class: class };
-            env.call_method(object, name, format!("(){ty}"), &[])
-                .map_err(|err| match err {
-                    JNIError::MethodNotFound { .. } => error,
-                    JNIError::JavaException
-                        => if let Some(MethodNotFound) = try_catch(env) {
-                            error
-                        } else {
-                            panic_exception(env.exception_occurred().unwrap(), env)
-                        },
-                    err => panic!("Error occurred while calling getter method: {err}")
-                })
+            let method = format!("get{}", first_char_uppercase(name));
+            call_getter(object, &method, ty, env)
         } else {
-            Err(FromObjectError::FieldNotFound { name: name.to_string(), ty: ty.to_string(), target_class: class })
+            Err(FromObjectError::FieldNotFound {
+                name: name.to_string(),
+                ty: ty.to_string(),
+                target_class: class
+            })
         }
     };
 
@@ -103,6 +93,38 @@ pub fn get_field<'local>(
                     panic_exception(env.exception_occurred().unwrap(), env)
                 },
             err => panic!("Error occurred while accessing field: {err}")
+        })
+}
+
+pub fn call_getter<'local>(
+    object: &JObject,
+    mathod_name: &str,
+    ty: &str,
+    env: &mut JNIEnv<'local>,
+) -> Result<JValueOwned<'local>, FromObjectError> {
+    #[derive(FromException)]
+    #[class(java.lang.NoSuchMethodError)]
+    struct MethodNotFound;
+
+    let class = env.get_object_class(object)
+        .unwrap_or_else(|err| panic!("Error gettig object's Class: {err}"));
+    let class = call!(class.getName() -> String);
+
+    let error = FromObjectError::FieldNotFound {
+        name: format!("{mathod_name}()"),
+        ty: ty.to_string(),
+        target_class: class
+    };
+    env.call_method(object, mathod_name, format!("(){ty}"), &[])
+        .map_err(|err| match err {
+            JNIError::MethodNotFound { .. } => error,
+            JNIError::JavaException
+                => if let Some(MethodNotFound) = try_catch(env) {
+                    error
+                } else {
+                    panic_exception(env.exception_occurred().unwrap(), env)
+                },
+            err => panic!("Error occurred while calling getter method: {err}")
         })
 }
 
@@ -193,12 +215,12 @@ pub(crate) fn get_java_prim_array<'local, 'other, 'a, T>(
 {
     let array = <&'a JPrimitiveArray<'other, T>>::from(obj);
     // Check object's type
-    let class = env.get_object_class(obj)
-        .unwrap_or_else(|err| panic!("Failed to get Object's class: {err}"));
-    let ty = call!(class.getName() -> String);
-    if ty != T::PATH {
-        panic!("Expected object's type to be \"{}\", but is actually \"{ty}\"", T::PATH)
-    }
+    // let class = env.get_object_class(obj)
+    //     .unwrap_or_else(|err| panic!("Failed to get Object's class: {err}"));
+    // let ty = call!(class.getName() -> String);
+    // if ty != T::PATH {
+    //     panic!("Expected object's type to be \"{}\", but is actually \"{ty}\"", T::PATH)
+    // }
 
     let len = env.get_array_length(array)
         .unwrap_or_else(|err| panic!("Failed to check Array's length: {err}"))

@@ -2,7 +2,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
 use syn::{braced, parenthesized, parse::{Parse, ParseStream}, punctuated::Punctuated, Attribute, GenericParam, Generics, Ident, ItemFn, LifetimeParam, LitStr, Token};
 use crate::{
-    utils::{Spanned, gen_signature, get_class_attribute_required, merge_errors},
+    utils::{Spanned, gen_signature, take_class_attribute_required, merge_errors},
     types::{ClassPath, RustPrimitive, SigType, InnerType}
 };
 
@@ -144,7 +144,7 @@ impl Parse for JniFn {
         errors = Vec::new();
 
         // jni_fn must have a `class` attribute
-        let class = get_class_attribute_required(&mut attrs, name.span())
+        let class = take_class_attribute_required(&mut attrs, name.span())
             .map_err(|err| errors.push(err))
             .ok();
 

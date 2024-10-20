@@ -18,6 +18,7 @@ pub trait Spanned {
 }
 impl<T> Spanned for T
 where T: syn::spanned::Spanned {
+    #[inline]
     fn span(&self) -> Span {
         syn::spanned::Spanned::span(self)
     }
@@ -153,10 +154,10 @@ pub fn take_class_attribute(attributes: &mut Vec<syn::Attribute>) -> syn::Result
     }))
 }
 
-/// Same as [`get_class_attribute()`], but requires that the attribute is present.
+/// Same as [`take_class_attribute()`], but requires that the attribute is present.
 /// 
 /// Takes the [`Span`] of the struct or enum variant's Name for errors.
-pub fn get_class_attribute_required(attributes: &mut Vec<syn::Attribute>, item_span: Span) -> syn::Result<ClassPath> {
+pub fn take_class_attribute_required(attributes: &mut Vec<syn::Attribute>, item_span: Span) -> syn::Result<ClassPath> {
     take_class_attribute(attributes)
         .and_then(|res| res.ok_or_else(|| syn::Error::new(item_span, "Must have \"class\" attribute")))
 }

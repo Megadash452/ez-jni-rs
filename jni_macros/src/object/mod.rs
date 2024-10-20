@@ -6,14 +6,153 @@ pub use exception::*;
 
 use either::Either;
 use convert_case::{Case, Casing};
-use proc_macro2::{Span, TokenStream};
+use proc_macro2::{Span, TokenStream, TokenTree};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
-use syn::{parse::Parse, punctuated::Punctuated, AngleBracketedGenericArguments, Field, Fields, GenericArgument, GenericParam, Generics, Ident, ItemEnum, ItemStruct, Lifetime, LitStr, Token, Type, TypePath, Variant};
-use std::str::FromStr;
+use syn::{parse::{Parse, ParseStream, Parser}, punctuated::Punctuated, AngleBracketedGenericArguments, Field, Fields, GenericArgument, GenericParam, Generics, Ident, ItemEnum, ItemStruct, Lifetime, LitStr, Token, TypePath, Variant};
+use itertools::Itertools as _;
+use std::{cell::RefCell, collections::{HashMap, HashSet}};
 use crate::{
-    types::{ClassPath, JavaPrimitive, RustPrimitive, SigType, SpecialCaseConversion},
-    utils::{Spanned, get_class_attribute_required, merge_errors, take_class_attribute}
+    types::{ClassPath, SigType, SpecialCaseConversion, InnerType},
+    utils::{merge_errors, take_class_attribute, take_class_attribute_required, Spanned}
 };
+
+/// Properties parsed from the value of an [`Attribute`][syn::Attribute].
+/// 
+/// The properties are *Key-Value Pairs*,
+/// where the *Key* is an [`Ident`] and the *Value* can be any tokens.
+/// The *attribute* must have tokens wrapped in parenthesis, like this: `#[attr(key = val)]`.
+/// 
+/// Parse the attribute's content to get an instance of [`AttributeProps`],
+/// and [`take`][Self::take] properties with a *name*.
+/// Then call [`Self::finish`] to make sure all the properties provided by the user are valid for the macro.
+struct AttributeProps {
+    properties: RefCell<HashMap<String, TokenStream>>,
+    /// The keys that were used as the **name** in all calls to [`self.take()`][Self::take].
+    probed: RefCell<HashSet<String>>,
+}
+impl AttributeProps {
+    /// Parse the content of an [`Attribute`][syn::Attribute] and
+    /// with the parsed *properties* **build** an instance of a Type that stores the properties.
+    /// 
+    /// ## Example
+    /// ```no_run
+    /// AttributeProps::parse_attr_with(attr, |props| {
+    ///     Ok(Self {
+    ///         name: props.take("name")?,
+    ///         call: props.take("call")?,
+    ///         class: props.take("class")?,
+    ///     })
+    /// })
+    /// ```
+    pub fn parse_attr_with<T>(attr: &syn::Attribute, builder: impl FnOnce(&Self) -> syn::Result<T>) -> syn::Result<T> {
+        let props = Self::parse_attr(attr)?;
+        let rtrn = builder(&props)?;
+        props.finish()?;
+        Ok(rtrn)
+    }
+    /// Parse the content of an [`Attribute`][syn::Attribute] to get *properties*.
+    pub fn parse_attr(attr: &syn::Attribute) -> syn::Result<Self> {
+        let attr_val = match &attr.meta {
+            syn::Meta::List(meta) => meta.tokens.clone(),
+            _ => return Err(syn::Error::new(attr.meta.span(), "This attribute takes properties as input, so it must have content in parenthesis"))
+        };
+    
+        syn::parse2(attr_val)
+    }
+
+    /// Get and *parse* the **value** of a property, marking it as *taken*.
+    /// 
+    /// `panic!s` if [`take()`][Self::take] was already called with the same **name**.
+    /// Return `Ok(None)` if there is no property with this **name**.
+    /// Returns [`syn::Error`] if the value could not be parsed with `T`.
+    pub fn take<T: Parse>(&self, name: &str) -> syn::Result<Option<T>> {
+        if !self.probed.borrow_mut().insert(name.to_string()) {
+            panic!("The property with name \"{name}\" was already taken")
+        }
+
+        match self.properties.borrow_mut().remove(name) {
+            Some(val) => Ok(Some(syn::parse2(val)?)),
+            None => Ok(None)
+        }
+    }
+
+    #[allow(unstable_name_collisions)]
+    pub fn finish(self) -> syn::Result<()> {
+        let probed = self.probed.borrow();
+        let properties = self.properties.borrow();
+
+        if !properties.is_empty() {
+            // Collect all the *names* used with [`Self::take()`] to print as the expected keys 
+            let expected_props = probed.iter()
+                .map(|key| format!("\"{key}\""))
+                .intersperse(", ".to_string())
+                .collect::<String>();
+            // Create errors for the leftover properties
+            Err(merge_errors(
+                properties.iter()
+                    .map(|(key, _)| syn::Error::new(key.span(), format!("Unknown key \"{key}\"; Expected one of the following keys: {expected_props}")))
+            ).unwrap_err())
+        } else {
+            Ok(())
+        }
+    }
+}
+impl Parse for AttributeProps {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut unparsed_kvs = Vec::<TokenStream>::new();
+        
+        // Separate the tokens between commas (,)
+        let mut current = TokenStream::new();
+        while let Ok(token) = input.parse::<TokenTree>() {
+            match token {
+                // At every comma (,) push the current tokenstream, and start with a new tokenstream
+                TokenTree::Punct(p) if p.as_char() == ',' => {
+                    unparsed_kvs.push(current);
+                    current = TokenStream::new();
+                },
+                _ => current.append(token),
+            }
+        }
+        // Push whatever is left
+        if !current.is_empty() {
+            unparsed_kvs.push(current);
+        }
+
+        let mut errors = Vec::new();
+        // Make the key Ident so that the span can be used for errors
+        let mut properties = HashMap::new();
+
+        // Then parse the key-value pairs
+        for tt in unparsed_kvs {
+            match Parser::parse2(|input: ParseStream|
+                // Syntax: key = value
+                Ok((input.parse::<Ident>()?, {
+                    input.parse::<Token![=]>()?;
+                    input.parse()?
+                })), tt
+            ) {
+                Ok((key, value)) =>
+                    // Error when a property is assigned more than once
+                    if properties.contains_key(&key) {
+                        errors.push(syn::Error::new(key.span(), "Already used property \"{key}\""))
+                    } else {
+                        properties.insert(key, value);
+                    },
+                Err(error) => errors.push(error)
+            }
+        }
+
+        merge_errors(errors)?;
+
+        Ok(Self {
+            probed: RefCell::new(HashSet::new()),
+            properties: RefCell::new(properties.into_iter()
+                .map(|(key, val)| (key.to_string(), val))
+                .collect()
+            ),
+        })
+    }
+}
 
 /// Find the JObject field with a lifetime, and use that lifetime's name for the JNIEnv lifetime,
 /// Defaults to `'local` if such object could not be found, and **appends** the lifetime to the *generics*.
@@ -21,16 +160,18 @@ use crate::{
 /// `P` is just the punctuation type; don't worry about it.
 fn get_local_lifetime<P: Default>(item: Either<&ItemStruct, &ItemEnum>, generics: &mut Punctuated<GenericParam, P>) -> Lifetime {
     static DEFAULT: &str = "local";
+    /// Find the lifetiem in the struct/enum's generics
     fn find_local(generics: &Generics) -> Option<Lifetime> {
         generics.lifetimes()
             .map(|lt| &lt.lifetime)
             .find(|lt| lt.ident.to_string() == DEFAULT)
             .map(Clone::clone)
     }
+    /// Find a field that has a lifetime in its generics
     fn find_in_fields(fields: &Fields) -> Option<Lifetime> {
         fields.iter()
             .find_map(|field| match &field.ty {
-                Type::Path(TypePath { path, .. } ) if path.segments.last()
+                syn::Type::Path(TypePath { path, .. } ) if path.segments.last()
                     .is_some_and(|seg| seg.ident.to_string() == "JObject")
                 => match path.segments.last().map(|seg| &seg.arguments) {
                     Some(syn::PathArguments::AngleBracketed(AngleBracketedGenericArguments { args, .. }))
@@ -87,6 +228,8 @@ struct FieldAttr {
 }
 impl FieldAttr {
     /// Find the `field` attribute in a struct's field and parse its content.
+    /// 
+    /// If there is no `field` attribute, then returns with everything set to [`None`].
     pub fn get_from_attrs(field: &Field) -> syn::Result<Self> {
         field.attrs
             .iter()
@@ -97,153 +240,23 @@ impl FieldAttr {
             )
             .map_or_else(
                 || Ok(Self { name: None, call: None, class: None }),
-                |attr| Self::parse_attr_meta(&attr.meta)
+                |attr| AttributeProps::parse_attr_with(attr, |props| {
+                    Ok(Self {
+                        name: props.take("name")?,
+                        call: props.take("call")?,
+                        class: props.take("class")?,
+                    })
+                })
             )
     }
-    
-    /// Parses the tokens in the attribute as `comma-separated` `key-value pairs`.
-    fn parse_attr_meta(meta: &syn::Meta) -> syn::Result<Self> {
-        let input = match meta {
-            syn::Meta::List(meta) => meta.tokens.clone(),
-            _ => return Err(syn::Error::new(meta.span(), "Attribute \"field\" must have content in parenthesis"))
-        };
-        let mut unparsed_kvs = Vec::<TokenStream>::new();
-        
-        // Separate the tokens between commas (,)
-        let mut current = TokenStream::new();
-        for token in input {
-            match token {
-                // At every comma (,) push the current tokenstream, and start with a new tokenstream
-                proc_macro2::TokenTree::Punct(p) if p.as_char() == ',' => {
-                    unparsed_kvs.push(current);
-                    current = TokenStream::new();
-                },
-                _ => current.append(token),
-            }
-        }
-        // Push whatever is left
-        if !current.is_empty() {
-            unparsed_kvs.push(current);
-        }
-        
-        // Then parse the key-value pairs
-        struct KVPair { key: Ident, val: TokenStream }
-        impl Parse for KVPair {
-            fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-                Ok(Self {
-                    key: input.parse::<Ident>()?,
-                    val: {
-                        input.parse::<Token![=]>()?;
-                        input.parse()?
-                    }
-                })
-            }
-        }
-        fn parse_val<T: Parse>(key: Ident, val: TokenStream, store: &mut Option<T>, ) -> syn::Result<()> {
-            if store.is_none() {
-                *store = Some(syn::parse2(val)?)
-            } else {
-                return Err(syn::Error::new(key.span(), "Already used \"{key}\""))
-            }
-            
-            Ok(())
-        }
-        let mut name = None;
-        let mut call = None;
-        let mut class = None;
-        
-        for tokens in unparsed_kvs {
-            let KVPair { key, val } = syn::parse2::<KVPair>(tokens)?;
-            
-            match key.to_string().as_str() {
-                "name" => parse_val(key, val, &mut name)?,
-                "call" => parse_val(key, val, &mut call)?,
-                "class" => parse_val(key, val, &mut class)?,
-                _ => return Err(syn::Error::new(key.span(), "Unknown key; Expected one of the following keys: \"name\", \"call\", \"class\""))
-            }
-        }
-        
-        Ok(Self { name, call, class })
-    }
 }
 
-/// The type that will be used in the JNI call to *get field* or *call gettter method*.
-enum FieldType {
-    Prim(Ident, RustPrimitive),
-    Object(ClassPath),
-    // The Java Class is obtained from the struct/enum's `Class` implementation.
-    Implicit(syn::Type)
-}
-impl FieldType {
-    pub fn from_field(field_ty: &Type, class_attr: Option<ClassPath>) -> syn::Result<Self> {
-        let ty_str = field_ty.to_token_stream().to_string();
-        // Check if the Field's type is a primitive
-        match RustPrimitive::from_str(&ty_str) {
-            Ok(prim) => match class_attr {
-                Some(class) => Err(syn::Error::new(class.span(), "Can't use \"class\" when the field is prmitive")),
-                None => Ok(Self::Prim(Ident::new(&ty_str, field_ty.span()), prim))
-            },
-            Err(_) => match class_attr {
-                // If not a primitive, then use the provided Class
-                Some(class) => match &field_ty {
-                    // There is no way to know if the Object is the same `::jni::objects::JObject`,
-                    // just that it could be if the type is a Type Path.
-                    Type::Path(_) => Ok(Self::Object(class)),
-                    _ => Err(syn::Error::new(class.span(), "\"class\" is only allowed for JObject"))
-                },
-                // If none of the previous, then the class will be obtained from the `Class` impl
-                None => Ok(Self::Implicit(field_ty.clone()))
-            }
-        }
-    }
-
-    /// See [`crate::utils::SigType::sig_char()`].
-    pub fn sig_char(&self) -> Ident {
-        match self {
-            Self::Prim(ident, prim) => {
-                let mut i = JavaPrimitive::from(*prim).sig_char();
-                i.set_span(ident.span());
-                i
-            },
-            Self::Object(class) => class.sig_char(),
-            Self::Implicit(ty) => Ident::new("l", ty.span()),
-        }
-    }
-    /// The signature of a Java field using this type.
-    /// Is an expression of a *format string* if is [`FieldType::Implicit`].
-    pub fn field_sig_type(&self) -> TokenStream {
-        match self {
-            Self::Prim(ident, prim) => {
-                let mut sig_ty: LitStr = JavaPrimitive::from(*prim).sig_type();
-                sig_ty.set_span(ident.span());
-                sig_ty.to_token_stream()
-            },
-            Self::Object(class) => class.sig_type().to_token_stream(),
-            Self::Implicit(ty) => quote_spanned! {ty.span()=> &format!("L{};", <#ty as ::ez_jni::FromObject>::PATH) }
-        }
-    }
-    /// The same [`Self::field_sig_type()`], but for use in the getter method signature.
-    pub fn method_sig_type(&self) -> TokenStream {
-        match self {
-            Self::Prim(ident, prim) => {
-                let sig_ty = JavaPrimitive::from(*prim).sig_type().value();
-                LitStr::new(&format!("(){sig_ty}"), ident.span()).to_token_stream()
-            },
-            Self::Object(class) => {
-                let sig_ty = class.sig_type().value();
-                LitStr::new(&format!("(){sig_ty}"), class.span()).to_token_stream()
-            },
-            Self::Implicit(ty) => quote_spanned! {ty.span()=> format!("()L{};", <#ty as ::ez_jni::FromObject>::PATH) },
-        }
-    }
-
-    pub fn converted(&self, value: TokenStream) -> TokenStream {
-        match self {
-            FieldType::Prim(_, prim) => prim.convert_rust_to_java(&value)
-                .unwrap_or(value),
-            FieldType::Implicit(ty) => quote_spanned! {ty.span()=> <#ty as ::ez_jni::FromObject>::from_object(&#value, env)? },
-            FieldType::Object(_) => quote_spanned! {value.span()=> #value.into() }
-        }
+fn get_type_from_field(field: &Field, class: Option<ClassPath>) -> syn::Result<InnerType> {
+    match class {
+        // Use the FromObject impl even if it is primitive when a class is provided
+        Some(class) => Ok(InnerType::Object(class)),
+        None => syn::parse2::<InnerType>(field.ty.to_token_stream())
+            .map_err(|_| syn::Error::new(field.span(), "Field must have \"class\" property if it is not a primitive or String."))
     }
 }
 
@@ -258,23 +271,42 @@ impl FieldType {
 /// **class** is the Java Class (in *slash-separated* form) of the struct/enum.
 /// 
 /// See [`FieldAttr`] for syntax.
-fn struct_constructor(fields: &Fields, class: &str) -> syn::Result<TokenStream> {    
+fn struct_constructor(fields: &Fields) -> syn::Result<TokenStream> {    
     let mut errors = Vec::new();
     
     // Produce the value that will be assigned for each field
     let values = fields.iter()
         .map(|field| {
             let attr = FieldAttr::get_from_attrs(field)?;
-            // Determine the type of the Java member
-            let ty = FieldType::from_field(&field.ty, attr.class)?;
+            let ty = get_type_from_field(field, attr.class)?;
 
-            let get_field = |name: String, getter_fallback: bool| {
+            // Use FromObject to convert the returned value to the specified Rust Type.
+            let convert = |call: TokenStream| -> TokenStream {
                 let sig_char = ty.sig_char();
-                let sig_ty = ty.field_sig_type();
-                
-                ty.converted(quote_spanned! {field.span()=>
+
+                let value = quote_spanned! {field.span()=>
+                    #call.#sig_char()
+                        .unwrap_or_else(|err| panic!("The method call did not return the expected type: {err}"))
+                };
+                let value = match &ty {
+                    InnerType::RustPrimitive { .. } | InnerType::JavaPrimitive { .. } => value,
+                    InnerType::Object(class) if class.to_jni_class_path() == "java/lang/String" => value,
+                    _ => {
+                        let field_ty = &field.ty;
+                        quote_spanned! {field_ty.span()=> {
+                            use ::std::borrow::BorrowMut as _;
+                            <#field_ty as ::ez_jni::FromObject>::from_object(&(#value), env.borrow_mut())?
+                        } }
+                    }
+                };
+                ty.convert_java_to_rust(&value)
+                    .unwrap_or(value)
+            };
+            let get_field = |name: String, getter_fallback: bool| {
+                let sig_ty = ty.sig_type();
+
+                convert(quote_spanned! {field.span()=>
                     ::ez_jni::utils::get_field(&object, #name, #sig_ty, #getter_fallback, env)?
-                        .#sig_char().unwrap_or_else(|err| panic!("The method call did not return the expected type: {err}"))
                 })
             };
             
@@ -283,25 +315,17 @@ fn struct_constructor(fields: &Fields, class: &str) -> syn::Result<TokenStream> 
                 get_field(name.to_string(), false)
             } else if let Some(call) = attr.call {
                 // Call the Java method
-                let call = LitStr::new(&call.to_string(), call.span());
-                let sig_char = ty.sig_char();
-                let sig_ty = ty.method_sig_type();
+                let method = LitStr::new(&call.to_string(), call.span());
+                let sig_ty = ty.sig_type();
                 
-                ty.converted(quote_spanned! {call.span()=>
-                    env.call_method(&object, #call, #sig_ty, &[])
-                        .map_err(|err| if let ::jni::errors::Error::MethodNotFound { name, sig } = err {
-                            ::ez_jni::FromObjectError::FieldNotFound { name, ty: sig, target_class: #class.to_string() }
-                        } else {
-                            panic!("Error occurred while calling getter method: {err}")
-                        })?
-                        .#sig_char()
-                        .unwrap_or_else(|err| panic!("The method call did not return the expected type: {err}"))
+                convert(quote_spanned! {method.span()=>
+                    ::ez_jni::utils::call_getter(&object, #method, #sig_ty, env)?
                 })
             } else if let Some(name) = &field.ident {
                 // Use the name of the field, and also call "get{Name}" if field not found
                 get_field(name.to_string().to_case(Case::Camel), true)
             } else {
-                return Err(syn::Error::new(field.span(), "Field must have \"name\" or \"call\" if it is unnamed. See the 'field' attribute."))
+                return Err(syn::Error::new(field.span(), "Field must have \"name\" or \"call\" properties if it is unnamed. See the 'field' attribute."))
             })
         })
         .filter_map(|res| res.map_err(|err| errors.push(err)).ok())
@@ -337,12 +361,12 @@ fn construct_variants<'a>(variants: impl Iterator<Item = &'a mut Variant> + 'a) 
     variants.enumerate()
         .map(|(i, variant)| {
             // Get class name for this variant
-            let class = get_class_attribute_required(&mut variant.attrs, variant.ident.span())?
+            let class = take_class_attribute_required(&mut variant.attrs, variant.ident.span())?
                 .to_jni_class_path();
 
             let ident = &variant.ident;
             // Get a constructor for this variant
-            let ctor = struct_constructor(&variant.fields, &class)?;
+            let ctor = struct_constructor(&variant.fields)?;
             let _if = if i == 0 { quote!(if) } else { quote!(else if) };
             // Check if Exception is the class that this Variant uses, and construct the variant
             Ok(quote_spanned! {variant.span()=>

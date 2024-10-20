@@ -3,6 +3,7 @@ use crate::utils::java_path_to_dot_notation;
 
 use super::*;
 
+/// The same as [`get_object_array`], but also converts the [`JObject`]s in the array to the desired type `T`.
 fn get_t_array_from_object<'local, T>(obj: &JObject, array_class: &'static str, env: &mut JNIEnv<'local>) -> Result<Vec<T>, FromObjectError>
 where T: FromObject<'local> {
     get_object_array(obj, Some(array_class), env).and_then(|array|
@@ -13,6 +14,9 @@ where T: FromObject<'local> {
         )
     )
 }
+/// Creates a Rust [`Vec`] of [`JObject`]s by reading elements from a **Java Array** (**obj**).
+/// 
+/// Also checks that the Array Object's class matches the **array_class** (if it is [`Some`]).
 fn get_object_array<'local>(obj: &JObject, array_class: Option<&'static str>, env: &mut JNIEnv<'local>) -> Result<Vec<JObject<'local>>, FromObjectError> {
     let array = <&JObjectArray>::from(obj);
     // Check object's type
@@ -22,7 +26,7 @@ fn get_object_array<'local>(obj: &JObject, array_class: Option<&'static str>, en
             .unwrap_or_else(|err| panic!("Failed to get Object's class: {err}"));
         let obj_class = call!(obj_class.getName() -> String);
         if obj_class != class {
-            return Err(FromObjectError::ClassMismatch { obj_class, target_class: class });
+            return Err(FromObjectError::ClassMismatch { obj_class, target_class: Some(class) });
         }
     }
 
@@ -44,14 +48,17 @@ fn get_object_array<'local>(obj: &JObject, array_class: Option<&'static str>, en
 
 fn create_object_array_from_t<'local, T>(slice: &[T], elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local>
 where T: ToObject<'local> {
+    let obj_slice = slice.iter()
+        .map(|t| t.to_object(env))
+        .collect::<Box<_>>();
+
     create_object_array(
-        &slice.iter()
-            .map(|t| t.to_object(env))
+        &obj_slice.iter()
             .collect::<Box<_>>(),
         elem_class,
     env)
 }
-fn create_object_array<'local>(slice: &[JObject], elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
+fn create_object_array<'local>(slice: &[&JObject], elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
     // Allocate the array
     let array = env.new_object_array(
         slice.len() as jsize,
@@ -73,60 +80,38 @@ fn create_object_array<'local>(slice: &[JObject], elem_class: &str, env: &mut JN
 
 impl<'local, T> FromObject<'local> for Box<[T]>
 where Vec<T>: FromObject<'local> {
-    const PATH: &'static str = Vec::<T>::PATH;
-
     fn from_object(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
         Ok(Vec::<T>::from_object(object, env)?.into_boxed_slice())
     }
 }
 
-// impl<'local, T> FromObject<'local> for Vec<T>
-// where T: FromObject<'local> {
-//     const PATH: &'static str = todo!();
 
-//     fn from_object(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
-//         get_t_array_from_object(object, Self::PATH, env)
-//     }
-// }
-// impl<'local, T> ToObject<'local> for [T]
-// where T: ToObject<'local> {
-//     fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-//         create_object_array_from_t(self, todo!(), env)
-//     }
-// }
-// impl<'local, T> ToObject<'local> for [&T]
-// where T: ToObject<'local> {
-//     fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-//         create_object_array(self, todo!(), env)
-//     }
-// }
-
-// impl<'local> FromObject<'local> for Vec<JObject<'local>> {
-//     const PATH: &'static str = todo!();
-
-//     fn from_object(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
-//         get_object_array(object, None, env)
-//     }
-// }
-// /// Implementation for an Object slice paired with the element Class
-// impl<'local> ToObject<'local> for (&str, [JObject<'_>]) {
-//     fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-//         create_object_array(&self.1, self.0, env)
-//     }
-// }
-// impl<'local> ToObject<'local> for (&str, [&JObject<'_>]) {
-//     fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-//         create_object_array(&self.1, self.0, env)
-//     }
-// }
+impl<'local> FromObject<'local> for Vec<JObject<'local>> {
+    fn from_object(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+        get_object_array(object, None, env)
+    }
+}
+/// Implementation for an Object slice paired with the element Class
+impl<'local> ToObject<'local> for (&str, [JObject<'_>]) {
+    fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        create_object_array(
+            &self.1.iter()
+                .collect::<Box<_>>(),
+            self.0,
+        env)
+    }
+}
+impl<'local> ToObject<'local> for (&str, [&JObject<'_>]) {
+    fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        create_object_array(&self.1, self.0, env)
+    }
+}
 
 // Implementations for String Array
 
 impl FromObject<'_> for Vec<String> {
-    const PATH: &'static str = "[Ljava/lang/String;";
-
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        get_t_array_from_object(object, Self::PATH, env)
+        get_t_array_from_object(object, "[Ljava/lang/String;", env)
     }
 }
 impl<'local> ToObject<'local> for [String] {
@@ -143,8 +128,6 @@ impl<'local> ToObject<'local> for [&str] {
 // Implementation for [Option<T>]
 
 // impl FromObject<'_> for Vec<Option<JObject<'_>>> {
-//     const PATH: &'static str = todo!();
-
 //     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
 //         get_object_array(object, todo!(), env)
 //             .map(|array|
@@ -178,10 +161,8 @@ impl<'local> ToObject<'local> for [&str] {
 // }
 
 impl FromObject<'_> for Vec<Option<String>> {
-    const PATH: &'static str = "[Ljava/lang/String;";
-
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        get_t_array_from_object(object, Self::PATH, env)
+        get_t_array_from_object(object, "[Ljava/lang/String;", env)
     }
 }
 impl<'local> ToObject<'local> for [Option<String>] {
@@ -198,8 +179,6 @@ impl<'local> ToObject<'local> for [Option<&str>] {
 // Implementations for Number Arrays
 
 impl FromObject<'_> for Vec<i8> {
-    const PATH: &'static str = "[B";
-
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         Ok(crate::utils::get_java_prim_array(object, JNIEnv::get_byte_array_region, env))
     }
@@ -214,8 +193,6 @@ impl<'local> ToObject<'local> for [i8] {
 }
 
 impl FromObject<'_> for Vec<i16> {
-    const PATH: &'static str = "[S";
-
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         Ok(crate::utils::get_java_prim_array(object, JNIEnv::get_short_array_region, env))
     }
@@ -230,8 +207,6 @@ impl<'local> ToObject<'local> for [i16] {
 }
 
 impl FromObject<'_> for Vec<i32> {
-    const PATH: &'static str = "[I";
-
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         Ok(crate::utils::get_java_prim_array(object, JNIEnv::get_int_array_region, env))
     }
@@ -246,8 +221,6 @@ impl<'local> ToObject<'local> for [i32] {
 }
 
 impl FromObject<'_> for Vec<i64> {
-    const PATH: &'static str = "[J";
-
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         Ok(crate::utils::get_java_prim_array(object, JNIEnv::get_long_array_region, env))
     }
@@ -262,8 +235,6 @@ impl<'local> ToObject<'local> for [i64] {
 }
 
 impl FromObject<'_> for Vec<f32> {
-    const PATH: &'static str = "[F";
-
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         Ok(crate::utils::get_java_prim_array(object, JNIEnv::get_float_array_region, env))
     }
@@ -278,8 +249,6 @@ impl<'local> ToObject<'local> for [f32] {
 }
 
 impl FromObject<'_> for Vec<f64> {
-    const PATH: &'static str = "[D";
-
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         Ok(crate::utils::get_java_prim_array(object, JNIEnv::get_double_array_region, env))
     }
@@ -296,8 +265,6 @@ impl<'local> ToObject<'local> for [f64] {
 // Implementation for Unsigned Number types
 
 impl FromObject<'_> for Vec<u8> {
-    const PATH: &'static str = "[B";
-
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         Ok(crate::utils::get_java_prim_array(object, JNIEnv::get_byte_array_region, env)
             .into_iter()
@@ -320,8 +287,6 @@ impl<'local> ToObject<'local> for [u8] {
 }
 
 impl FromObject<'_> for Vec<u16> {
-    const PATH: &'static str = "[S";
-
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         Ok(crate::utils::get_java_prim_array(object, JNIEnv::get_short_array_region, env)
             .into_iter()
@@ -344,8 +309,6 @@ impl<'local> ToObject<'local> for [u16] {
 }
 
 impl FromObject<'_> for Vec<u32> {
-    const PATH: &'static str = "[I";
-
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         Ok(crate::utils::get_java_prim_array(object, JNIEnv::get_int_array_region, env)
             .into_iter()
@@ -368,8 +331,6 @@ impl<'local> ToObject<'local> for [u32] {
 }
 
 impl FromObject<'_> for Vec<u64> {
-    const PATH: &'static str = "[J";
-
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         Ok(crate::utils::get_java_prim_array(object, JNIEnv::get_long_array_region, env)
             .into_iter()
@@ -394,8 +355,6 @@ impl<'local> ToObject<'local> for [u64] {
 // Implementations for other primitive Arrays
 
 impl FromObject<'_> for Vec<bool> {
-    const PATH: &'static str = "[Z";
-
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         Ok(crate::utils::get_java_prim_array(object, JNIEnv::get_boolean_array_region, env)
             .into_iter()
@@ -418,8 +377,6 @@ impl<'local> ToObject<'local> for [bool] {
 }
 
 impl FromObject<'_> for Vec<char> {
-    const PATH: &'static str = "[C";
-
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         Ok(crate::utils::get_java_prim_array(object, JNIEnv::get_char_array_region, env)
             .into_iter()

@@ -12,8 +12,11 @@ use crate::__throw::panic_uncaught_exception;
 pub enum FromObjectError {
     #[error("Object can't be NULL")]
     Null,
-    #[error("The Class of the Object is not the target Class, or a descendant of the target Class {target_class}")]
-    ClassMismatch { obj_class: String, target_class: String },
+    #[error("{}", match target_class {
+        Some(target_class) => format!("The Class of the Object ({obj_class}) is not the target Class, or a descendant of the target Class {target_class}"),
+        None => format!("The Class of the Object ({obj_class}) did not match any of the classes of the variants")
+    })]
+    ClassMismatch { obj_class: String, target_class: Option<String> },
     #[error("Could not find field {name:?} of type {ty} in class {target_class}; maybe its private?")]
     FieldNotFound { name: String, ty: String, target_class: String },
     // #[error("{0}")]
@@ -28,14 +31,15 @@ pub enum FromObjectError {
 /// Use it on *enums* to expect different Classes (one for each variant).
 /// 
 /// **Attributes**:
-/// - **`class`**: Specifies the *Class Path* that the *struct or enum variant* expects.
-/// - **`field`**: Use it on the struct's fields to assign their values by accessing an *Object's members*.
+/// - **`class`**: Specifies the **Class Path** that the *struct or enum variant* expects (*optional* for the enum item).
+/// - **`field`**: Specify certain properties to constrol how a *struct's field* is assigned by accessing a *Object's member* (field or getter).
 ///   By default, the struct's field name and type is used to produce the JNI call, but this can be changed.
-///   Note: **name** and **call** mutually exclusive, and either one MUST be used if the field belongs to a *Tuple struct*.
+///   Note: **name** and **call** are mutually exclusive, and either one MUST be used if the field belongs to a *Tuple struct*.
 ///   - **`name`**: Use a different name for the Object's field lookup instead of the field's name.
 ///     Mutually exclusive with `call`.
 ///   - **`call`**: Instead of accessing a field, Call a *getter method* with this name.
 ///   - **`class`**: If the struct field's type is [`JObject`][jni::objects::JObject] require that it be of this class.
+///     This property is required for *non-primitives*.
 /// 
 /// ```
 /// # use ez_jni::FromObject;
@@ -48,7 +52,7 @@ pub enum FromObjectError {
 /// }
 /// 
 /// #[derive(FromObject)]
-/// #[class(me.author.MyClass)]
+/// #[class(me.author.MyClass)] // Optional
 /// enum MyClasses {
 ///     #[class(me.author.MyClassDescendant)]
 ///     Descendant { message: String },
@@ -60,7 +64,6 @@ pub enum FromObjectError {
 /// ```
 pub trait FromObject<'local>
 where Self: Sized {
-    const PATH: &'static str;
     /// Construct a [`Self`] by reading data from a *Java Object*.
     /// Will [`panic!`] if any of the underlying JNI calls fail.
     fn from_object(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError>;
@@ -117,7 +120,7 @@ fn object_check_boilerplate(object: &JObject, path: &'static str, env: &mut JNIE
     if !env.is_instance_of(object, path).unwrap() {
         return Err(FromObjectError::ClassMismatch {
             obj_class: call!(obj_class.getName() -> String),
-            target_class: path.to_string()
+            target_class: Some(path.to_string())
         })
     }
 
@@ -136,9 +139,10 @@ impl FromException<'_> for String {
     }
 }
 
-impl FromObject<'_> for std::io::Error {
-    const PATH: &'static str = "java/io/IOException";
+/// Class that all Objects that can be converted to [`std::io::Error`] must be a descendant of.
+static IO_ERROR_BASE_PATH: &str = "java/io/IOException";
 
+impl FromObject<'_> for std::io::Error {
     fn from_object(object: &JObject, env: &mut JNIEnv) -> Result<Self, FromObjectError> {
         static MAP: &[(&str, io::ErrorKind)] = &[
             ("java/io/FileNotFoundException", io::ErrorKind::NotFound),
@@ -181,8 +185,8 @@ impl FromObject<'_> for std::io::Error {
 
         // All classes in map extend java.io.IOException.
         // Check this before the classes in map to avoid a bunch of pointless JNI calls
-        if !env.is_instance_of(object, Self::PATH).unwrap() {
-            return Err(FromObjectError::ClassMismatch { obj_class: class_str, target_class: Self::PATH.to_string() });
+        if !env.is_instance_of(object, IO_ERROR_BASE_PATH).unwrap() {
+            return Err(FromObjectError::ClassMismatch { obj_class: class_str, target_class: Some(IO_ERROR_BASE_PATH.to_string()) });
         }
         
         for &(class, error_kind) in MAP {
@@ -224,7 +228,7 @@ impl<'local> ToObject<'local> for std::io::Error {
         let class = MAP.iter()
             .find(|(err, _)| self.kind() == *err)
             .map(|(_, class)| *class)
-            .unwrap_or(Self::PATH);
+            .unwrap_or(IO_ERROR_BASE_PATH);
 
         let msg = self.to_string().to_object(env);
 
@@ -233,7 +237,7 @@ impl<'local> ToObject<'local> for std::io::Error {
         ])
             .unwrap_or_else(|err| {
                 panic_uncaught_exception(env, Either::Left(class), "ctor"); // Does nothing if there is no exception
-                panic!("Error constructing {} object: {err}", Self::PATH)
+                panic!("Error constructing {} object: {err}", IO_ERROR_BASE_PATH)
             })
     }
 }

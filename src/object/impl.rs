@@ -1,11 +1,19 @@
 use ez_jni_macros::new;
 use super::*;
 
+impl<'local> FromObject<'local> for JObject<'local> {
+    fn from_object(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+        Ok(env.new_local_ref(object).unwrap())
+    }
+}
+impl<'local, 'other> ToObject<'local> for JObject<'other> {
+    fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        env.new_local_ref(self).unwrap()
+    }
+}
 
 impl<'local, T> FromObject<'local> for Option<T>
 where T: FromObject<'local> {
-    const PATH: &'static str = T::PATH;
-
     fn from_object(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
         if object.is_null() {
             Ok(None)
@@ -28,14 +36,12 @@ where T: ToObject<'local> {
 // Implementation for String types
 
 impl FromObject<'_> for String {
-    const PATH: &'static str = "java/lang/String";
-
     /// Get a [`String`] from some random Object.
     /// 
     /// Don't use this function, it only exist for compatibility.
     /// Use [`get_string()`][crate::utils::get_string] instead because you will mostly be using it with [`JString`][jni::objects::JString].
     fn from_object(object: &JObject, env: &mut JNIEnv) -> Result<Self, FromObjectError> {
-        object_check_boilerplate(object, Self::PATH, env)?;
+        object_check_boilerplate(object, "java/lang/String", env)?;
         // Already checked that it is java.lang.String and is not NULL
         Ok(unsafe {
             env.get_string_unchecked(object.into())
@@ -65,10 +71,8 @@ impl<'local> ToObject<'local> for &str {
 // Implementation for number types
 
 impl FromObject<'_> for i8 {
-    const PATH: &'static str = "java/lang/Byte";
-
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        object_check_boilerplate(object, Self::PATH, env)?;
+        object_check_boilerplate(object, "java/lang/Byte", env)?;
         Ok(call!(object.byteValue() -> byte))
     }
 }
@@ -78,10 +82,8 @@ impl<'local> ToObject<'local> for i8 {
     }
 }
 impl FromObject<'_> for i16 {
-    const PATH: &'static str = "java/lang/Short";
-
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        object_check_boilerplate(object, Self::PATH, env)?;
+        object_check_boilerplate(object, "java/lang/Short", env)?;
         Ok(call!(object.shortValue() -> short))
     }
 }
@@ -91,10 +93,8 @@ impl<'local> ToObject<'local> for i16 {
     }
 }
 impl FromObject<'_> for i32 {
-    const PATH: &'static str = "java/lang/Integer";
-
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        object_check_boilerplate(object, Self::PATH, env)?;
+        object_check_boilerplate(object, "java/lang/Integer", env)?;
         Ok(call!(object.intValue() -> int))
     }
 }
@@ -104,10 +104,8 @@ impl<'local> ToObject<'local> for i32 {
     }
 }
 impl FromObject<'_> for i64 {
-    const PATH: &'static str = "java/lang/Long";
-
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        object_check_boilerplate(object, Self::PATH, env)?;
+        object_check_boilerplate(object, "java/lang/Long", env)?;
         Ok(call!(object.longValue() -> long))
     }
 }
@@ -117,10 +115,8 @@ impl<'local> ToObject<'local> for i64 {
     }
 }
 impl FromObject<'_> for f32 {
-    const PATH: &'static str = "java/lang/Float";
-
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        object_check_boilerplate(object, Self::PATH, env)?;
+        object_check_boilerplate(object, "java/lang/Float", env)?;
         Ok(call!(object.floatValue() -> float))
     }
 }
@@ -130,10 +126,8 @@ impl<'local> ToObject<'local> for f32 {
     }
 }
 impl FromObject<'_> for f64 {
-    const PATH: &'static str = "java/lang/Double";
-
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        object_check_boilerplate(object, Self::PATH, env)?;
+        object_check_boilerplate(object, "java/lang/Double", env)?;
         Ok(call!(object.doubleValue() -> double))
     }
 }
@@ -145,10 +139,8 @@ impl<'local> ToObject<'local> for f64 {
 
 // Implementation for unsigned number types
 impl FromObject<'_> for u8 {
-    const PATH: &'static str = "java/lang/Byte";
-
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        object_check_boilerplate(object, Self::PATH, env)?;
+        object_check_boilerplate(object, "java/lang/Byte", env)?;
         Ok(call!(object.byteValue() -> u8))
     }
 }
@@ -158,10 +150,8 @@ impl<'local> ToObject<'local> for u8 {
     }
 }
 impl FromObject<'_> for u16 {
-    const PATH: &'static str = "java/lang/Short";
-
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        object_check_boilerplate(object, Self::PATH, env)?;
+        object_check_boilerplate(object, "java/lang/Short", env)?;
         Ok(call!(object.shortValue() -> u16))
     }
 }
@@ -171,10 +161,8 @@ impl<'local> ToObject<'local> for u16 {
     }
 }
 impl FromObject<'_> for u32 {
-    const PATH: &'static str = "java/lang/Integer";
-
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        object_check_boilerplate(object, Self::PATH, env)?;
+        object_check_boilerplate(object, "java/lang/Integer", env)?;
         Ok(call!(object.intValue() -> u32))
     }
 }
@@ -184,10 +172,8 @@ impl<'local> ToObject<'local> for u32 {
     }
 }
 impl FromObject<'_> for u64 {
-    const PATH: &'static str = "java/lang/Long";
-
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        object_check_boilerplate(object, Self::PATH, env)?;
+        object_check_boilerplate(object, "java/lang/Long", env)?;
         Ok(call!(object.longValue() -> u64))
     }
 }
@@ -200,10 +186,8 @@ impl<'local> ToObject<'local> for u64 {
 // Implementations for other primitives
 
 impl FromObject<'_> for bool {
-    const PATH: &'static str = "java/lang/Boolean";
-
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        object_check_boilerplate(object, Self::PATH, env)?;
+        object_check_boilerplate(object, "java/lang/Boolean", env)?;
         Ok(call!(object.booleanValue() -> boolean))
     }
 }
@@ -214,10 +198,8 @@ impl<'local> ToObject<'local> for bool {
 }
 
 impl FromObject<'_> for char {
-    const PATH: &'static str = "java/lang/Character";
-
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        object_check_boilerplate(object, Self::PATH, env)?;
+        object_check_boilerplate(object, "java/lang/Character", env)?;
         Ok(call!(object.charValue() -> char))
     }
 }
