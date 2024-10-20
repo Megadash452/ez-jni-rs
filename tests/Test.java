@@ -81,7 +81,8 @@ public final class Test {
             SumClass2(String str) {
                 this.str = str;
             }
-            public String str;
+            private String str;
+            public String getStr() { return this.str; }
         }
     }
 

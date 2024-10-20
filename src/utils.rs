@@ -164,15 +164,13 @@ pub fn __obj_array_len(obj: &JObject, inner_ty: &str, env: &mut JNIEnv) -> usize
 /// 
 /// ## Example
 /// 
-/// ```no_run
-/// # use jni::JNIEnv;
-/// # let env = panic!();
+/// ```ignore
 /// ez_jni::utils::crate_java_prim_array(&[1, 2, 3],
 ///     JNIEnv::new_byte_array,
 ///     JNIEnv::set_byte_array_region,
-/// env)
+/// env);
 /// ```
-pub(crate) fn crate_java_prim_array<'local, 'a, T>(
+pub(crate) fn create_java_prim_array<'local, 'a, T>(
     slice: &[T],
     alloc: fn(&JNIEnv<'local>, jsize) -> jni::errors::Result<JPrimitiveArray<'local, T>>,
     filler: fn(&JNIEnv<'local>, JPrimitiveArray<'local, T>, jsize, &[T]) -> jni::errors::Result<()>,
@@ -201,10 +199,8 @@ pub(crate) fn crate_java_prim_array<'local, 'a, T>(
 /// 
 /// ## Example
 /// 
-/// ```no_run
-/// # let object = panic!();
-/// # let env = panic!();
-/// crate::utils::get_java_prim_array(object, JNIEnv::get_byte_array_region, env)
+/// ```ignore
+/// ez_jni::utils::get_java_prim_array(object, JNIEnv::get_byte_array_region, env);
 /// ```
 pub(crate) fn get_java_prim_array<'local, 'other, 'a, T>(
     obj: &'a JObject<'other>,

@@ -185,7 +185,7 @@ impl FromObject<'_> for Vec<i8> {
 }
 impl<'local> ToObject<'local> for [i8] {
     fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        crate::utils::crate_java_prim_array(self,
+        crate::utils::create_java_prim_array(self,
             JNIEnv::new_byte_array,
             JNIEnv::set_byte_array_region,
         env)
@@ -199,7 +199,7 @@ impl FromObject<'_> for Vec<i16> {
 }
 impl<'local> ToObject<'local> for [i16] {
     fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        crate::utils::crate_java_prim_array(self,
+        crate::utils::create_java_prim_array(self,
             JNIEnv::new_short_array,
             JNIEnv::set_short_array_region,
         env)
@@ -213,7 +213,7 @@ impl FromObject<'_> for Vec<i32> {
 }
 impl<'local> ToObject<'local> for [i32] {
     fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        crate::utils::crate_java_prim_array(self,
+        crate::utils::create_java_prim_array(self,
             JNIEnv::new_int_array,
             JNIEnv::set_int_array_region,
         env)
@@ -227,7 +227,7 @@ impl FromObject<'_> for Vec<i64> {
 }
 impl<'local> ToObject<'local> for [i64] {
     fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        crate::utils::crate_java_prim_array(self,
+        crate::utils::create_java_prim_array(self,
             JNIEnv::new_long_array,
             JNIEnv::set_long_array_region,
         env)
@@ -241,7 +241,7 @@ impl FromObject<'_> for Vec<f32> {
 }
 impl<'local> ToObject<'local> for [f32] {
     fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        crate::utils::crate_java_prim_array(self,
+        crate::utils::create_java_prim_array(self,
             JNIEnv::new_float_array,
             JNIEnv::set_float_array_region,
         env)
@@ -255,7 +255,7 @@ impl FromObject<'_> for Vec<f64> {
 }
 impl<'local> ToObject<'local> for [f64] {
     fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        crate::utils::crate_java_prim_array(self,
+        crate::utils::create_java_prim_array(self,
             JNIEnv::new_double_array,
             JNIEnv::set_double_array_region,
         env)
@@ -275,7 +275,7 @@ impl FromObject<'_> for Vec<u8> {
 }
 impl<'local> ToObject<'local> for [u8] {
     fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        crate::utils::crate_java_prim_array(
+        crate::utils::create_java_prim_array(
             self.iter()
                 .map(|&t| unsafe { std::mem::transmute(t) })
                 .collect::<Box<[_]>>()
@@ -297,7 +297,7 @@ impl FromObject<'_> for Vec<u16> {
 }
 impl<'local> ToObject<'local> for [u16] {
     fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        crate::utils::crate_java_prim_array(
+        crate::utils::create_java_prim_array(
             self.iter()
                 .map(|&t| unsafe { std::mem::transmute(t) })
                 .collect::<Box<[_]>>()
@@ -319,7 +319,7 @@ impl FromObject<'_> for Vec<u32> {
 }
 impl<'local> ToObject<'local> for [u32] {
     fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        crate::utils::crate_java_prim_array(
+        crate::utils::create_java_prim_array(
             self.iter()
                 .map(|&t| unsafe { std::mem::transmute(t) })
                 .collect::<Box<[_]>>()
@@ -341,7 +341,7 @@ impl FromObject<'_> for Vec<u64> {
 }
 impl<'local> ToObject<'local> for [u64] {
     fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        crate::utils::crate_java_prim_array(
+        crate::utils::create_java_prim_array(
             self.iter()
                 .map(|&t| unsafe { std::mem::transmute(t) })
                 .collect::<Box<[_]>>()
@@ -365,7 +365,7 @@ impl FromObject<'_> for Vec<bool> {
 }
 impl<'local> ToObject<'local> for [bool] {
     fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        crate::utils::crate_java_prim_array(
+        crate::utils::create_java_prim_array(
             self.iter()
                 .map(|&t| unsafe { std::mem::transmute(t) })
                 .collect::<Box<[_]>>()
@@ -390,7 +390,7 @@ impl FromObject<'_> for Vec<char> {
 }
 impl<'local> ToObject<'local> for [char] {
     fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        crate::utils::crate_java_prim_array(
+        crate::utils::create_java_prim_array(
             self.iter()
                 .map(|&t| t.encode_utf16(&mut [0;1])[0])
                 .collect::<Box<[_]>>()

@@ -94,14 +94,14 @@ fn implementations() {
         [1, 2, 3],
         Box::<[i64]>::from_object(&obj, &mut env).unwrap().as_ref()
     );
-    obj = [1.1, 2.2, 3.3].to_object(&mut env);
+    obj = [1.1f32, 2.2, 3.3].to_object(&mut env);
     assert_eq!(
-        [1.1, 2.2, 3.3],
+        [1.1f32, 2.2, 3.3],
         Box::<[f32]>::from_object(&obj, &mut env).unwrap().as_ref()
     );
     obj = [1.1f64, 2.2, 3.3].to_object(&mut env);
     assert_eq!(
-        [1.1, 2.2, 3.3],
+        [1.1f64, 2.2, 3.3],
         Box::<[f64]>::from_object(&obj, &mut env).unwrap().as_ref()
     );
     obj = [1u8, 2, 3].to_object(&mut env);
@@ -156,6 +156,13 @@ struct MyClass2<'local> {
     member: JObject<'local>,
 }
 
+#[derive(FromObject)]
+#[class(me.test.Test)]
+struct MyClass3 {
+    #[field(call = memberObject, class = java.lang.Integer)]
+    member: i32,
+}
+
 #[derive(Debug, FromObject, PartialEq, Eq)]
 #[class(me.test.Test$SumClass)]
 enum MyEnumClass {
@@ -178,11 +185,19 @@ fn from_object() {
         VAL
     );
     assert_eq!(
-        MyClass1::from_object(&object, &mut env).unwrap().member,
+        MyClass1::from_object(&object, &mut env)
+            .unwrap()
+            .member,
         VAL
     );
     let int = MyClass2::from_object(&object, &mut env).unwrap().member;
     assert_eq!(call!(int.intValue() -> int), VAL);
+    assert_eq!(
+        MyClass3::from_object(&object, &mut env)
+            .unwrap()
+            .member,
+        VAL
+    );
 
     object = new!(me.test.Test$SumClass$SumClass1(int(VAL)));
     assert_eq!(

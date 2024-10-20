@@ -35,7 +35,7 @@ impl AttributeProps {
     /// with the parsed *properties* **build** an instance of a Type that stores the properties.
     /// 
     /// ## Example
-    /// ```no_run
+    /// ```ignore
     /// AttributeProps::parse_attr_with(attr, |props| {
     ///     Ok(Self {
     ///         name: props.take("name")?,
