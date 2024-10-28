@@ -69,9 +69,9 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
     let target = match call.call_type {
         Either::Left(StaticMethod(class)) => {
             let class = class.to_jni_class_path();
-            quote! { ::either::Either::Left(#class) }
+            quote! { ::ez_jni::__throw::Either::Left(#class) }
         }
-        Either::Right(ObjectMethod(obj)) => quote! { ::either::Either::Right(&(#obj)) },
+        Either::Right(ObjectMethod(obj)) => quote! { ::ez_jni::__throw::Either::Right(&(#obj)) },
     };
     // The Initial JNI call, before any types or errors are checked
     let initial = quote! {
@@ -140,7 +140,7 @@ pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
         } },
         None => quote! { {
             #initial
-            ::ez_jni::__throw::panic_uncaught_exception(env.borrow_mut(), ::either::Either::Left(#class), #method_name);
+            ::ez_jni::__throw::panic_uncaught_exception(env.borrow_mut(), ::ez_jni::__throw::Either::Left(#class), #method_name);
             __call
                 .unwrap_or_else(|err| panic!(#call_failed_msg))
         } }

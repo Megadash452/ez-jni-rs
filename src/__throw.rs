@@ -1,4 +1,4 @@
-use either::Either;
+pub use either::Either;
 use jni::{
     JNIEnv,
     objects::{JObject, JString, JThrowable},
