@@ -3,7 +3,7 @@ use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
 use syn::{braced, parenthesized, parse::{Parse, ParseStream}, punctuated::Punctuated, Attribute, GenericParam, Generics, Ident, ItemFn, LifetimeParam, LitStr, Token};
 use crate::{
     utils::{Spanned, gen_signature, take_class_attribute_required, merge_errors},
-    types::{ClassPath, RustPrimitive, SigType, InnerType}
+    types::{Class, RustPrimitive, SigType, InnerType}
 };
 
 /// Processes the input for [`crate::jni_fns`].
@@ -40,7 +40,7 @@ pub struct JniFn {
     pub attrs: Vec<Attribute>,
     /// The Java Class the function is a method of.
     /// This takes the form of an attribute that is removed after parsing.
-    class: ClassPath,
+    class: Class,
     pub name: Ident,
     pub lifetime: LifetimeParam,
     pub inputs: Punctuated<JniFnArg, Token![,]>,

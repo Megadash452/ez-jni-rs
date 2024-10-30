@@ -6,7 +6,7 @@ use syn::{
     braced, bracketed, parenthesized, parse::{discouraged::Speculative, Parse, ParseStream, Parser}, punctuated::{Pair, Punctuated}, Expr, Ident, LitStr, Token
 };
 use crate::{
-    types::{ArrayType, ClassPath, InnerType, JavaPrimitive, SigType, SpecialCaseConversion, Type, NULL_KEYWORD},
+    types::{ArrayType, Class, InnerType, JavaPrimitive, SigType, SpecialCaseConversion, Type, NULL_KEYWORD},
     utils::{first_char_uppercase, gen_signature, join_spans, merge_errors, Spanned}
 };
 
@@ -159,7 +159,7 @@ pub struct MethodCall {
 impl Parse for MethodCall {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let (call_type, method_name) = if input.parse::<Token![static]>().is_ok() {
-            let (class_path, method_name) = ClassPath::parse_with_trailing_method(input)?;
+            let (class_path, method_name) = Class::parse_with_trailing_method(input)?;
             (Either::Left(StaticMethod(class_path)), method_name)
         } else {
             (Either::Right(input.parse::<ObjectMethod>()?), input.parse()?)
@@ -185,7 +185,7 @@ impl Parse for MethodCall {
 /// 
 /// See [`crate::new`] for an example.
 pub struct ConstructorCall {
-    pub class: ClassPath,
+    pub class: Class,
     pub parameters: Punctuated<Parameter, Token![,]>,
     pub err_type: Option<syn::Path>
 }
@@ -216,7 +216,7 @@ impl Parse for ConstructorCall {
 /// ```ignore
 /// call!(static java.lang.String.methodName ...);
 /// ```
-pub struct StaticMethod(pub ClassPath);
+pub struct StaticMethod(pub Class);
 
 /// The call is for a Method of an existing Object, stored in a variable.
 /// If the object is more than an Ident, it must be enclosed in `parenthesis` or `braces`.
@@ -492,9 +492,9 @@ impl Debug for ParamValue {
 ///
 /// The caller of the macro can assert that the JNI method call will result in one of the following:
 /// 1. [`Type`] (or `void`) if the function being called can't return `NULL` or throw an `exception` (e.g. `bool` or `java.lang.String`).
-/// 2. `Option<ClassPath>` if the return type is an [`Object`][Type::Object] that could be **NULL**.
-///    Java *does not allow* primitive types (i.e. not Object) to be **NULL**, so [Self::Option] can only be used with a [ClassPath].
-/// 3. `Result<Type | void | Option<ClassPath>, E>` if the method call can throw an **Exception**,
+/// 2. `Option<Class>` if the return type is an [`Object`][Type::Object] that could be **NULL**.
+///    Java *does not allow* primitive types (i.e. not Object) to be **NULL**, so [Self::Option] can only be used with a [Class].
+/// 3. `Result<Type | void | Option<Class>, E>` if the method call can throw an **Exception**,
 ///    where `E` is any Rust type that *implements [`FromException`]*.
 pub enum Return {
     /// The method being called can't throw (will `panic!` if it does).
@@ -605,7 +605,7 @@ pub enum ReturnableType {
 /// Can't have *primitive* types themselves, but can have *array of primitive*.
 #[derive(Debug)]
 pub enum OptionType {
-    Object(ClassPath),
+    Object(Class),
     Array(ReturnArray)
 }
 impl ReturnableType {
@@ -732,7 +732,7 @@ pub enum ReturnArray {
     Assertive(InnerType),
     /// Array with **nullable** values.
     // TODO: Use OptionType instead when there is support for multi-dimensional Arrays
-    Option(ClassPath),
+    Option(Class),
 }
 impl ReturnArray {
     /// Creates an ArrayType to avoid reimplementing the same methods for ReturnArray.

@@ -4,7 +4,7 @@ use either::Either;
 use proc_macro2::{TokenStream, Span};
 use quote::{ToTokens, TokenStreamExt as _};
 use syn::{ItemEnum, ItemStruct, LitStr};
-use crate::types::{ClassPath, SigType};
+use crate::types::{Class, SigType};
 
 /// The same as [`syn::spanned::Spanned`].
 /// 
@@ -109,7 +109,7 @@ where P: SigType + 'a,
 /// This will remove the attribute from the list of attributes because `class` is just a helper.
 /// 
 /// Returns [`None`] if there is no `class` attribute.
-pub fn take_class_attribute(attributes: &mut Vec<syn::Attribute>) -> syn::Result<Option<ClassPath>> {
+pub fn take_class_attribute(attributes: &mut Vec<syn::Attribute>) -> syn::Result<Option<Class>> {
     // Filter by attributes named "class"
     let mut iter = attributes.iter()
         .enumerate()
@@ -142,22 +142,22 @@ pub fn take_class_attribute(attributes: &mut Vec<syn::Attribute>) -> syn::Result
     Ok(Some(match &attr.meta {
         // Can be #[class(java.class.path)] or #[class("java.class.path")]
         syn::Meta::List(syn::MetaList { tokens, .. }) => match syn::parse2::<LitStr>(tokens.clone()).ok() {
-            Some(s) => syn::parse_str::<ClassPath>(&s.value())?,
-            None => syn::parse2::<ClassPath>(tokens.clone())?
+            Some(s) => syn::parse_str::<Class>(&s.value())?,
+            None => syn::parse2::<Class>(tokens.clone())?
         },
         // Can only be #[class = "java.class.path"]
         syn::Meta::NameValue(syn::MetaNameValue { value, .. }) => match value {
-            syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(value), .. }) => syn::parse_str::<ClassPath>(&value.value())?,
+            syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(value), .. }) => syn::parse_str::<Class>(&value.value())?,
             _ => return Err(syn::Error::new(value.span(), "Try using a string literal here"))
         },
-        syn::Meta::Path(path) => return Err(syn::Error::new(path.span(), "\"class\" attribute must have a value of a Java ClassPath (e.g. #[class(java.lang.Exception)])")) 
+        syn::Meta::Path(path) => return Err(syn::Error::new(path.span(), "\"class\" attribute must have a value of a Java Class (e.g. #[class(java.lang.Exception)])")) 
     }))
 }
 
 /// Same as [`take_class_attribute()`], but requires that the attribute is present.
 /// 
 /// Takes the [`Span`] of the struct or enum variant's Name for errors.
-pub fn take_class_attribute_required(attributes: &mut Vec<syn::Attribute>, item_span: Span) -> syn::Result<ClassPath> {
+pub fn take_class_attribute_required(attributes: &mut Vec<syn::Attribute>, item_span: Span) -> syn::Result<Class> {
     take_class_attribute(attributes)
         .and_then(|res| res.ok_or_else(|| syn::Error::new(item_span, "Must have \"class\" attribute")))
 }

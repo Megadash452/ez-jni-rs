@@ -12,7 +12,7 @@ use syn::{parse::{Parse, ParseStream, Parser}, punctuated::Punctuated, AngleBrac
 use itertools::Itertools as _;
 use std::{cell::RefCell, collections::{HashMap, HashSet}};
 use crate::{
-    types::{ClassPath, SigType, SpecialCaseConversion, InnerType},
+    types::{Class, SigType, SpecialCaseConversion, InnerType},
     utils::{merge_errors, take_class_attribute, take_class_attribute_required, Spanned}
 };
 
@@ -224,7 +224,7 @@ fn get_local_lifetime<P: Default>(item: Either<&ItemStruct, &ItemEnum>, generics
 struct FieldAttr {
     name: Option<Ident>,
     call: Option<Ident>,
-    class: Option<ClassPath>,
+    class: Option<Class>,
 }
 impl FieldAttr {
     /// Find the `field` attribute in a struct's field and parse its content.
@@ -251,7 +251,7 @@ impl FieldAttr {
     }
 }
 
-fn get_type_from_field(field: &Field, class: Option<ClassPath>) -> syn::Result<InnerType> {
+fn get_type_from_field(field: &Field, class: Option<Class>) -> syn::Result<InnerType> {
     match class {
         // Use the FromObject impl even if it is primitive when a class is provided
         Some(class) => Ok(InnerType::Object(class)),

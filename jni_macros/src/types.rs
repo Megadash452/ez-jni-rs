@@ -309,7 +309,7 @@ impl Debug for ArrayType {
 pub enum InnerType {
     JavaPrimitive { ident: Ident, ty: JavaPrimitive },
     RustPrimitive { ident: Ident, ty: RustPrimitive },
-    Object(ClassPath),
+    Object(Class),
 }
 impl Spanned for InnerType {
     fn span(&self) -> Span {
@@ -418,49 +418,62 @@ impl Display for InnerType {
 /// Parsed as [`Punctuated`] Tokens of [`Ident`]s and `Dot`s, disallowing trailing Dots.
 /// Must have *at least one* package ident, so it will need at least 2 idents in total.
 /// 
-/// There is one exception: this can parse `String`, which will be converted to `java.lang.String`.
-///
-/// Example: `MyClass`, `java.lang.` are not allowed.
+/// Allows some *short hands* like `String` or `Object`, which are automatically expanded to their full Class Path.
+/// Otherwise, a class with a *single component* is not allowed.
 #[derive(Clone)]
-pub struct ClassPath {
-    pub packages: Vec<(Ident, Token![.])>,
-    /// The last Ident in the Punctuated list.
-    pub class: Ident,
-    pub nested_path: Option<NestedPath>
+pub enum Class {
+    Short(Ident),
+    Path {
+        packages: Vec<(Ident, Token![.])>,
+        /// The last Ident in the Punctuated list.
+        class: Ident,
+        nested_path: Option<NestedPath>
+    }
 }
 #[derive(Clone)]
 pub struct NestedPath {
     pub classes: Vec<(Ident, Token![$])>,
     pub final_class: Ident
 }
-impl ClassPath {
+impl Class {
+    const VALID_SHORTHANDS: [&str; 2] = ["String", "Object"];
+
     /// Parses the [`ClassPath`] with [`Parse::parse()`], but the final path *component* is a method name.
     /// 
     /// Returns the parsed [`ClassPath`] and the **method name**.
     pub fn parse_with_trailing_method(input: syn::parse::ParseStream) -> syn::Result<(Self, Ident)> {
-        let mut path = Self::parse(input)?;
-
-        let method_name = match &path.nested_path {
-            // Parse the Dot and method name
-            Some(_) => {
-                input.parse::<Token![.]>()?;
-                input.parse::<Ident>()?
-            },
-            // If the path had no Nested Classes (i.e. it was only separated by Dots)
-            // the method name would have already been parsed, so take it out of the path.
-            None => {
-                // This implies that the path must be at least 3 components long: 2 for the path and 1 for the method name
-                if path.packages.len() < 2 {
-                    return Err(syn::Error::new(path.span(), "Java Class Path must have at least 1 package component (aside from the Class and method), such as `me.Class.method`"))
+        match Self::parse(input)? {
+            Self::Short(class) => return Err(syn::Error::new(class.span(), format!("Must provide method name; e.g. \"{class}\".method"))),
+            Self::Path { mut packages, mut class, nested_path } => {
+                match &nested_path {
+                    // If the ClassPath contains a NestedPath with `$`,
+                    // it will not have parsed the next Dot and component 
+                    // Parse the Dot and method name
+                    Some(_) => {
+                        input.parse::<Token![.]>()?;
+                        let method_name = input.parse::<Ident>()?;
+                        Ok((Self::Path { packages, class, nested_path }, method_name))
+                    },
+                    // If the path had no Nested Classes (i.e. it was only separated by Dots)
+                    // the method name would have already been parsed, so take it out of the path.
+                    None => {
+                        // This implies that the path must be at least 3 components long: 2 for the path and 1 for the method name
+                        if packages.len() < 2 {
+                            let first = &packages[0].0;
+                            return if Self::VALID_SHORTHANDS.contains(&first.to_string().as_str()) {
+                                Ok((Self::Short(first.clone()), class))
+                            } else {
+                                Err(syn::Error::new(first.span(), "Java Class Path must have at least 1 package component (aside from the Class and method), such as `package.Class.method`"))
+                            }
+                        }
+        
+                        let method_name = class;
+                        class = packages.pop().unwrap().0;
+                        Ok((Self::Path { packages, class, nested_path: None }, method_name))
+                    }
                 }
-
-                let method_name = path.class;
-                path.class = path.packages.pop().unwrap().0;
-                method_name
             }
-        };
-
-        Ok((path, method_name))
+        }
     }
 
     /// Converts the [`ClassPath`] to a string used by `JNI`, where each component is separated by a slash.
@@ -475,28 +488,42 @@ impl ClassPath {
     /// **nested_sep** is the separator between the nested classes
     #[allow(unstable_name_collisions)]
     fn to_string_helper(&self, sep: &str, nested_sep: &str) -> String {
-        let nested_classes = match &self.nested_path {
-            Some(nested_path) => Box::new(
-                // Put nested_sep between packages and nested classes
-                Some(nested_sep.to_string()).into_iter()
-                    .chain(nested_path.classes.iter()
-                        .map(|(ident, _)| ident.to_string())
-                        .chain(Some(nested_path.final_class.to_string()))
-                        .intersperse(nested_sep.to_string())
-                    )
-            ) as Box<dyn Iterator<Item = String>>,
-            None => Box::new(None.into_iter()) as Box<dyn Iterator<Item = String>>
-        };
-
-        self.packages.iter()
-            .map(|(ident, _)| ident.to_string())
-            .chain(Some(self.class.to_string()))
-            .intersperse(sep.to_string())
-            .chain(nested_classes)
-            .collect::<String>()
+        match self {
+            Self::Short(class) => {
+                let expanded_path = match class.to_string().as_str() {
+                    "String" => ["java", "lang", "String"],
+                    "Object" => ["java", "lang", "Object"],
+                    _ => panic!("Unreachable")
+                };
+                expanded_path.into_iter()
+                    .intersperse(sep)
+                    .collect::<String>()
+            },
+            Self::Path { packages, class, nested_path } => {
+                let nested_classes = match &nested_path {
+                    Some(nested_path) => Box::new(
+                        // Put nested_sep between packages and nested classes
+                        Some(nested_sep.to_string()).into_iter()
+                            .chain(nested_path.classes.iter()
+                                .map(|(ident, _)| ident.to_string())
+                                .chain(Some(nested_path.final_class.to_string()))
+                                .intersperse(nested_sep.to_string())
+                            )
+                    ) as Box<dyn Iterator<Item = String>>,
+                    None => Box::new(None.into_iter()) as Box<dyn Iterator<Item = String>>
+                };
+        
+                packages.iter()
+                    .map(|(ident, _)| ident.to_string())
+                    .chain(Some(class.to_string()))
+                    .intersperse(sep.to_string())
+                    .chain(nested_classes)
+                    .collect::<String>()
+            }
+        }
     }
 }
-impl SigType for ClassPath {
+impl SigType for Class {
     fn sig_char(&self) -> Ident {
         Ident::new("l", self.span())
     }
@@ -504,59 +531,69 @@ impl SigType for ClassPath {
         LitStr::new(&format!("L{};", self.to_jni_class_path()), self.span())
     }
 }
-impl SpecialCaseConversion for ClassPath {
+impl SpecialCaseConversion for Class {
     fn convert_java_to_rust(&self, value: &TokenStream) -> Option<TokenStream> {
-        // Special cases for Java Objects
-        if self.to_jni_class_path() == "java/lang/String" {
-            // Wrap java.lang.String in JString
-            Some(quote_spanned! {value.span()=> {
+        fn string_conversion(value: &TokenStream) -> TokenStream {
+            quote_spanned! {value.span()=> {
                 use ::std::borrow::BorrowMut as _;
                 ::ez_jni::utils::get_string(::jni::objects::JString::from(#value), env.borrow_mut())
-            } })
-        } else {
-            None
+            } }
+        }
+        // Special cases for Java Objects
+        match self {
+            Self::Short(class) if class.to_string() == "String" => Some(string_conversion(value)),
+            _ if self.to_jni_class_path() == "java/lang/String" => Some(string_conversion(value)),
+            _ => None
         }
     }
     fn convert_rust_to_java(&self, value: &TokenStream) -> Option<TokenStream> {
-        match self.to_jni_class_path().as_str() {
-            // Convert Rust String to Java String
-            "java/lang/String" => Some(quote_spanned! {value.span()=> {
+        fn string_conversion(value: &TokenStream) -> TokenStream {
+            quote_spanned! {value.span()=> {
                 use ::std::borrow::BorrowMut as _;
                 use ::ez_jni::utils::AsNullableStrArg as _;
                 (&(#value)).as_string_arg(env.borrow_mut())
-            } }),
+            } }
+        }
+        match self {
+            // Convert Rust String to Java String
+            Self::Short(class) if class.to_string() == "String" => Some(string_conversion(value)),
+            _ if self.to_jni_class_path() == "java/lang/String" => Some(string_conversion(value)),
             _ => None
         }
     }
 }
-impl Spanned for ClassPath {
+impl Spanned for Class {
     /// Builds a [`TokenStream`] out of this path's items and returns its [`span`][TokenStream::span()].
     fn span(&self) -> Span {
-        let mut spans = Vec::new();
-        spans.extend(self.packages.iter()
-            .map(|(ident, dot)| join_spans([ident.span(), dot.span]))
-        );
-        spans.push(self.class.span());
-        if let Some(nested_path) = &self.nested_path {
-            spans.extend(nested_path.classes.iter()
-                .map(|(ident, dol)| join_spans([ident.span(), dol.span]))
-            );
-            spans.push(nested_path.final_class.span())
+        match self {
+            Self::Short(ident) => ident.span(),
+            Self::Path { packages, class, nested_path } => {
+                let mut spans = Vec::new();
+                spans.extend(packages.iter()
+                    .map(|(ident, dot)| join_spans([ident.span(), dot.span]))
+                );
+                spans.push(class.span());
+                if let Some(nested_path) = &nested_path {
+                    spans.extend(nested_path.classes.iter()
+                        .map(|(ident, dol)| join_spans([ident.span(), dol.span]))
+                    );
+                    spans.push(nested_path.final_class.span())
+                }
+                
+                join_spans(spans.into_iter())
+            }
         }
-        
-        join_spans(spans.into_iter())
     }
 }
-impl Parse for ClassPath {
+impl Parse for Class {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         /// Converts a [`Punctuated`] whose last element is [`None`] to a [`Vec`] of pairs.
         fn punctuated_to_pairs<T, P>(punctuated: Punctuated<T, P>) -> Vec<(T, P)> {
             punctuated.into_pairs()
                 .into_iter()
-                .map(|pair| pair.into_tuple())
-                .filter_map(|pair| match pair.1 {
-                    Some(punct) => Some((pair.0, punct)),
-                    None => None, // Skips the last pair, because it will not have punct
+                .map(|pair| {
+                    let pair = pair.into_tuple();
+                    (pair.0, pair.1.expect("Parsed without accepting trailing punct, but still found trailing punct"))
                 })
                 .collect()
         }
@@ -568,14 +605,12 @@ impl Parse for ClassPath {
             Some(class) => class.into_value(),
             None => return Err(syn::Error::new(path.span(), "Java Class Path must not be empty"))
         };
+        // Check for short hands
         let packages = if path.is_empty() {
-            // ClassPath can be `String`, make it into `java.lang.String`
-            if class.to_string() == "String" {
-                punctuated_to_pairs::<Ident, Token![.]>(
-                    syn::parse_quote_spanned!(class.span()=> java.lang.)
-                )
+            return if Self::VALID_SHORTHANDS.contains(&class.to_string().as_str()) {
+                Ok(Self::Short(class))
             } else {
-                return Err(syn::Error::new(class.span(), "Java Class Path must have more than one component, such as `me.author`"))
+                Err(syn::Error::new(class.span(), "Java Class Path must have more than one component, such as `me.author`"))
             }
         } else {
             // Take the rest of the path components
@@ -600,21 +635,21 @@ impl Parse for ClassPath {
             None
         };
 
-        Ok(Self { class, packages, nested_path })
+        Ok(Self::Path { class, packages, nested_path })
     }
 }
-// impl ToTokens for ClassPath {
+// impl ToTokens for Class {
 //     /// Converts the path back to the same tokens it was obtained from: e.g. `java.lang.String`.
 //     fn to_tokens(&self, tokens: &mut TokenStream) {
 //         tokens.append_all(syn::parse_str::<TokenStream>(&self.to_string()).unwrap())
 //     }
 // }
-impl Display for ClassPath {
+impl Display for Class {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.to_string_helper(".", "."))
     }
 }
-impl Debug for ClassPath {
+impl Debug for Class {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         Display::fmt(&self, f)
     }
@@ -817,24 +852,24 @@ mod tests {
             Parser::parse2(parser, syn::parse_str(s)?)
         }
 
-        syn::parse_str::<ClassPath>("me.author.MyClass").unwrap();
-        syn::parse_str::<ClassPath>("me.MyClass").unwrap();
-        syn::parse_str::<ClassPath>("me.author.MyClass$Nested").unwrap();
-        syn::parse_str::<ClassPath>("me.author.MyClass$Nested$Nested2").unwrap();
-        parse_str_with("me.author.MyClass.method", ClassPath::parse_with_trailing_method).unwrap();
-        parse_str_with("me.MyClass.method", ClassPath::parse_with_trailing_method).unwrap();
-        parse_str_with("me.author.MyClass$Nested.method", ClassPath::parse_with_trailing_method).unwrap();
-        parse_str_with("me.author.MyClass$Nested$Nested2.method", ClassPath::parse_with_trailing_method).unwrap();
+        syn::parse_str::<Class>("me.author.MyClass").unwrap();
+        syn::parse_str::<Class>("me.MyClass").unwrap();
+        syn::parse_str::<Class>("me.author.MyClass$Nested").unwrap();
+        syn::parse_str::<Class>("me.author.MyClass$Nested$Nested2").unwrap();
+        parse_str_with("me.author.MyClass.method", Class::parse_with_trailing_method).unwrap();
+        parse_str_with("me.MyClass.method", Class::parse_with_trailing_method).unwrap();
+        parse_str_with("me.author.MyClass$Nested.method", Class::parse_with_trailing_method).unwrap();
+        parse_str_with("me.author.MyClass$Nested$Nested2.method", Class::parse_with_trailing_method).unwrap();
         
         // Test errors
-        syn::parse_str::<ClassPath>("").unwrap_err();
-        syn::parse_str::<ClassPath>("me").unwrap_err();
-        syn::parse_str::<ClassPath>("me.author.MyClass.").unwrap_err();
-        syn::parse_str::<ClassPath>(".me.author.MyClass").unwrap_err();
-        syn::parse_str::<ClassPath>("MyClass$Nested").unwrap_err();
-        syn::parse_str::<ClassPath>("me.author.MyClass$").unwrap_err();
-        syn::parse_str::<ClassPath>("me.author.MyClass$Nested$").unwrap_err();
-        parse_str_with("MyClass.method", ClassPath::parse_with_trailing_method).unwrap_err();
-        parse_str_with("MyClass$Nested.method", ClassPath::parse_with_trailing_method).unwrap_err();
+        syn::parse_str::<Class>("").unwrap_err();
+        syn::parse_str::<Class>("me").unwrap_err();
+        syn::parse_str::<Class>("me.author.MyClass.").unwrap_err();
+        syn::parse_str::<Class>(".me.author.MyClass").unwrap_err();
+        syn::parse_str::<Class>("MyClass$Nested").unwrap_err();
+        syn::parse_str::<Class>("me.author.MyClass$").unwrap_err();
+        syn::parse_str::<Class>("me.author.MyClass$Nested$").unwrap_err();
+        parse_str_with("MyClass.method", Class::parse_with_trailing_method).unwrap_err();
+        parse_str_with("MyClass$Nested.method", Class::parse_with_trailing_method).unwrap_err();
     }
 }
