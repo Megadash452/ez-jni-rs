@@ -750,9 +750,7 @@ impl ReturnArray {
         match self {
             Self::Assertive(_) => self.to_array_type().convert_java_to_rust(&value),
             Self::Option(class) => Some({
-                // For some reason, class.getName() returns a ClassPath with .dots. instead of /slashes/, so can't use sig_type().
-                // This is the only place where this happens. why??
-                let inner_ty = LitStr::new(&format!("L{};", class.to_string()), class.span());
+                let array_ty = self.to_array_type().sig_type();
 
                 // The inner Class of the array might require some conversion
                 let conversion = {
@@ -764,19 +762,19 @@ impl ReturnArray {
 
                 quote_spanned! {value.span() => {
                     use ::std::borrow::BorrowMut as _;
-                    let _array = ::jni::objects::JObjectArray::from(#value);
-                    let _len = ::ez_jni::utils::__obj_array_len(&_array, #inner_ty, env.borrow_mut());
-                    let mut _vec = ::std::vec::Vec::<::std::option::Option<_>>::with_capacity(_len);
-                    for i in 0.._len {
-                        let _element = env.get_object_array_element(&_array, i as ::jni::sys::jsize)
-                            .unwrap_or_else(|err| panic!("Failed to read Array elements: {err}"));
-                        _vec.push(if _element.is_null() {
-                            ::std::option::Option::None
-                        } else {
-                            ::std::option::Option::Some(#conversion)
-                        });
-                    }
-                    _vec.into_boxed_slice()
+                    IntoIterator::into_iter(
+                        ::ez_jni::utils::get_object_array(&(#value), Some(#array_ty), env.borrow_mut())
+                            // Error can only be ClassMismatch
+                            .unwrap_or_else(|err| panic!("{err}"))
+                    )
+                        .map(|_element|
+                            if _element.is_null() {
+                                ::std::option::Option::None
+                            } else {
+                                ::std::option::Option::Some(#conversion)
+                            }
+                        )
+                        .collect::<Box<[_]>>()
                 } }
             }),
         }

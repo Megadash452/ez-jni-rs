@@ -153,9 +153,8 @@ impl SpecialCaseConversion for ArrayType {
                     InnerType::Object(_) => panic!("Passed Object to function that clearly wants a primitive")
                 };
 
-                let inner_ty = j_prim.sig_type();
                 // The name of the JNI function that puts the Java Array's elements in the slice
-                let fill_slice = Ident::new(&format!("get_{j_prim}_array_region"), value.span());
+                let filler = Ident::new(&format!("get_{j_prim}_array_region"), value.span());
                 // The inner type of the array might require some conversion
                 let conversion = {
                     let element_tokens = quote_spanned!(value.span()=> v); 
@@ -171,23 +170,15 @@ impl SpecialCaseConversion for ArrayType {
 
                 quote_spanned! {value.span()=> {
                     use ::std::borrow::BorrowMut as _;
-                    let _array = ::jni::objects::JPrimitiveArray::from(#value);
-                    let _len = ::ez_jni::utils::__obj_array_len(&_array, #inner_ty, env.borrow_mut());
-                    let mut _box = vec![unsafe { std::mem::zeroed() }; _len].into_boxed_slice();
-                    env.#fill_slice(&_array, 0, &mut _box)
-                        .unwrap_or_else(|err| panic!("Failed to read Array elements: {err}"));
-                    _box.into_vec()
-                        .into_iter()
+                    IntoIterator::into_iter(::ez_jni::utils::get_java_prim_array(&(#value), ::jni::JNIEnv::#filler, env.borrow_mut()))
                         .map(|v| #conversion)
                         .collect::<::std::boxed::Box<[_]>>()
                 } }
             },
             // Build a Rust boxed slice from a Java Array in which the inner type is an Object.
             InnerType::Object(class) => {
-                // For some reason, class.getName() returns a ClassPath with .dots. instead of /slashes/, so can't use sig_type().
-                // This is the only place where this happens. why??
-                let inner_ty = LitStr::new(&format!("L{};", class.to_string()), class.span());
-                let null_err = format!("Array of {class} contains null elements (at {{i}}). If this is intended, wrap the Class with 'Option' (e.g. Option<{class}>)");
+                let array_ty = self.sig_type();
+                let null_err = format!("Array of {class} contains null elements. If this is intended, wrap the Class with 'Option' (e.g. Option<{class}>)");
 
                 // The inner Class of the array might require some conversion
                 let conversion = {
@@ -199,18 +190,19 @@ impl SpecialCaseConversion for ArrayType {
 
                 quote_spanned! {value.span() => {
                     use ::std::borrow::BorrowMut as _;
-                    let _array = ::jni::objects::JObjectArray::from(#value);
-                    let _len = ::ez_jni::utils::__obj_array_len(&_array, #inner_ty, env.borrow_mut());
-                    let mut _vec = ::std::vec::Vec::with_capacity(_len);
-                    for i in 0.._len {
-                        let _element = env.get_object_array_element(&_array, i as ::jni::sys::jsize)
-                            .unwrap_or_else(|err| panic!("Failed to read Array elements: {err}"));
-                        if _element.is_null() {
-                            panic!(#null_err)
-                        }
-                        _vec.push(#conversion);
-                    }
-                    _vec.into_boxed_slice()
+                    IntoIterator::into_iter(
+                        ::ez_jni::utils::get_object_array(&(#value), Some(#array_ty), env.borrow_mut())
+                            // Error can only be ClassMismatch
+                            .unwrap_or_else(|err| panic!("{err}"))
+                    )
+                        .map(|_element|
+                            if _element.is_null() {
+                                panic!(#null_err)
+                            } else {
+                                #conversion
+                            }
+                        )
+                        .collect::<Box<[_]>>()
                 } }
             }
         })
@@ -233,17 +225,8 @@ impl SpecialCaseConversion for ArrayType {
                     InnerType::Object(_) => panic!("Passed Object to function that clearly wants a primitive")
                 };
                 
-                let new_array_fn = Ident::new(&format!("new_{j_prim}_array"), value.span());
-                let new_array_err = LitStr::new(
-                    &format!("Failed to create Java {j_prim} array: {{err}}"),
-                    value.span(),
-                );
-                let fill_array_fn =
-                    Ident::new(&format!("set_{j_prim}_array_region"), value.span());
-                let fill_array_err = LitStr::new(
-                    &format!("Error filling {j_prim} array: {{err}}"),
-                    value.span(),
-                );
+                let alloc = Ident::new(&format!("new_{j_prim}_array"), value.span());
+                let filler = Ident::new(&format!("set_{j_prim}_array_region"), value.span());
                 // The inner type of the array might require some conversion
                 let converted = {
                     match self.ty.convert_rust_to_java(&quote_spanned! {value.span()=> v}) {
@@ -257,73 +240,39 @@ impl SpecialCaseConversion for ArrayType {
                 };
     
                 quote_spanned! {value.span()=> {
+                    use ::std::borrow::BorrowMut as _;
                     let _slice = &(#converted);
-                    let _slice = ::std::convert::AsRef::<[_]>::as_ref(_slice);
-                    let _jarray = env.#new_array_fn(_slice.len() as ::jni::sys::jsize)
-                        .unwrap_or_else(|err| panic!(#new_array_err));
-                    env.#fill_array_fn(&_jarray, 0, _slice)
-                        .inspect_err(|err| println!(#fill_array_err)).unwrap();
-                    ::jni::objects::JObject::from(_jarray)
+                    ::ez_jni::utils::create_java_prim_array(
+                        ::std::convert::AsRef::<[_]>::as_ref(_slice),
+                        ::jni::JNIEnv::#alloc,
+                        ::jni::JNIEnv::#filler,
+                    env.borrow_mut())
                 } }
             },
             // Build a Java Array in which the inner type is an Object.
             InnerType::Object(class) => {
-                let new_array_err = LitStr::new(
-                    &format!("Failed to create Java Object \"{}\" array: {{err}}", class.to_string()),
-                    value.span(),
-                );
-                let set_val_err = LitStr::new(
-                    &format!("Failed to set the value of Object array at index {{_i}}: {{err}}"),
-                    value.span(),
-                );
                 let class_path = LitStr::new(&class.to_jni_class_path(), value.span());
 
-                // Build the array from Rust Strings (Option allowed).
-                if class.to_jni_class_path() == "java/lang/String" {
-                    quote_spanned! {value.span()=> {
-                        use ::std::borrow::BorrowMut as _;
-                        use ::ez_jni::ToObject as _;
+                // The inner Class of the array might require some conversion
+                let converted = {
+                    match self.ty.convert_rust_to_java(&quote_spanned! {value.span()=> v}) {
+                        Some(conversion) => &quote_spanned!(value.span()=>
+                            (&(#value)).iter()
+                                .map(|&v| #conversion)
+                                .collect::<::std::boxed::Box<[_]>>()
+                        ),
+                        None => value
+                    }
+                };
 
-                        let _slice = ::std::convert::AsRef::<[_]>::as_ref(&(#value));
-                        let _jarray = env.new_object_array(
-                            _slice.len() as ::jni::sys::jsize,
-                            #class_path,
-                            unsafe { ::jni::objects::JObject::from_raw(::std::ptr::null_mut()) }
-                        )
-                            .unwrap_or_else(|err| panic!(#new_array_err));
-                        for (_i, _element) in _slice.into_iter().enumerate() {
-                            // str, String, Option<T> implement ToObject, so use that to accept any kind of string
-                            let _element = _element.to_object(env.borrow_mut());
-                            env.set_object_array_element(&_jarray, _i as ::jni::sys::jsize, _element)
-                                .unwrap_or_else(|err| panic!(#set_val_err));
-                        }
-                        ::jni::objects::JObject::from(_jarray)
-                    } }
-                } else {
-                    // The inner Class of the array might require some conversion
-                    let conversion = {
-                        let element_tokens = quote_spanned!(value.span()=> _element); 
-                        // Convert using the variable
-                        class.convert_rust_to_java(&element_tokens)
-                            .unwrap_or(element_tokens)
-                    };
-    
-                    quote_spanned! {value.span()=> {
-                        let _slice = &(#value);
-                        let _slice = ::std::convert::AsRef::<[_]>::as_ref(_slice);
-                        let _jarray = env.new_object_array(
-                            _slice.len() as ::jni::sys::jsize,
-                            #class_path,
-                            unsafe { ::jni::objects::JObject::from_raw(::std::ptr::null_mut()) }
-                        )
-                            .unwrap_or_else(|err| panic!(#new_array_err));
-                        for (_i, _element) in _slice.into_iter().enumerate() {
-                            env.set_object_array_element(&_jarray, _i as ::jni::sys::jsize, #conversion)
-                                .unwrap_or_else(|err| panic!(#set_val_err));
-                        }
-                        ::jni::objects::JObject::from(_jarray)
-                    } }
-                }
+                quote_spanned! {value.span()=> {
+                    use ::std::borrow::BorrowMut as _;
+                    let _slice = &(#converted);
+                    ::ez_jni::utils::create_object_array(
+                        ::std::convert::AsRef::<[_]>::as_ref(_slice),
+                        #class_path,
+                    env.borrow_mut())
+                } }
             },
         })
     }
@@ -571,10 +520,11 @@ impl SpecialCaseConversion for ClassPath {
     fn convert_rust_to_java(&self, value: &TokenStream) -> Option<TokenStream> {
         match self.to_jni_class_path().as_str() {
             // Convert Rust String to Java String
-            "java/lang/String" => Some(quote_spanned! {value.span()=>
-                env.new_string(::std::convert::AsRef::<str>::as_ref(&#value))
-                    .unwrap_or_else(|err| panic!("Failed to create convert Rust String to Java String: {err}"))
-            }),
+            "java/lang/String" => Some(quote_spanned! {value.span()=> {
+                use ::std::borrow::BorrowMut as _;
+                use ::ez_jni::utils::AsNullableStrArg as _;
+                (&(#value)).as_string_arg(env.borrow_mut())
+            } }),
             _ => None
         }
     }
