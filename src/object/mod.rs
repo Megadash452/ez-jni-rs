@@ -13,8 +13,8 @@ pub enum FromObjectError {
     #[error("Object can't be NULL")]
     Null,
     #[error("{}", match target_class {
-        Some(target_class) => format!("The Class of the Object ({obj_class}) is not the target Class, or a descendant of the target Class {target_class}"),
-        None => format!("The Class of the Object ({obj_class}) did not match any of the classes of the variants")
+        Some(target_class) => format!("Expected the Object to be the Class or a descendant of the Class \"{target_class}\", but the actual Class of the Object is \"{obj_class}\""),
+        None => format!("The Class Object did not match any of the classes of the variants; Found Class \"{obj_class}\"")
     })]
     ClassMismatch { obj_class: String, target_class: Option<String> },
     #[error("Could not find field {name:?} of type {ty} in class {target_class}; maybe its private?")]

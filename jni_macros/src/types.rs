@@ -41,95 +41,182 @@ pub trait SpecialCaseConversion {
     fn convert_rust_to_java(&self, value: &TokenStream) -> Option<TokenStream>;
 }
 
+/// A general `Type` to interface between Java and Rust types.
 #[derive(Debug)]
 pub enum Type {
-    Single(InnerType),
+    /// Any **primitive** or **Class**.
+    /// 
+    /// Asserts that the value can't be `null`.
+    /// Will cause a `panic!` the value assossiated with this type is `null`.
+    Assertive(InnerType),
     Array(ArrayType),
+    /// A Nullable **Object** or **Array**.
+    Option {
+        /// The `"Option"` token.
+        ident: Ident,
+        ty: OptionType,
+    },
     // Might also add generics
+}
+/// Declares that a Java value can be **null**.
+/// Can't have *primitive* types themselves, but can have *array of primitive*.
+#[derive(Debug)]
+pub enum OptionType {
+    Object(Class),
+    Array(ArrayType)
 }
 impl Type {
     /// Returns whether the [`InnerType`] of the type is a *primitive*.
     /// Returns `false` if this is an [`Array`][Type::Array].
     pub fn is_primitive(&self) -> bool {
         match self {
-            Self::Single(InnerType::RustPrimitive { .. } | InnerType::JavaPrimitive { .. }) => true,
-            Self::Single(_) | Self::Array(_) => false,
+            Self::Assertive(InnerType::RustPrimitive { .. } | InnerType::JavaPrimitive { .. }) => true,
+            _ => false,
         }
     }
 }
 impl SigType for Type {
     fn sig_char(&self) -> Ident {
         match self {
-            Self::Single(ty) => ty.sig_char(),
+            Self::Assertive(ty) => ty.sig_char(),
             Self::Array(array) => array.sig_char(),
+            Self::Option { ty: OptionType::Object(class), .. } => class.sig_char(),
+            Self::Option { ty: OptionType::Array(array), .. } => array.sig_char(),
         }
     }
     fn sig_type(&self) -> LitStr {
         match self {
-            Self::Single(ty) => ty.sig_type(),
+            Self::Assertive(ty) => ty.sig_type(),
             Self::Array(array) => array.sig_type(),
+            Self::Option { ty: OptionType::Object(class), .. } => class.sig_type(),
+            Self::Option { ty: OptionType::Array(array), .. } => array.sig_type(),
         }
     }
 }
 impl SpecialCaseConversion for Type {
     fn convert_java_to_rust(&self, value: &TokenStream) -> Option<TokenStream> {
         match self {
-            Self::Single(ty) => ty.convert_java_to_rust(value),
-            Self::Array(array) => array.convert_java_to_rust(value)
+            Self::Assertive(ty) => ty.convert_java_to_rust(value),
+            Self::Array(array) => array.convert_java_to_rust(value),
+            Self::Option { ty: OptionType::Object(class), .. } => class.convert_java_to_rust(value),
+            Self::Option { ty: OptionType::Array(array), .. } => array.convert_java_to_rust(value),
         }
     }
     fn convert_rust_to_java(&self, value: &TokenStream) -> Option<TokenStream> {
         match self {
-            Self::Single(ty) => ty.convert_rust_to_java(value),
-            Self::Array(array) => array.convert_rust_to_java(value)
+            Self::Assertive(ty) => ty.convert_rust_to_java(value),
+            Self::Array(array) => array.convert_rust_to_java(value),
+            Self::Option { ty: OptionType::Object(class), .. } => class.convert_rust_to_java(value),
+            Self::Option { ty: OptionType::Array(array), .. } => array.convert_rust_to_java(value),
         }
     }
 }
 impl Spanned for Type {
     fn span(&self) -> Span {
         match self {
-            Self::Single(ty) => ty.span(),
-            Self::Array(array) => array.span()
+            Self::Assertive(ty) => ty.span(),
+            Self::Array(array) => array.span(),
+            Self::Option { ident, ty: OptionType::Object(class) } => join_spans([ident.span(), class.span()]),
+            Self::Option { ident, ty: OptionType::Array(array) } => join_spans([ident.span(), array.span()]),
         }
     }
 }
 impl Parse for Type {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        // Check if the Type is wrapped in Brackets (Array)
+        let fork = input.fork();
+        // Check if caller uses void, Option, or Result
+        if let Ok(ident) = fork.parse::<Ident>() {
+            match ident.to_string().as_str() {
+                "void" => return Err(syn::Error::new(ident.span(), "Can't use 'void' here.")),
+                "Result" => return Err(syn::Error::new(ident.span(), "Can't use 'Result' here.")),
+                "Option" => {
+                    input.advance_to(&fork);
+                    return Ok(Self::Option { ident, ty: input.parse()? })
+                },
+                _ => {},
+            }
+        }
+        drop(fork);
+
+        // Attempt to parse Array, and finally InnerType (primitive or Object).
         Ok(if input.lookahead1().peek(syn::token::Bracket) {
             Self::Array(input.parse()?)
         } else {
-            Self::Single(input.parse()?)
+            Self::Assertive(input.parse()?)
         })
+    }
+}
+impl Parse for OptionType {
+    /// Parses the inner part of the Option Type (i.e. `<Type>`).
+    /// Caller must ensure that they parse an [`Ident`] of `Option` directly before calling this.
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        // Parse inner type of Option
+        input.parse::<Token![<]>()
+        .map_err(|err| input.error(format!("Option takes generic arguments; {err}")))?;
+        // Check if the Type is wrapped in Brackets (Array)
+        let option_ty = if input.lookahead1().peek(syn::token::Bracket) {
+            OptionType::Array(input.parse()?)
+        } else {
+            match input.parse::<InnerType>()? {
+                InnerType::Object(class) => OptionType::Object(class),
+                ty => return Err(syn::Error::new(ty.span(), "Primitives are not allowed as the Option's inner type. Only Classes are allowed here."))
+            }
+        };
+        input.parse::<Token![>]>()
+            .map_err(|err| input.error(format!("Option takes only 1 generic argument; {err}")))?;
+
+        Ok(option_ty)
     }
 }
 impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Single(ty) => Display::fmt(ty, f),
-            Self::Array(array) => Display::fmt(array, f)
+            Self::Assertive(ty) => Display::fmt(ty, f),
+            Self::Array(array) => Display::fmt(array, f),
+            Self::Option { ty, .. } => {
+                f.write_str("Option<")?;
+                match ty {
+                    OptionType::Object(class) => Display::fmt(class, f),
+                    OptionType::Array(array) => Display::fmt(array, f),
+                }?;
+                f.write_str(">")
+            }
         }
     }
 }
 
-#[derive(Clone)]
-pub struct ArrayType {
-    pub ty: InnerType
+#[derive(Debug)]
+pub enum ArrayType {
+    /// Regular Array with **non-null** values.
+    Assertive(InnerType),
+    /// Array with **nullable** values.
+    Option {
+        /// The `"Option"` token.
+        ident: Ident,
+        // TODO: Use OptionType instead when there is support for multi-dimensional Arrays
+        class: Class,
+    },
 }
 impl Spanned for ArrayType {
     fn span(&self) -> Span {
         // join_spans([self.brackets.span.span(), self.ty.span()])
-        self.ty.span()
+        match self {
+            Self::Assertive(ty) => ty.span(),
+            Self::Option { ident, class } => join_spans([ident.span(), class.span()]),
+        }
     }
 }
 impl SigType for ArrayType {
     /// Returns 'l' because Arrays are Objects.
     /// See [`origin`](SigType::sig_char()).
     fn sig_char(&self) -> Ident {
-        Ident::new("l", self.ty.span())
+        Ident::new("l", self.span())
     }
     fn sig_type(&self) -> LitStr {
-        let sig_type = self.ty.sig_type();
+        let sig_type = match self {
+            Self::Assertive(ty) => ty.sig_type(),
+            Self::Option { class, .. } => class.sig_type(),
+        };
         LitStr::new(&format!("[{}", sig_type.value()), sig_type.span())
     }
 }
@@ -140,71 +227,85 @@ impl SpecialCaseConversion for ArrayType {
     /// 
     /// See [`origin`](SpecialCaseConversion::convert_java_to_rust()).
     fn convert_java_to_rust(&self, value: &TokenStream) -> Option<TokenStream> {
-        // There are different JNI functions for each primitive array and Object arrays
-        Some(match &self.ty {
-            // Build a Rust boxed slice from a Java Array in which the inner type is a primitive.
-            InnerType::JavaPrimitive { .. }
-            | InnerType::RustPrimitive { .. } => {
-                // Use the Java Primitive to build the names of the JNI functions
-                // Use the Rust Primitive for the special case conversion
-                let (j_prim, r_prim) = match &self.ty {
-                    InnerType::JavaPrimitive { ty, .. } => (*ty, RustPrimitive::from(*ty)),
-                    InnerType::RustPrimitive { ty, .. } => (JavaPrimitive::from(*ty), *ty),
-                    InnerType::Object(_) => panic!("Passed Object to function that clearly wants a primitive")
-                };
+        /// Build a Rust *boxed slice* from a *Java Array* in which the inner type is a **primitive**.
+        fn convert_primitive(r_prim: RustPrimitive, value: &TokenStream) -> TokenStream {
+            // Use the Rust Primitive for the special case conversion
+            // Use the Java Primitive to build the names of the JNI functions
+            let j_prim = JavaPrimitive::from(r_prim);
 
-                // The name of the JNI function that puts the Java Array's elements in the slice
-                let filler = Ident::new(&format!("get_{j_prim}_array_region"), value.span());
-                // The inner type of the array might require some conversion
-                let conversion = {
-                    let element_tokens = quote_spanned!(value.span()=> v); 
-                    // Must also convert to Rust bool (jni, why only here?)
-                    if r_prim == RustPrimitive::Bool {
-                        quote_spanned!(element_tokens.span()=> #element_tokens != 0)
-                    } else {
-                        // Convert using the variable
-                        r_prim.convert_java_to_rust(&element_tokens)
-                            .unwrap_or(element_tokens)
-                    }
-                };
-
-                quote_spanned! {value.span()=> {
-                    use ::std::borrow::BorrowMut as _;
-                    IntoIterator::into_iter(::ez_jni::utils::get_java_prim_array(&(#value), ::jni::JNIEnv::#filler, env.borrow_mut()))
-                        .map(|v| #conversion)
-                        .collect::<::std::boxed::Box<[_]>>()
-                } }
-            },
-            // Build a Rust boxed slice from a Java Array in which the inner type is an Object.
-            InnerType::Object(class) => {
-                let array_ty = self.sig_type();
-                let null_err = format!("Array of {class} contains null elements. If this is intended, wrap the Class with 'Option' (e.g. Option<{class}>)");
-
-                // The inner Class of the array might require some conversion
-                let conversion = {
-                    let element_tokens = quote_spanned!(value.span()=> _element); 
+            // The name of the JNI function that puts the Java Array's elements in the slice
+            let filler = Ident::new(&format!("get_{j_prim}_array_region"), value.span());
+            // The inner type of the array might require some conversion
+            let conversion = {
+                let element_tokens = quote_spanned!(value.span()=> v); 
+                // Must also convert to Rust bool (jni, why only here?)
+                if r_prim == RustPrimitive::Bool {
+                    quote_spanned!(element_tokens.span()=> #element_tokens != 0)
+                } else {
                     // Convert using the variable
-                    class.convert_java_to_rust(&element_tokens)
+                    r_prim.convert_java_to_rust(&element_tokens)
                         .unwrap_or(element_tokens)
-                };
+                }
+            };
 
+            quote_spanned! {value.span()=> {
+                use ::std::borrow::BorrowMut as _;
+                IntoIterator::into_iter(::ez_jni::utils::get_java_prim_array(&(#value), ::jni::JNIEnv::#filler, env.borrow_mut()))
+                    .map(|v| #conversion)
+                    .collect::<::std::boxed::Box<[_]>>()
+            } }
+        }
+        // Build a Rust *boxed slice* from a *Java Array* in which the inner type is an **Object**.
+        let convert_object = |class: &Class, nullable: bool| -> TokenStream {
+            // Must be the full Array Type. E.g. "[Ljava/lang/String;"
+            let array_ty = self.sig_type();
+
+            // The inner Class of the array might require some conversion
+            let conversion = {
+                let element_tokens = quote_spanned!(value.span()=> _element); 
+                // Convert using the variable
+                class.convert_java_to_rust(&element_tokens)
+                    .unwrap_or(element_tokens)
+            };
+            let null_check = if nullable {
                 quote_spanned! {value.span() => {
-                    use ::std::borrow::BorrowMut as _;
-                    IntoIterator::into_iter(
-                        ::ez_jni::utils::get_object_array(&(#value), Some(#array_ty), env.borrow_mut())
-                            // Error can only be ClassMismatch
-                            .unwrap_or_else(|err| panic!("{err}"))
-                    )
-                        .map(|_element|
-                            if _element.is_null() {
-                                panic!(#null_err)
-                            } else {
-                                #conversion
-                            }
-                        )
-                        .collect::<Box<[_]>>()
+                    if _element.is_null() {
+                        ::std::option::Option::None
+                    } else {
+                        ::std::option::Option::Some(#conversion)
+                    }
                 } }
-            }
+            } else {
+                // Panic if the Array contains `null` objects.
+                let null_err = format!("Array of {class} contains null elements. If this is intended, wrap the Class with 'Option' (e.g. Option<{class}>)");
+                quote_spanned! {value.span() => {
+                    if _element.is_null() {
+                        panic!(#null_err)
+                    } else {
+                        #conversion
+                    }
+                } }
+            };
+
+            quote_spanned! {value.span() => {
+                use ::std::borrow::BorrowMut as _;
+                IntoIterator::into_iter(
+                    ::ez_jni::utils::get_object_array(&(#value), Some(#array_ty), env.borrow_mut())
+                        // Error can only be ClassMismatch
+                        .unwrap_or_else(|err| panic!("{err}"))
+                )
+                    .map(|_element| #null_check)
+                    .collect::<Box<[_]>>()
+            } }
+        };
+
+        Some(match &self {
+            Self::Assertive(ty) => match ty {
+                InnerType::JavaPrimitive { ty, .. } => convert_primitive(RustPrimitive::from(*ty), value),
+                InnerType::RustPrimitive { ty, .. } => convert_primitive(*ty, value),
+                InnerType::Object(class) => convert_object(class, false),
+            },
+            Self::Option { class, .. } => convert_object(class, true),
         })
     }
     /// Returns code that converts a *Rust slice* to a *Java Array*.
@@ -213,67 +314,70 @@ impl SpecialCaseConversion for ArrayType {
     /// 
     /// See [`origin`](SpecialCaseConversion::convert_java_to_rust()).
     fn convert_rust_to_java(&self, value: &TokenStream) -> Option<TokenStream> {
-        // There are different JNI functions for each primitive array and Object arrays
-        Some(match &self.ty {
-            // Build a Java Array in which the inner type is a primitive.
-            InnerType::JavaPrimitive { .. }
-            | InnerType::RustPrimitive { .. } => {
-                // Use the java primitive to build the names of the JNI functions
-                let j_prim = match &self.ty {
-                    InnerType::JavaPrimitive { ty, .. } => *ty,
-                    InnerType::RustPrimitive { ty, .. } => JavaPrimitive::from(*ty),
-                    InnerType::Object(_) => panic!("Passed Object to function that clearly wants a primitive")
-                };
-                
-                let alloc = Ident::new(&format!("new_{j_prim}_array"), value.span());
-                let filler = Ident::new(&format!("set_{j_prim}_array_region"), value.span());
-                // The inner type of the array might require some conversion
-                let converted = {
-                    match self.ty.convert_rust_to_java(&quote_spanned! {value.span()=> v}) {
-                        Some(conversion) => &quote_spanned!(value.span()=>
-                            #value.iter()
-                                .map(|&v| #conversion)
-                                .collect::<::std::boxed::Box<[_]>>()
-                        ),
-                        None => value
-                    }
-                };
-    
-                quote_spanned! {value.span()=> {
-                    use ::std::borrow::BorrowMut as _;
-                    let _slice = &(#converted);
-                    ::ez_jni::utils::create_java_prim_array(
-                        ::std::convert::AsRef::<[_]>::as_ref(_slice),
-                        ::jni::JNIEnv::#alloc,
-                        ::jni::JNIEnv::#filler,
-                    env.borrow_mut())
-                } }
-            },
-            // Build a Java Array in which the inner type is an Object.
-            InnerType::Object(class) => {
-                let class_path = LitStr::new(&class.to_jni_class_path(), value.span());
+        /// Build a *Java Array* from a Rust *slice* in which the inner type is a **primitive**.
+        fn convert_primitive(r_prim: RustPrimitive, value: &TokenStream) -> TokenStream {
+            // Use the Rust Primitive for the special case conversion
+            // Use the java primitive to build the names of the JNI functions
+            let j_prim = JavaPrimitive::from(r_prim);
 
-                // The inner Class of the array might require some conversion
-                let converted = {
-                    match self.ty.convert_rust_to_java(&quote_spanned! {value.span()=> v}) {
-                        Some(conversion) => &quote_spanned!(value.span()=>
-                            (&(#value)).iter()
-                                .map(|&v| #conversion)
-                                .collect::<::std::boxed::Box<[_]>>()
-                        ),
-                        None => value
-                    }
-                };
+            let alloc = Ident::new(&format!("new_{j_prim}_array"), value.span());
+            let filler = Ident::new(&format!("set_{j_prim}_array_region"), value.span());
+            // The inner type of the array might require some conversion
+            let converted = {
+                match r_prim.convert_rust_to_java(&quote_spanned! {value.span()=> v}) {
+                    Some(conversion) => &quote_spanned!(value.span()=>
+                        #value.iter()
+                            .map(|&v| #conversion)
+                            .collect::<::std::boxed::Box<[_]>>()
+                    ),
+                    None => value
+                }
+            };
 
-                quote_spanned! {value.span()=> {
-                    use ::std::borrow::BorrowMut as _;
-                    let _slice = &(#converted);
-                    ::ez_jni::utils::create_object_array(
-                        ::std::convert::AsRef::<[_]>::as_ref(_slice),
-                        #class_path,
-                    env.borrow_mut())
-                } }
+            quote_spanned! {value.span()=> {
+                use ::std::borrow::BorrowMut as _;
+                let _slice = &(#converted);
+                ::ez_jni::utils::create_java_prim_array(
+                    ::std::convert::AsRef::<[_]>::as_ref(_slice),
+                    ::jni::JNIEnv::#alloc,
+                    ::jni::JNIEnv::#filler,
+                env.borrow_mut())
+            } }
+        }
+        /// Build a *Java Array* from a Rust *slice* in which the inner type is an **Object**.
+        fn convert_object(class: &Class, value: &TokenStream) -> TokenStream {
+            // Must be only the Class, without the Object char or Array part. E.g. "java/lang/String"
+            let class_path = LitStr::new(&class.to_jni_class_path(), value.span());
+
+            // The inner Class of the array might require some conversion
+            let converted = {
+                match class.convert_rust_to_java(&quote_spanned! {value.span()=> v}) {
+                    Some(conversion) => &quote_spanned!(value.span()=>
+                        (&(#value)).iter()
+                            .map(|&v| #conversion)
+                            .collect::<::std::boxed::Box<[_]>>()
+                    ),
+                    None => value
+                }
+            };
+
+            quote_spanned! {value.span()=> {
+                use ::std::borrow::BorrowMut as _;
+                let _slice = &(#converted);
+                ::ez_jni::utils::create_object_array(
+                    ::std::convert::AsRef::<[_]>::as_ref(_slice),
+                    #class_path,
+                env.borrow_mut())
+            } }
+        }
+
+        Some(match &self {
+            Self::Assertive(ty) => match ty {
+                InnerType::JavaPrimitive { ty, .. } => convert_primitive(RustPrimitive::from(*ty), value),
+                InnerType::RustPrimitive { ty, .. } => convert_primitive(*ty, value),
+                InnerType::Object(class) => convert_object(class, value),
             },
+            Self::Option { class, .. } => todo!("Option not yet supported when converting Rust value to Java value")
         })
     }
 }
@@ -281,21 +385,33 @@ impl Parse for ArrayType {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let inner;
         bracketed!(inner in input);
-        Ok(Self {
-            ty: inner.parse()?
-        })
+        let fork = inner.fork();
+
+        match fork.parse::<Ident>() {
+            Ok(ident) if ident.to_string() == "Option" => {
+                inner.advance_to(&fork);
+                drop(fork);
+                match inner.parse::<OptionType>()? {
+                    OptionType::Object(class) => Ok(Self::Option { ident, class }),
+                    OptionType::Array(array) => Err(syn::Error::new(array.span(), "Multi-dimensional Arrays not yet supported.")),
+                }
+            },
+            _ => Ok(Self::Assertive(inner.parse()?))
+        }
     }
 }
 impl Display for ArrayType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[{}]", self.ty)
-    }
-}
-impl Debug for ArrayType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ArrayType")
-            .field("ty", &self.ty)
-            .finish()
+        f.write_str("[")?;
+        match self {
+            Self::Assertive(ty) => Display::fmt(ty, f),
+            Self::Option { class, .. } => {
+                f.write_str("Option<")?;
+                Display::fmt(class, f)?;
+                f.write_str(">")
+            }
+        }?;
+        f.write_str("]")
     }
 }
 

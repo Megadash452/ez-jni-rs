@@ -22,11 +22,11 @@ assert_compile_fail(t, "option_prim", "
 use ez_jni::call;
 call!(static me.test.Test.method() -> Option<int>);
     ", Some("\
-error: Option can't be used with primitives, only Classes.
- --> ./target/tmp/compile_fail/option_prim.rs:5:39
+error: Primitives are not allowed as the Option's inner type. Only Classes are allowed here.
+ --> ./target/tmp/compile_fail/option_prim.rs:5:46
   |
 5 | call!(static me.test.Test.method() -> Option<int>);
-  |                                       ^^^^^^
+  |                                              ^^^
 "));
 
 assert_compile_fail(t, "option_result", "
@@ -55,7 +55,7 @@ assert_compile_fail(t, "result_result", "
 use ez_jni::call;
 call!(static me.test.Test.method() -> Result<Result<int, String>, String>);
     ", Some("\
-error: Can't nest a Result within a Result.
+error: Can't use 'Result' here.
  --> ./target/tmp/compile_fail/result_result.rs:5:46
   |
 5 | call!(static me.test.Test.method() -> Result<Result<int, String>, String>);
@@ -66,11 +66,11 @@ assert_compile_fail(t, "array_option_prim", "
 use ez_jni::call;
 call!(static me.test.Test.getIntArray() -> [Option<int>]);
     ", Some("\
-error: Option can't be used with primitives, only Classes.
- --> ./target/tmp/compile_fail/array_option_prim.rs:5:45
+error: Primitives are not allowed as the Option's inner type. Only Classes are allowed here.
+ --> ./target/tmp/compile_fail/array_option_prim.rs:5:52
   |
 5 | call!(static me.test.Test.getIntArray() -> [Option<int>]);
-  |                                             ^^^^^^
+  |                                                    ^^^
 "));
 }
 
@@ -82,18 +82,18 @@ assert_compile_fail(t, "param_option", "
 use ez_jni::call;
 call!(static me.test.Test.method(Option<int>(null)) -> void);
     ", Some("\
-error: Can't use 'Option' in arguments. Instead, use 'null' as the value.
- --> ./target/tmp/compile_fail/param_option.rs:5:34
+error: Primitives are not allowed as the Option's inner type. Only Classes are allowed here.
+ --> ./target/tmp/compile_fail/param_option.rs:5:41
   |
 5 | call!(static me.test.Test.method(Option<int>(null)) -> void);
-  |                                  ^^^^^^
+  |                                         ^^^
 "));
 
 assert_compile_fail(t, "param_option_array", "
 use ez_jni::call;
 call!(static me.test.Test.method(Option<[int]>(null)) -> void);
     ", Some("\
-error: Can't use 'Option' in arguments. Instead, use 'null' as the value.
+error: Can't use 'Option' in call! or new! arguments. Instead, use 'null' as the value.
  --> ./target/tmp/compile_fail/param_option_array.rs:5:34
   |
 5 | call!(static me.test.Test.method(Option<[int]>(null)) -> void);
@@ -104,18 +104,18 @@ assert_compile_fail(t, "param_array_option", "
 use ez_jni::call;
 call!(static me.test.Test.method([Option<int>](null)) -> void);
     ", Some("\
-error: 'Option' is not allowed here.
- --> ./target/tmp/compile_fail/param_array_option.rs:5:35
+error: Primitives are not allowed as the Option's inner type. Only Classes are allowed here.
+ --> ./target/tmp/compile_fail/param_array_option.rs:5:42
   |
 5 | call!(static me.test.Test.method([Option<int>](null)) -> void);
-  |                                   ^^^^^^
+  |                                          ^^^
 "));
 
 assert_compile_fail(t, "param_prim_null", "
 use ez_jni::call;
 call!(static me.test.Test.method(int(null)) -> void);
     ", Some("\
-error: Can't use 'null' as value of primitive parameter type.
+error: Can't use 'null' as value of primitive argument type.
  --> ./target/tmp/compile_fail/param_prim_null.rs:5:38
   |
 5 | call!(static me.test.Test.method(int(null)) -> void);
@@ -126,7 +126,7 @@ assert_compile_fail(t, "param_array_prim_null", "
 use ez_jni::call;
 call!(static me.test.Test.method([int]([1, null])) -> void);
     ", Some("\
-error: Can't use 'null' as value of primitive parameter type.
+error: Can't use 'null' as value of primitive argument type.
  --> ./target/tmp/compile_fail/param_array_prim_null.rs:5:44
   |
 5 | call!(static me.test.Test.method([int]([1, null])) -> void);
