@@ -1,6 +1,6 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
-use syn::{braced, parenthesized, parse::{Parse, ParseStream}, punctuated::Punctuated, token::{Brace, Paren}, Attribute, GenericParam, Generics, Ident, LifetimeParam, LitStr, Token};
+use syn::{braced, ext::IdentExt as _, parenthesized, parse::{Parse, ParseStream}, punctuated::Punctuated, token::{Brace, Paren}, Attribute, GenericParam, Generics, Ident, LifetimeParam, LitStr, Token};
 use crate::{
     types::{Class, InnerType, RustPrimitive, SigType, SpecialCaseConversion as _, Type}, utils::{gen_signature, merge_errors, take_class_attribute_required, Spanned}
 };
@@ -237,19 +237,21 @@ impl JniFnArg {
         let attrs = &self.attrs;
         let mutability = &self.mutability;
         let name = &self.name;
-
-        // Output nothing if there is no conversion to be done.
-        match self.ty.convert_java_to_rust(&quote!(#name)) {
-            Some(conversion) => quote! { #(#attrs)* let #mutability #name = #conversion; },
-            None => quote!(),
+        // Output nothing if parameter name is ellided
+        if name.to_string() == "_" {
+            return TokenStream::new()
         }
+        self.ty.convert_java_to_rust(&quote!(#name))
+            .map(|conversion| quote! { #(#attrs)* let #mutability #name = #conversion; })
+            // Output nothing if there is no conversion to be done.
+            .unwrap_or_default()
     }
 }
 impl Parse for JniFnArg {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         Ok(Self {
             attrs: Attribute::parse_outer(input)?,
-            name: input.parse()?,
+            name: input.call(Ident::parse_any)?,
             mutability: input.parse()?,
             colon_token: input.parse()?,
             ty: input.parse()?
