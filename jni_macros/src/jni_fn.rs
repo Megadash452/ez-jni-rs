@@ -2,8 +2,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
 use syn::{braced, parenthesized, parse::{Parse, ParseStream}, punctuated::Punctuated, token::{Brace, Paren}, Attribute, GenericParam, Generics, Ident, LifetimeParam, LitStr, Token};
 use crate::{
-    utils::{Spanned, gen_signature, take_class_attribute_required, merge_errors},
-    types::{Class, RustPrimitive, SigType, InnerType}
+    types::{Class, InnerType, RustPrimitive, SigType, Type}, utils::{gen_signature, merge_errors, take_class_attribute_required, Spanned}
 };
 
 /// Processes the input for [`crate::jni_fns`].
@@ -21,8 +20,6 @@ pub fn jni_fn(input: ParseStream) -> syn::Result<Vec<TokenStream>> {
 }
 
 // TODO: Allow generics in the arguments and return type if they are a Java Class
-
-// TODO: support arrays
 
 /// A rust function that uses Java types (or some Rust types) and is called by Java Code.
 /// 
@@ -216,7 +213,7 @@ impl ToTokens for JniFn {
 pub struct JniFnArg {
     pub attrs: Vec<Attribute>,
     pub name: Ident,
-    pub ty: InnerType
+    pub ty: Type
 }
 impl Parse for JniFnArg {
     fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -233,26 +230,24 @@ impl Parse for JniFnArg {
 impl ToTokens for JniFnArg {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         tokens.append_all(&self.attrs);
-        tokens.append(self.name.clone());
-        tokens.append_all(quote!(:));
+        self.name.to_tokens(tokens);
+        tokens.append(proc_macro2::Punct::new(':', proc_macro2::Spacing::Alone));
         
         // Convert Class to JObject (java.lang.String to JString) and leave primitives alone
         tokens.append_all(match &self.ty {
-            InnerType::RustPrimitive { ident, ty } => Ident::new(&ty.to_string(), ident.span()).into_token_stream(),
-            InnerType::JavaPrimitive { ident, ty } => Ident::new(&RustPrimitive::from(*ty).to_string(), ident.span()).into_token_stream(),
-            InnerType::Object(class) =>
-                if class.to_string() == "java.lang.String" {
-                    quote_spanned! {class.span()=> ::jni::objects::JString<'local>}
-                } else {
-                    quote_spanned! {class.span()=> ::jni::objects::JObject<'local>}
-                }
+            Type::Assertive(InnerType::RustPrimitive { ident, ty }) => Ident::new(&ty.to_string(), ident.span()).into_token_stream(),
+            Type::Assertive(InnerType::JavaPrimitive { ident, ty }) => Ident::new(&RustPrimitive::from(*ty).to_string(), ident.span()).into_token_stream(),
+            Type::Assertive(InnerType::Object(class)) if class.to_string() == "java.lang.String" => quote_spanned! {class.span()=> ::jni::objects::JString<'local>},
+            Type::Assertive(InnerType::Object(_))
+            | Type::Array(_)
+            | Type::Option { .. } => quote_spanned! {self.ty.span()=> ::jni::objects::JObject<'local>},
         })
     }
 }
 
 pub enum JniReturn {
     Void,
-    Type(InnerType)
+    Type(Type)
 }
 impl SigType for JniReturn {
     fn sig_char(&self) -> Ident {
@@ -285,17 +280,69 @@ impl ToTokens for JniReturn {
             Self::Type(output) => {
                 // Convert Class to *jobject (or *jstring) and leave primitives alone
                 let ty = match output {
-                    InnerType::RustPrimitive { ident, ty } => Ident::new(&ty.to_string(), ident.span()).into_token_stream(),
-                    InnerType::JavaPrimitive { ident, ty } => Ident::new(&RustPrimitive::from(*ty).to_string(), ident.span()).into_token_stream(),
-                    InnerType::Object(class) =>
-                        if class.to_string() == "java.lang.String" {
-                            quote_spanned! {class.span()=> ::jni::sys::jstring}
-                        } else {
-                            quote_spanned! {class.span()=> ::jni::sys::jobject}
-                        }
+                    Type::Assertive(InnerType::RustPrimitive { ident, ty }) => Ident::new(&ty.to_string(), ident.span()).into_token_stream(),
+                    Type::Assertive(InnerType::JavaPrimitive { ident, ty }) => Ident::new(&RustPrimitive::from(*ty).to_string(), ident.span()).into_token_stream(),
+                    Type::Assertive(InnerType::Object(class)) if class.to_string() == "java.lang.String" => quote_spanned! {class.span()=> ::jni::sys::jstring},
+                    Type::Assertive(InnerType::Object(_))
+                    | Type::Array(_)
+                    | Type::Option { .. } => quote_spanned! {output.span()=> ::jni::sys::jobject},
                 };
                 tokens.append_all(quote_spanned!(output.span()=> -> #ty))
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn jni_fn_test() {
+        syn::parse_str::<JniFn>("#[class = \"me.test.Test\"] pub fn test_jni_fn_1<'local>() { }")
+            .inspect(|f| { assert_eq!(f.to_token_stream().to_string(),
+                "# [doc = \"\"] # [doc = \"()V\"] # [no_mangle] pub extern \"system\" fn Java_me_test_Test_test_1jni_1fn_11 < 'local > (mut env : :: jni :: JNIEnv < 'local > , _class : :: jni :: objects :: JClass < 'local > ,) { :: ez_jni :: __throw :: catch_throw (& mut env , move | env | { }) }"
+            )})
+            .unwrap();
+        syn::parse_str::<JniFn>("#[class(me.test.Test)] pub fn test_jni_fn_2<'local>(s: java.lang.String) -> int { String::from_object(&s, env).unwrap().len() as i32 }")
+            .inspect(|f| { assert_eq!(f.to_token_stream().to_string(),
+                "# [doc = \"\"] # [doc = \"(Ljava/lang/String;)I\"] # [no_mangle] pub extern \"system\" fn Java_me_test_Test_test_1jni_1fn_12 < 'local > (mut env : :: jni :: JNIEnv < 'local > , _class : :: jni :: objects :: JClass < 'local > , s : :: jni :: objects :: JString < 'local >) -> i32 { :: ez_jni :: __throw :: catch_throw (& mut env , move | env | { String :: from_object (& s , env) . unwrap () . len () as i32 }) }"
+            )})
+            .unwrap();
+        syn::parse_str::<JniFn>("#[class(me.test.Test)] pub fn test_jni_fn_3<'local>(s: java.lang.String) -> java.lang.String { String::from_object(&s, env).unwrap().to_object(env).into_raw() }")
+            .inspect(|f| { assert_eq!(f.to_token_stream().to_string(),
+                "# [doc = \"\"] # [doc = \"(Ljava/lang/String;)Ljava/lang/String;\"] # [no_mangle] pub extern \"system\" fn Java_me_test_Test_test_1jni_1fn_13 < 'local > (mut env : :: jni :: JNIEnv < 'local > , _class : :: jni :: objects :: JClass < 'local > , s : :: jni :: objects :: JString < 'local >) -> :: jni :: sys :: jstring { :: ez_jni :: __throw :: catch_throw (& mut env , move | env | { String :: from_object (& s , env) . unwrap () . to_object (env) . into_raw () }) }"
+            )})
+            .unwrap();
+        syn::parse_str::<JniFn>("#[class(me.test.Test)] pub fn test_jni_fn_4<'local>(s: [String]) { }")
+            .inspect(|f| { assert_eq!(f.to_token_stream().to_string(),
+                "# [doc = \"\"] # [doc = \"([Ljava/lang/String;)V\"] # [no_mangle] pub extern \"system\" fn Java_me_test_Test_test_1jni_1fn_14 < 'local > (mut env : :: jni :: JNIEnv < 'local > , _class : :: jni :: objects :: JClass < 'local > , s : :: jni :: objects :: JObject < 'local >) { :: ez_jni :: __throw :: catch_throw (& mut env , move | env | { }) }"
+            )})
+            .unwrap();
+        syn::parse_str::<JniFn>("#[class(me.test.Test)] pub fn test_jni_fn_5<'local>() -> [String] { }")
+            .inspect(|f| { assert_eq!(f.to_token_stream().to_string(),
+                "# [doc = \"\"] # [doc = \"()[Ljava/lang/String;\"] # [no_mangle] pub extern \"system\" fn Java_me_test_Test_test_1jni_1fn_15 < 'local > (mut env : :: jni :: JNIEnv < 'local > , _class : :: jni :: objects :: JClass < 'local > ,) -> :: jni :: sys :: jobject { :: ez_jni :: __throw :: catch_throw (& mut env , move | env | { }) }"
+            )})
+            .unwrap();
+        syn::parse_str::<JniFn>("#[class(me.test.Test)] pub fn test_jni_fn_6<'local>(s: Option<String>) { }")
+            .inspect(|f| { assert_eq!(f.to_token_stream().to_string(),
+                "# [doc = \"\"] # [doc = \"(Ljava/lang/String;)V\"] # [no_mangle] pub extern \"system\" fn Java_me_test_Test_test_1jni_1fn_16 < 'local > (mut env : :: jni :: JNIEnv < 'local > , _class : :: jni :: objects :: JClass < 'local > , s : :: jni :: objects :: JObject < 'local >) { :: ez_jni :: __throw :: catch_throw (& mut env , move | env | { }) }"
+            )})
+            .unwrap();
+        syn::parse_str::<JniFn>("#[class(me.test.Test)] pub fn test_jni_fn_7<'local>() -> Option<String> { }")
+            .inspect(|f| { assert_eq!(f.to_token_stream().to_string(),
+                "# [doc = \"\"] # [doc = \"()Ljava/lang/String;\"] # [no_mangle] pub extern \"system\" fn Java_me_test_Test_test_1jni_1fn_17 < 'local > (mut env : :: jni :: JNIEnv < 'local > , _class : :: jni :: objects :: JClass < 'local > ,) -> :: jni :: sys :: jobject { :: ez_jni :: __throw :: catch_throw (& mut env , move | env | { }) }"
+            )})
+            .unwrap();
+        // syn::parse_str::<JniFn>("#[class(me.test.Test)] pub fn test_jni_fn_8<'local>() -> Result<String, java.lang.Exception> { }")
+        //     .inspect(|f| { assert_eq!(f.to_token_stream().to_string(),
+        //         ""
+        //     )})
+        //     .unwrap();
+        // syn::parse_str::<JniFn>("#[class(me.test.Test)] pub fn test_jni_fn_9<'local>() -> Result<Option<String>, java.lang.Exception> { }")
+        //     .inspect(|f| { assert_eq!(f.to_token_stream().to_string(),
+        //         ""
+        //     )})
+        //     .unwrap();
     }
 }
