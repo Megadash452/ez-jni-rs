@@ -96,10 +96,48 @@ impl SigType for Type {
 impl SpecialCaseConversion for Type {
     fn convert_java_to_rust(&self, value: &TokenStream) -> Option<TokenStream> {
         match self {
+            // Panic if the value is NULL and user did not use Option
+            Self::Assertive(InnerType::Object(_))
+            | Self::Array(_) => Some({
+                let conversion = {
+                    let value = quote_spanned! {value.span()=> v};
+                    match self {
+                        Self::Assertive(InnerType::Object(class)) => class.convert_java_to_rust(&value),
+                        Self::Array(array) => array.convert_java_to_rust(&value),
+                        _ => panic!("Unreachable")
+                    }.unwrap_or(value)
+                };
+                
+                quote::quote_spanned! {conversion.span()=> {
+                    let v = #value;
+                    if v.is_null() {
+                        panic!("Expected Object to not be NULL")
+                    }
+                    #conversion
+                } }
+            }),
             Self::Assertive(ty) => ty.convert_java_to_rust(value),
-            Self::Array(array) => array.convert_java_to_rust(value),
-            Self::Option { ty: OptionType::Object(class), .. } => class.convert_java_to_rust(value),
-            Self::Option { ty: OptionType::Array(array), .. } => array.convert_java_to_rust(value),
+            // Wrap the Type in Option if user expects value to possibly be NULL
+            Self::Option { ident, ty } => Some({
+                let some = quote_spanned! {ident.span()=> ::std::option::#ident::Some};
+                let none = quote_spanned! {ident.span()=> ::std::option::#ident::None};
+                let conversion = {
+                    let value = quote_spanned! {value.span()=> v};
+                    match ty {
+                        OptionType::Array(array) => array.convert_java_to_rust(&value),
+                        OptionType::Object(class) => class.convert_java_to_rust(&value),
+                    }.unwrap_or(value)
+                };
+
+                quote::quote_spanned! {conversion.span()=> {
+                    let v = #value;
+                    if v.is_null() {
+                        #none
+                    } else {
+                        #some(#conversion)
+                    }
+                } }
+            }),
         }
     }
     fn convert_rust_to_java(&self, value: &TokenStream) -> Option<TokenStream> {
@@ -354,7 +392,7 @@ impl SpecialCaseConversion for ArrayType {
                 match class.convert_rust_to_java(&quote_spanned! {value.span()=> v}) {
                     Some(conversion) => &quote_spanned!(value.span()=>
                         (&(#value)).iter()
-                            .map(|&v| #conversion)
+                            .map(|v| #conversion)
                             .collect::<::std::boxed::Box<[_]>>()
                     ),
                     None => value

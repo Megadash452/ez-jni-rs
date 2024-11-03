@@ -17,106 +17,22 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
     let param_vars = gen_arg_vars_defs(call.parameters.iter());
     let arguments = gen_arguments(call.parameters.iter());
 
-    // Common checks done by all Return variants, such as .l() to make the result into a JObject.
-    let common = {
-        // Induce panic when fails to call method
-        let call_failed_msg = match &call.call_type {
-            Either::Left(StaticMethod(path))
-                => format!("Failed to call static method {name}() on {}: {{err}}", path.to_string()),
-            Either::Right(ObjectMethod(_)) => format!("Failed to call {name}(): {{err}}"),
-        };
-        // Induce panic when the returned value is not the expected type
-        let incorrect_type_msg = format!("Expected {name}() to return {}: {{err}}", call.return_type.inner());
-        let sig_char = Ident::new(&call.return_type.sig_char().to_string(), call.return_type.span());
-        // Apply special case conversion
-        // Also convert value to Option<_> if it is any kind of Object because it could be null.
-        let conversion = {
-            let conversion = call.return_type.special_case_conversions(quote!(v));
-
-            if call.return_type.sig_char().to_string().as_str() == "l" {
-                match conversion {
-                    Some(conversion) => quote! { .map(|v| (!v.is_null()).then(|| #conversion)) },
-                    None => quote! { .map(|v| (!v.is_null()).then_some(v)) },
-                }
-            } else {
-                match conversion {
-                    Some(conversion) => quote! { .map(|v| #conversion) },
-                    None => quote!()
-                }
-            }
-        };
-
-        quote! {
-            .unwrap_or_else(|err| panic!(#call_failed_msg))
-            .#sig_char() #conversion
-            .unwrap_or_else(|err| panic!(#incorrect_type_msg))
-        }
-    };
-
     // Build the macro function call
     let jni_call = match &call.call_type {
         Either::Left(StaticMethod(class)) => {
             let class = LitStr::new(&class.to_jni_class_path(), class.span());
-            quote! { env.call_static_method(#class, #name, #signature, #arguments) }
+            quote! { {
+                #param_vars
+                env.call_static_method(#class, #name, #signature, #arguments)
+            } }
         }
-        Either::Right(ObjectMethod(object)) => quote! {
+        Either::Right(ObjectMethod(object)) => quote! { {
+            #param_vars
             env.call_method(&(#object), #name, #signature, #arguments)
-        },
+        } },
     };
 
-    let non_null_msg = format!("Expected Object returned by {name}() to not be NULL");
-    // The class or object that the method is being called on. Used for panic message.
-    let target = match call.call_type {
-        Either::Left(StaticMethod(class)) => {
-            let class = class.to_jni_class_path();
-            quote! { ::ez_jni::__throw::Either::Left(#class) }
-        }
-        Either::Right(ObjectMethod(obj)) => quote! { ::ez_jni::__throw::Either::Right(&(#obj)) },
-    };
-    // The Initial JNI call, before any types or errors are checked
-    let initial = quote! {
-        use ::std::borrow::BorrowMut as _;
-        #param_vars
-        let __call = #jni_call;
-    };
-    match call.return_type {
-        // For return types that are not Result
-        Return::Assertive(ty) => match ty {
-            // Unwrap Object that was converted to Option<Object>
-            ReturnableType::Type(Type::Assertive(InnerType::Object(_)))
-            | ReturnableType::Type(Type::Array(_)) => quote! { {
-                #initial
-                ::ez_jni::__throw::panic_uncaught_exception(env.borrow_mut(), #target, #name);
-                __call #common
-                    .unwrap_or_else(|| panic!(#non_null_msg))
-            } },
-            // Leave result as is
-            _ => quote! { {
-                #initial
-                ::ez_jni::__throw::panic_uncaught_exception(env.borrow_mut(), #target, #name);
-                __call #common
-            } },
-        }
-        // Move the result of the method call to a Result if the caller expects that the method could throw.
-        Return::Result { ty, err_ty, ..} => match ty {
-            // Unwrap Object that was converted to Option<Object>
-            ReturnableType::Type(Type::Assertive(InnerType::Object(_)))
-            | ReturnableType::Type(Type::Array(_)) => quote! { {
-                #initial
-                ::ez_jni::__throw::catch::<#err_ty>(env.borrow_mut())
-                    .map(|_| __call #common
-                        .unwrap_or_else(|| panic!(#non_null_msg))
-                    )
-            } },
-            // Leave result as is
-            _ => quote! { {
-                #initial
-                ::ez_jni::__throw::catch::<#err_ty>(env.borrow_mut())
-                    .map(|_| __call #common)
-            } },
-        }
-        
-    }
+    call.return_type.convert_call_result(&name, jni_call, &call.call_type)
 }
 
 /// Processes input for macro call [super::new!].
@@ -125,7 +41,7 @@ pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
     let signature = gen_signature(call.parameters.iter(), &Return::new_void(Span::call_site()));
     let param_vars = gen_arg_vars_defs(call.parameters.iter());
     let arguments = gen_arguments(call.parameters.iter());
-    let method_name = format!("constructor{}", signature.value());
+    let method_name = format!("<init>{}", signature.value());
     let call_failed_msg = format!("Failed to call constructor {} on {}: {{err}}", signature.value(), class.to_token_stream());
     
     // The Initial JNI call, before any types or errors are checked
@@ -540,12 +456,64 @@ impl Return {
             ReturnableType::Type(ty) => ty.to_string(),
         }
     }
-    pub fn special_case_conversions(&self, value: TokenStream) -> Option<TokenStream> {
+    /// Converts to value of the JNI Call to a *Rust value*.
+    /// 
+    /// Also checks if the Call resulted in an *exception*.
+    /// `panic!s` if there was an exception and the return type was not [`Result`].
+    /// Otherwise, wraps the value in a [`Result`].
+    pub fn convert_call_result(&self, method_name: &str, jni_call: TokenStream, call_type: &Either<StaticMethod, ObjectMethod>) -> TokenStream {
+        // Common checks done by all Return variants
+        let common = {
+            // Induce panic when fails to call method
+            let call_failed_msg = match call_type {
+                Either::Left(StaticMethod(class))
+                    => format!("Failed to call static method {class}.{method_name}(): {{err}}"),
+                Either::Right(ObjectMethod(_)) => format!("Failed to call method {method_name}(): {{err}}"),
+            };
+            // Induce panic when the returned value is not the expected type
+            let incorrect_type_msg = format!("Expected {method_name}() to return {}: {{err}}", self.inner());
+            let sig_char = Ident::new(&self.sig_char().to_string(), self.span());
+            // Apply special case conversion
+            let conversion = match self {
+                Self::Assertive(ReturnableType::Void(_))
+                | Self::Result { ty: ReturnableType::Void(_), .. } => None,
+                Self::Assertive(ReturnableType::Type(ty))
+                | Self::Result { ty: ReturnableType::Type(ty), .. } => ty.convert_java_to_rust(&quote_spanned!(jni_call.span()=> v))
+                    .map(|conversion| quote! { .map(|v| #conversion) }),
+            };
+
+            quote! {
+                .unwrap_or_else(|err| panic!(#call_failed_msg))
+                .#sig_char()
+                #conversion // Might be empty tokens
+                .unwrap_or_else(|err| panic!(#incorrect_type_msg))
+            }
+        };
+
+        // The class or object that the method is being called on. Used for panic message.
+        let target = match call_type {
+            Either::Left(StaticMethod(class)) => {
+                let class = class.to_jni_class_path();
+                quote! { ::ez_jni::__throw::Either::Left(#class) }
+            }
+            Either::Right(ObjectMethod(obj)) => quote! { ::ez_jni::__throw::Either::Right(&(#obj)) },
+        };
+
         match self {
-            Self::Assertive(ReturnableType::Void(_))
-            | Self::Result { ty: ReturnableType::Void(_), .. } => None,
-            Self::Assertive(ReturnableType::Type(ty))
-            | Self::Result { ty: ReturnableType::Type(ty), .. } => ty.convert_java_to_rust(&value),
+            // For return types that are not Result
+            Self::Assertive(_) => quote! { {
+                use ::std::borrow::BorrowMut as _;
+                let __call = #jni_call;
+                ::ez_jni::__throw::panic_uncaught_exception(env.borrow_mut(), #target, #method_name);
+                __call #common
+            } },
+            // Move the result of the method call to a Result if the caller expects that the method could throw.
+            Self::Result { err_ty, ..} => quote! { {
+                use ::std::borrow::BorrowMut as _;
+                let __call = #jni_call;
+                ::ez_jni::__throw::catch::<#err_ty>(env.borrow_mut())
+                    .map(|_| __call #common)
+            } }
         }
     }
 }
