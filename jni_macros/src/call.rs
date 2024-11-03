@@ -6,7 +6,7 @@ use syn::{
     braced, parenthesized, parse::{discouraged::Speculative, Parse, ParseStream, Parser}, punctuated::{Pair, Punctuated}, Expr, Ident, LitStr, Token
 };
 use crate::{
-    types::{ArrayType, Class, InnerType, JavaPrimitive, SigType, SpecialCaseConversion, Type, NULL_KEYWORD},
+    types::{ArrayType, Class, InnerType, JavaPrimitive, RustPrimitive, SigType, SpecialCaseConversion, Type, NULL_KEYWORD},
     utils::{first_char_uppercase, gen_signature, join_spans, merge_errors, Spanned}
 };
 
@@ -475,8 +475,16 @@ impl Return {
             let sig_char = Ident::new(&self.sig_char().to_string(), self.span());
             // Apply special case conversion
             let conversion = match self {
+                // Ignore bool conversion because JValue.z() returns Rust bool, not jboolean.
+                Self::Assertive(ReturnableType::Type(Type::Assertive(InnerType::RustPrimitive { ty: RustPrimitive::Bool, .. })))
+                | Self::Assertive(ReturnableType::Type(Type::Assertive(InnerType::JavaPrimitive { ty: JavaPrimitive::Boolean, .. })))
+                | Self::Result { ty: ReturnableType::Type(Type::Assertive(InnerType::RustPrimitive { ty: RustPrimitive::Bool, .. })), .. }
+                | Self::Result { ty: ReturnableType::Type(Type::Assertive(InnerType::JavaPrimitive { ty: JavaPrimitive::Boolean, .. })), .. }
+                    => None,
+                // Void has no conversion
                 Self::Assertive(ReturnableType::Void(_))
                 | Self::Result { ty: ReturnableType::Void(_), .. } => None,
+                // Normal conversion
                 Self::Assertive(ReturnableType::Type(ty))
                 | Self::Result { ty: ReturnableType::Type(ty), .. } => ty.convert_java_to_rust(&quote_spanned!(jni_call.span()=> v))
                     .map(|conversion| quote! { .map(|v| #conversion) }),

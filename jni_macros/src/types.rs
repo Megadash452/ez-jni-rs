@@ -276,14 +276,9 @@ impl SpecialCaseConversion for ArrayType {
             // The inner type of the array might require some conversion
             let conversion = {
                 let element_tokens = quote_spanned!(value.span()=> v); 
-                // Must also convert to Rust bool (jni, why only here?)
-                if r_prim == RustPrimitive::Bool {
-                    quote_spanned!(element_tokens.span()=> #element_tokens != 0)
-                } else {
-                    // Convert using the variable
-                    r_prim.convert_java_to_rust(&element_tokens)
-                        .unwrap_or(element_tokens)
-                }
+                // Convert using the variable
+                r_prim.convert_java_to_rust(&element_tokens)
+                    .unwrap_or(element_tokens)
             };
 
             quote_spanned! {value.span()=> {
@@ -827,8 +822,8 @@ impl RustPrimitive {
 impl SpecialCaseConversion for RustPrimitive {
     fn convert_java_to_rust(&self, value: &TokenStream) -> Option<TokenStream> {
         match *self {
-            // // jni::sys::jboolean (u8) must be converted to rust bool
-            // Self::Bool => Some(quote_spanned!(value.span()=> bool::from(#value))),
+            // jni::sys::jboolean (u8) must be converted to rust bool
+            Self::Bool => Some(quote_spanned!(value.span()=> #value != 0)),
             // Decode UTF-16
             Self::Char => Some(quote_spanned! {value.span()=>
                 char::decode_utf16(Some(#value))
