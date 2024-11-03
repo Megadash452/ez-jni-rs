@@ -7,7 +7,7 @@ mod types;
 use call::{ConstructorCall, MethodCall};
 use either::Either;
 use proc_macro::TokenStream;
-use quote::{quote, ToTokens};
+use quote::quote;
 use utils::item_from_derive_input;
 
 /// Converts a Rust function to one that can be called from external Java code.
@@ -68,7 +68,6 @@ pub fn jni_fn(input: TokenStream) -> TokenStream {
     match syn::parse::Parser::parse(jni_fn::jni_fn, input) {
         Ok(output) => output
             .into_iter()
-            .map(|f| f.into_token_stream())
             .collect::<proc_macro2::TokenStream>()
             .into(),
         Err(error) => error.to_compile_error().into()

@@ -1,6 +1,6 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
-use syn::{braced, parenthesized, parse::{Parse, ParseStream}, punctuated::Punctuated, Attribute, GenericParam, Generics, Ident, ItemFn, LifetimeParam, LitStr, Token};
+use syn::{braced, parenthesized, parse::{Parse, ParseStream}, punctuated::Punctuated, token::{Brace, Paren}, Attribute, GenericParam, Generics, Ident, LifetimeParam, LitStr, Token};
 use crate::{
     utils::{Spanned, gen_signature, take_class_attribute_required, merge_errors},
     types::{Class, RustPrimitive, SigType, InnerType}
@@ -8,25 +8,16 @@ use crate::{
 
 /// Processes the input for [`crate::jni_fns`].
 /// Converts the parsed [`JniFn`] to a regular function used in Rust.
-pub fn jni_fn(input: ParseStream) -> syn::Result<Vec<ItemFn>> {
+pub fn jni_fn(input: ParseStream) -> syn::Result<Vec<TokenStream>> {
     let mut inputs = Vec::new();
-    let mut errors = Vec::new();
 
     // Parse multiple jni_fn
     while !input.is_empty() {
-        match input.parse::<JniFn>() {
-            Ok(f) => inputs.push(f),
-            Err(error) => errors.push(error),
-        }
+        inputs.push(input.parse::<JniFn>()?.to_token_stream());
     }
 
-    merge_errors(errors)?;
-
     // Convert all JniFn to ItemFn 
-    Ok(inputs.into_iter()
-        .map(|f| f.to_rust_fn())
-        .collect()
-    )
+    Ok(inputs)
 }
 
 // TODO: Allow generics in the arguments and return type if they are a Java Class
@@ -41,42 +32,18 @@ pub struct JniFn {
     /// The Java Class the function is a method of.
     /// This takes the form of an attribute that is removed after parsing.
     class: Class,
+    pub pub_token: Token![pub],
+    pub fn_token: Token![fn],
     pub name: Ident,
+    pub lt_token: Token![<],
     pub lifetime: LifetimeParam,
+    pub gt_token: Token![>],
+    pub paren_token: Paren,
     pub inputs: Punctuated<JniFnArg, Token![,]>,
     // pub variadic: Option<Variadic>, Should this be allowed?
     pub output: JniReturn,
+    pub brace_token: Brace,
     pub content: TokenStream,
-}
-impl JniFn {
-    pub fn to_rust_fn(&self) -> ItemFn {
-        let name = {
-            let class = self.class.to_string()
-                .replace('.', "_");
-            let name = self.name.to_string().replace('_', "_1");
-    
-            Ident::new(&format!("Java_{class}_{name}"), self.name.span())
-        };
-
-        // Build a java method signature, something like (Ljava.lang.String;)I
-        let method_sig = gen_signature(self.inputs.iter().map(|i| &i.ty), &self.output).value();
-
-        let attrs = &self.attrs;
-        let lifetime = &self.lifetime;
-        let inputs = &self.inputs;
-        let output = &self.output;
-        let content = &self.content;
-
-        syn::parse_quote! {
-            #(#attrs)*
-            #[doc = ""]
-            #[doc = #method_sig]
-            #[no_mangle]
-            pub extern "system" fn #name<#lifetime>(mut env: ::jni::JNIEnv<'local>, _class: ::jni::objects::JClass<'local>, #inputs) #output {
-                ::ez_jni::__throw::catch_throw(&mut env, move |env| { #content })
-            }
-        }
-    }
 }
 impl Parse for JniFn {
     fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -90,35 +57,46 @@ impl Parse for JniFn {
             .ok();
 
         // Parse `pub`
-        let _ = input.parse::<Token![pub]>()
+        let pub_token = input.parse::<Token![pub]>()
             .map_err(|err| errors.push(
                 syn::Error::new(err.span(), format!("{err}; jn_fn must have `pub` because they must be exported by the library"))
-            ));
-
-        // Parse `fn`
-        input.parse::<Token![fn]>()?;
-
-        // Parse function name
-        let name = input.parse::<Ident>()
-            .map_err(|err|
-                syn::Error::new(err.span(), format!("{err}; Expected function name"))
-            )?;
-
-        // Parsed all generics, but will only accept one lifetime
-        let generics = input.parse::<Generics>()
-            .map_err(|err| errors.push(
-                syn::Error::new(err.span(), format!("{err}; {LIFETIME_ERROR}"))
             ))
             .ok();
 
-        // Parse arguments with Java types
-        let inputs = {
-            let inner;
-            parenthesized!(inner in input);
+        // Parse `fn`
+        let fn_token = input.parse::<Token![fn]>()
+            .map_err(|err| errors.push(err))
+            .ok();
 
-            Punctuated::<JniFnArg, Token![,]>::parse_terminated(&inner)
-                .map_err(|err| errors.push(err))
-                .ok()
+        // Parse function name
+        let name = input.parse::<Ident>()
+            .map_err(|err| errors.push(syn::Error::new(err.span(), format!("{err}; Expected function name"))))
+            .ok();
+
+        // Parse all generics, but will only accept one lifetime
+        let generics = input.parse::<Generics>()
+            .map_err(|err| errors.push(err))
+            .ok()
+            .and_then(|generics| {
+                let lt_token = match generics.lt_token {
+                    Some(lt_token) => Some(lt_token),
+                    None => {
+                        errors.push(syn::Error::new(Span::call_site(), format!("Must have a generic lifetime")));
+                        None
+                    },
+                }?;
+                Some((lt_token, generics.params, generics.gt_token?))
+            });
+
+        // Parse arguments with Java types
+        let (paren_token, inputs) = {
+            let inner;
+            (
+                parenthesized!(inner in input),
+                Punctuated::<JniFnArg, Token![,]>::parse_terminated(&inner)
+                    .map_err(|err| errors.push(err))
+                    .ok()
+            )
         };
 
         // Parse return arrow `->` and return type (is void if there is none)
@@ -127,16 +105,18 @@ impl Parse for JniFn {
             .ok();
 
         // Parse the content of the function inside the braces `{ ... }`
-        let content = {
+        let (brace_token, content) = {
             let inner;
-            braced!(inner in input);
-            inner.parse()?
+            (braced!(inner in input), inner.parse()?)
         };
 
         merge_errors(errors)?;
-
-        // If there were any errors, the function did eraly return, so all tokens were parsed successfully.
+        // If there were any errors, the function returned on the line above, so reaching here means all tokens were parsed successfully.
         let mut attrs = attrs.unwrap();
+        let pub_token = pub_token.unwrap();
+        let fn_token = fn_token.unwrap();
+        let name = name.unwrap();
+        let (lt_token, generics, gt_token) = generics.unwrap();
         let inputs = inputs.unwrap();
         let output = output.unwrap();
 
@@ -148,8 +128,7 @@ impl Parse for JniFn {
             .map_err(|err| errors.push(err))
             .ok();
 
-        let generics = generics.unwrap();
-        let mut iter = generics.params.iter();
+        let mut iter = generics.into_iter();
 
         // Parsed all generics, but will only accept one lifetime, and no other generic types
         let lifetime = match iter.next() {
@@ -158,16 +137,16 @@ impl Parse for JniFn {
                     errors.push(syn::Error::new(lifetime.span(), LIFETIME_ERROR));
                     None
                 } else {
-                    Some(lifetime.clone())
+                    Some(lifetime)
                 },
             Some(generic) => {
                 errors.push(syn::Error::new(generic.span(), "jni_fn can't have generic constants or types"));
                 None
             },
             None => {
-                errors.push(syn::Error::new(generics.span(), LIFETIME_ERROR));
+                errors.push(syn::Error::new(name.span(), LIFETIME_ERROR));
                 None
-            }
+            },
         };
 
         // Only allow 1 lifetime
@@ -190,12 +169,47 @@ impl Parse for JniFn {
         let class = class.unwrap();
         let lifetime = lifetime.unwrap();
 
-        Ok(Self { attrs, class, name, lifetime, inputs, output, content })
+        Ok(Self { attrs, class, pub_token, fn_token, name, lt_token, lifetime, gt_token, paren_token, inputs, output, brace_token, content })
     }
 }
 impl ToTokens for JniFn {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        tokens.append_all(self.to_rust_fn().into_token_stream())
+        #[allow(unused_variables)] let a = 0;
+        // The real name of the function as it will be used by Java
+        let name = {
+            let class = self.class.to_string()
+                .replace('.', "_");
+            let name = self.name.to_string().replace('_', "_1");
+    
+            Ident::new(&format!("Java_{class}_{name}"), self.name.span())
+        };
+
+        // Build a java method signature, something like (Ljava.lang.String;)I
+        let method_sig = gen_signature(self.inputs.iter().map(|i| &i.ty), &self.output).value();
+
+        tokens.append_all(&self.attrs);
+        tokens.append_all(quote!(#[doc = ""]));
+        tokens.append_all(quote!(#[doc = #method_sig]));
+        tokens.append_all(quote!(#[no_mangle]));
+        self.pub_token.to_tokens(tokens);
+        tokens.append_all(quote!(extern "system"));
+        self.fn_token.to_tokens(tokens);
+        name.to_tokens(tokens);
+        self.lt_token.to_tokens(tokens);
+        self.lifetime.to_tokens(tokens);
+        self.gt_token.to_tokens(tokens);
+        self.paren_token.surround(tokens, |tokens| {
+            tokens.append_all(quote_spanned!(self.paren_token.span.span()=> mut env: ::jni::JNIEnv<'local>, _class: ::jni::objects::JClass<'local>,));
+            self.inputs.to_tokens(tokens);
+        });
+        self.output.to_tokens(tokens);
+        self.brace_token.surround(tokens, |tokens| {
+            let mut content = TokenStream::new();
+            self.brace_token.surround(&mut content, |tokens| {
+                self.content.to_tokens(tokens);
+            });
+            tokens.append_all(quote_spanned! {self.brace_token.span=> ::ez_jni::__throw::catch_throw(&mut env, move |#[allow(unused_variables)] env| #content) });
+        });
     }
 }
 
