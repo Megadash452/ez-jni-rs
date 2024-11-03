@@ -268,7 +268,7 @@ pub fn create_object_array<'local, 'other>(slice: &[impl AsRef<JObject<'other>>]
 }
 
 #[doc(hidden)]
-/// THis trait helps with automatically converting some Rust types into *Java String*s so that they can be passed into arguments
+/// This trait helps with automatically converting some Rust types into *Java String*s so that they can be passed into arguments
 pub trait AsNullableStrArg {
     fn as_string_arg<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local>;
 }

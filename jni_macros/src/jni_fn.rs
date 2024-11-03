@@ -2,7 +2,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
 use syn::{braced, parenthesized, parse::{Parse, ParseStream}, punctuated::Punctuated, token::{Brace, Paren}, Attribute, GenericParam, Generics, Ident, LifetimeParam, LitStr, Token};
 use crate::{
-    types::{Class, InnerType, RustPrimitive, SigType, Type}, utils::{gen_signature, merge_errors, take_class_attribute_required, Spanned}
+    types::{Class, InnerType, RustPrimitive, SigType, SpecialCaseConversion as _, Type}, utils::{gen_signature, merge_errors, take_class_attribute_required, Spanned}
 };
 
 /// Processes the input for [`crate::jni_fns`].
@@ -203,35 +203,65 @@ impl ToTokens for JniFn {
         self.brace_token.surround(tokens, |tokens| {
             let mut content = TokenStream::new();
             self.brace_token.surround(&mut content, |tokens| {
+                // Create local variables that hold the converted values of the arguments
+                for arg in &self.inputs {
+                    tokens.append_all(arg.create_rust_val());
+                }
                 self.content.to_tokens(tokens);
             });
-            tokens.append_all(quote_spanned! {self.brace_token.span=> ::ez_jni::__throw::catch_throw(&mut env, move |#[allow(unused_variables)] env| #content) });
+
+            tokens.append_all(match self.output.convert_rust_to_java(&quote_spanned!(self.output.span()=> r)) {
+                Some(conversion) => quote_spanned! {self.brace_token.span=>
+                    ::ez_jni::__throw::catch_throw_map(&mut env, move |#[allow(unused_variables)] env| #content, |r, env| #conversion)
+                },
+                None => quote_spanned! {self.brace_token.span=>
+                    ::ez_jni::__throw::catch_throw(&mut env, move |#[allow(unused_variables)] env| #content)
+                }
+            });
         });
     }
 }
 
 pub struct JniFnArg {
     pub attrs: Vec<Attribute>,
+    pub mutability: Option<Token![mut]>,
     pub name: Ident,
+    pub colon_token: Token![:],
     pub ty: Type
+}
+impl JniFnArg {
+    /// Outputs a statement (*local variable definition*) that converts the argument to a Rust value.
+    /// 
+    /// The argument is shadowed by the local variable with the same name.
+    pub fn create_rust_val(&self) -> TokenStream {
+        let attrs = &self.attrs;
+        let mutability = &self.mutability;
+        let name = &self.name;
+
+        // Output nothing if there is no conversion to be done.
+        match self.ty.convert_java_to_rust(&quote!(#name)) {
+            Some(conversion) => quote! { #(#attrs)* let #mutability #name = #conversion; },
+            None => quote!(),
+        }
+    }
 }
 impl Parse for JniFnArg {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         Ok(Self {
             attrs: Attribute::parse_outer(input)?,
             name: input.parse()?,
-            ty: {
-                input.parse::<Token![:]>()?;
-                input.parse()?
-            }
+            mutability: input.parse()?,
+            colon_token: input.parse()?,
+            ty: input.parse()?
         })
     }
 }
 impl ToTokens for JniFnArg {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         tokens.append_all(&self.attrs);
+        self.mutability.to_tokens(tokens);
         self.name.to_tokens(tokens);
-        tokens.append(proc_macro2::Punct::new(':', proc_macro2::Spacing::Alone));
+        self.colon_token.to_tokens(tokens);
         
         // Convert Class to JObject (java.lang.String to JString) and leave primitives alone
         tokens.append_all(match &self.ty {
@@ -247,27 +277,45 @@ impl ToTokens for JniFnArg {
 
 pub enum JniReturn {
     Void,
-    Type(Type)
+    Type {
+        arrow_token: Token![->],
+        ty: Type
+    }
+}
+impl JniReturn {
+    pub fn convert_rust_to_java(&self, value: &TokenStream) -> Option<TokenStream> {
+        match self {
+            Self::Void => None,
+            Self::Type { ty, .. } => ty.convert_rust_to_java(value)
+                // If Type is a JObject, convert it to *jobject
+                .map(|conversion| match ty {
+                    Type::Assertive(InnerType::RustPrimitive { .. } | InnerType::JavaPrimitive { .. }) => conversion,
+                    Type::Assertive(InnerType::Object(_))
+                    | Type::Array(_)
+                    | Type::Option { .. } => quote_spanned!(conversion.span()=> #conversion.as_raw())
+                }),
+        }
+    }
 }
 impl SigType for JniReturn {
     fn sig_char(&self) -> Ident {
         match self {
             Self::Void => Ident::new("v", Span::call_site()),
-            Self::Type(ty) => ty.sig_char()
+            Self::Type { ty, .. } => ty.sig_char()
         }
     }
     fn sig_type(&self) -> LitStr {
         match self {
             Self::Void => LitStr::new("V", Span::call_site()),
-            Self::Type(ty) => ty.sig_type()
+            Self::Type { ty, .. } => ty.sig_type()
         }
     }
 }
 impl Parse for JniReturn {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         // Parse return arrow `->` and return type (is void if there is none)
-        Ok(if input.parse::<Token![->]>().is_ok() {
-            Self::Type(input.parse()?)
+        Ok(if let Ok(arrow_token) = input.parse::<Token![->]>() {
+            Self::Type { arrow_token, ty: input.parse()? }
         } else {
             Self::Void
         })
@@ -277,17 +325,17 @@ impl ToTokens for JniReturn {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match self {
             Self::Void => { }, // Void return has no tokens
-            Self::Type(output) => {
+            Self::Type { arrow_token, ty: output } => {
+                arrow_token.to_tokens(tokens);
                 // Convert Class to *jobject (or *jstring) and leave primitives alone
-                let ty = match output {
+                tokens.append_all(match output {
                     Type::Assertive(InnerType::RustPrimitive { ident, ty }) => Ident::new(&ty.to_string(), ident.span()).into_token_stream(),
                     Type::Assertive(InnerType::JavaPrimitive { ident, ty }) => Ident::new(&RustPrimitive::from(*ty).to_string(), ident.span()).into_token_stream(),
                     Type::Assertive(InnerType::Object(class)) if class.to_string() == "java.lang.String" => quote_spanned! {class.span()=> ::jni::sys::jstring},
                     Type::Assertive(InnerType::Object(_))
                     | Type::Array(_)
                     | Type::Option { .. } => quote_spanned! {output.span()=> ::jni::sys::jobject},
-                };
-                tokens.append_all(quote_spanned!(output.span()=> -> #ty))
+                });
             },
         }
     }

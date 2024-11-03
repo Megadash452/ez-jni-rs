@@ -28,18 +28,8 @@ impl std::fmt::Display for PanicLocation {
     }
 }
 static PANIC_LOCATION: RwLock<Option<PanicLocation>> = RwLock::new(None);
-
-/// Runs a Rust function and returns its value, catching any `panics!` and throwing them as Java Exceptions.
-///
-/// Returns the [`Zeroed`][std::mem::zeroed()] representation of the return type.
-/// This means that this function should only return directly to Java,
-/// or `R` should only be a type like a *pointer* or an *integer*.
-/// 
-/// This function is used by [ez_jni_macros::jni_fn].
-pub fn catch_throw<'local, R>(
-    env: &mut JNIEnv<'local>,
-    f: impl FnOnce(&mut JNIEnv<'local>) -> R,
-) -> R {
+/// Sets a panic hook to grab [`PANIC_LOCATION`] data.
+fn set_panic_hook() {
     std::panic::set_hook(Box::new(|info| {
         if let Ok(mut panic_location) = PANIC_LOCATION.write() {
             if let Some(location) = info.location() {
@@ -47,9 +37,40 @@ pub fn catch_throw<'local, R>(
             }
         }
     }));
+}
 
+/// Runs a Rust function and returns its value, catching any `panics!` and throwing them as Java Exceptions.
+///
+/// If **f** `panics!`, this will return the [`Zeroed`][std::mem::zeroed()] representation of the return type.
+/// This means that this function should only return directly to Java.
+/// 
+/// DO NOT try to operate on the return value because you will have no indication wether **f** panicked and returned *zeroed*.
+/// 
+/// This function is used by [ez_jni_macros::jni_fn].
+pub fn catch_throw<'local, R>(
+    env: &mut JNIEnv<'local>,
+    f: impl FnOnce(&mut JNIEnv<'local>) -> R,
+) -> R {
+    set_panic_hook();
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(env))) {
         Ok(r) => r,
+        Err(payload) => {
+            throw_panic(env, payload);
+            unsafe { std::mem::zeroed() }
+        }
+    }
+}
+/// Same as [`catch_throw()`], but maps the returned `R` to a Java value `J`.
+pub fn catch_throw_map<'local, R, J>(
+    env: &mut JNIEnv<'local>,
+    f: impl FnOnce(&mut JNIEnv<'local>) -> R,
+    map: impl FnOnce(R, &mut JNIEnv<'local>) -> J,
+) -> J {
+    set_panic_hook();
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(env)))
+        .and_then(|r| std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| map(r, env))))
+    {
+        Ok(j) => j,
         Err(payload) => {
             throw_panic(env, payload);
             unsafe { std::mem::zeroed() }
