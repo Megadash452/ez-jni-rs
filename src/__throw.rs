@@ -64,7 +64,8 @@ pub fn catch_throw<'local, R>(
 pub fn catch_throw_map<'local, R, J>(
     env: &mut JNIEnv<'local>,
     f: impl FnOnce(&mut JNIEnv<'local>) -> R,
-    map: impl FnOnce(R, &mut JNIEnv<'local>) -> J,
+    // map function should not capture variables
+    map: fn(R, &mut JNIEnv<'local>) -> J,
 ) -> J {
     set_panic_hook();
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(env)))
