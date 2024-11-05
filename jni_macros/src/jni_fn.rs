@@ -209,7 +209,7 @@ impl ToTokens for JniFn {
                     .for_each(|stmt| stmt.to_tokens(tokens));
             });
 
-            tokens.append_all(quote! {
+            tokens.append_all(quote_spanned! {self.body.brace_token.span.span()=>
                 ::ez_jni::__throw::catch_throw(&mut env, move |#[allow(unused_variables)] env| #body)
             });
         });
@@ -283,17 +283,23 @@ pub enum JniReturn {
     }
 }
 impl JniReturn {
+    /// Convert the value returned by the *main body* of the jni_fn to one of the [`jni::sys`] types.
     pub fn convert_rust_to_java(&self, value: &TokenStream) -> Option<TokenStream> {
         match self {
             Self::Void => None,
-            Self::Type { ty, .. } => ty.convert_rust_to_java(value)
-                // If Type is a JObject, convert it to *jobject
-                .map(|conversion| match ty {
+            Self::Type { ty, .. } => {
+                let conversion = ty.convert_rust_to_java(value);
+                match ty {
                     Type::Assertive(InnerType::RustPrimitive { .. } | InnerType::JavaPrimitive { .. }) => conversion,
+                    // Always convert Object to jni::sys::jobject
                     Type::Assertive(InnerType::Object(_))
                     | Type::Array(_)
-                    | Type::Option { .. } => quote_spanned!(conversion.span()=> #conversion.as_raw())
-                }),
+                    | Type::Option { .. } => Some(match conversion {
+                        Some(conversion) => quote_spanned!(conversion.span()=> #conversion.as_raw()),
+                        None => quote_spanned!(value.span()=> #value.as_raw())
+                    })
+                }   
+            },
         }
     }
 }
