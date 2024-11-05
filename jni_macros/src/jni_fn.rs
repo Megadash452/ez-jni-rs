@@ -1,6 +1,6 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
-use syn::{braced, ext::IdentExt as _, parenthesized, parse::{Parse, ParseStream}, punctuated::Punctuated, token::{Brace, Paren}, Attribute, GenericParam, Generics, Ident, LifetimeParam, LitStr, Token};
+use syn::{ext::IdentExt as _, parenthesized, parse::{Parse, ParseStream}, punctuated::Punctuated, token::Paren, Attribute, Block, Expr, GenericParam, Generics, Ident, LifetimeParam, LitStr, Stmt, Token};
 use crate::{
     types::{Class, InnerType, JavaPrimitive, SigType, SpecialCaseConversion as _, Type}, utils::{gen_signature, merge_errors, take_class_attribute_required, Spanned}
 };
@@ -39,8 +39,7 @@ pub struct JniFn {
     pub inputs: Punctuated<JniFnArg, Token![,]>,
     // pub variadic: Option<Variadic>, Should this be allowed?
     pub output: JniReturn,
-    pub brace_token: Brace,
-    pub content: TokenStream,
+    pub body: Block,
 }
 impl Parse for JniFn {
     fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -102,10 +101,7 @@ impl Parse for JniFn {
             .ok();
 
         // Parse the content of the function inside the braces `{ ... }`
-        let (brace_token, content) = {
-            let inner;
-            (braced!(inner in input), inner.parse()?)
-        };
+        let body = input.parse()?;
 
         merge_errors(errors)?;
         // If there were any errors, the function returned on the line above, so reaching here means all tokens were parsed successfully.
@@ -166,7 +162,7 @@ impl Parse for JniFn {
         let class = class.unwrap();
         let lifetime = lifetime.unwrap();
 
-        Ok(Self { attrs, class, pub_token, fn_token, name, lt_token, lifetime, gt_token, paren_token, inputs, output, brace_token, content })
+        Ok(Self { attrs, class, pub_token, fn_token, name, lt_token, lifetime, gt_token, paren_token, inputs, output, body })
     }
 }
 impl ToTokens for JniFn {
@@ -200,23 +196,21 @@ impl ToTokens for JniFn {
             self.inputs.to_tokens(tokens);
         });
         self.output.to_tokens(tokens);
-        self.brace_token.surround(tokens, |tokens| {
-            let mut content = TokenStream::new();
-            self.brace_token.surround(&mut content, |tokens| {
+        self.body.brace_token.surround(tokens, |tokens| {
+            let mut body = TokenStream::new();
+            self.body.brace_token.surround(&mut body, |tokens| {
                 // Create local variables that hold the converted values of the arguments
                 for arg in &self.inputs {
                     tokens.append_all(arg.create_rust_val());
                 }
-                self.content.to_tokens(tokens);
+                // Add the satements to the closure's body
+                self.body.stmts.iter()
+                    .map(|stmt| modified_stmt(stmt.clone(), &self.output))
+                    .for_each(|stmt| stmt.to_tokens(tokens));
             });
 
-            tokens.append_all(match self.output.convert_rust_to_java(&quote_spanned!(self.output.span()=> r)) {
-                Some(conversion) => quote_spanned! {self.brace_token.span=>
-                    ::ez_jni::__throw::catch_throw_map(&mut env, move |#[allow(unused_variables)] env| #content, |r, #[allow(unused_variables)] env| #conversion)
-                },
-                None => quote_spanned! {self.brace_token.span=>
-                    ::ez_jni::__throw::catch_throw(&mut env, move |#[allow(unused_variables)] env| #content)
-                }
+            tokens.append_all(quote! {
+                ::ez_jni::__throw::catch_throw(&mut env, move |#[allow(unused_variables)] env| #body)
             });
         });
     }
@@ -349,4 +343,148 @@ impl ToTokens for JniReturn {
             },
         }
     }
+}
+
+/// Modifies a [`Statement`][Stmt] in a Rust function's body so that if it contains any *return statements*,
+/// the value being returned will be converted to a *Java value*.
+fn modified_stmt(mut stmt: Stmt, ty: &JniReturn) -> Stmt {
+    /// Modify an expression to return a Java value instead of a Rust value.
+    /// The conversion is derived form the **type** provided.
+    fn convert_expr(expr: &mut Expr, ty: &JniReturn) {
+        ty.convert_rust_to_java(&quote_spanned! {expr.span()=> (#expr)})
+            .map(|conversion| *expr = Expr::Verbatim(conversion));
+    }
+    /// Finds a **return statement** in the [`Expr`] and converts it to a *Java value* if necessary.
+    /// The conversion is derived form the **type** provided.
+    /// 
+    /// This functions is recursive!!
+    fn find_expr_to_convert(expr: &mut Expr, ty: &JniReturn) {
+        fn find_in_block(block: &mut Block, ty: &JniReturn) {
+            for stmt  in &mut block.stmts {
+                match stmt {
+                    Stmt::Local(syn::Local { init: Some(syn::LocalInit { expr, diverge, .. }), .. }) => {
+                        find_expr_to_convert(expr.as_mut(), ty);
+                        if let Some((_, expr)) = diverge {
+                            find_expr_to_convert(expr.as_mut(), ty);
+                        }
+                    },
+                    // An expression that itself is not returned, but may have returns within it.
+                    Stmt::Expr(expr, Some(_))
+                    | Stmt::Expr(expr, None) => find_expr_to_convert(expr, ty),
+                    _ => {},
+                }
+            }
+        }
+
+        match expr {
+            // Expressions with a single inner expression
+            Expr::Await(syn::ExprAwait { base: expr, .. })
+            | Expr::Break(syn::ExprBreak { expr: Some(expr), .. })
+            | Expr::Cast(syn::ExprCast { expr, .. })
+            | Expr::Field(syn::ExprField { base: expr, .. })
+            | Expr::Group(syn::ExprGroup { expr, .. })
+            | Expr::Let(syn::ExprLet { expr, .. })
+            | Expr::Paren(syn::ExprParen { expr, .. })
+            | Expr::Reference(syn::ExprReference { expr, .. })
+            | Expr::Try(syn::ExprTry { expr, .. })
+            | Expr::Unary(syn::ExprUnary { expr, .. }) => find_expr_to_convert(expr, ty),
+            // Expressions with blocks { }
+            Expr::Async(syn::ExprAsync { block, .. })
+            | Expr::Block(syn::ExprBlock { block, .. })
+            | Expr::Loop(syn::ExprLoop { body: block, .. })
+            | Expr::TryBlock(syn::ExprTryBlock { block, .. })
+            | Expr::Unsafe(syn::ExprUnsafe { block, .. }) => find_in_block(block, ty),
+            Expr::ForLoop(syn::ExprForLoop { expr, body: block, .. })
+            | Expr::While(syn::ExprWhile { cond: expr, body: block, .. }) => {
+                find_expr_to_convert(expr, ty);
+                find_in_block(block, ty);
+            },
+            // Expressions with more than one inner expressions
+            Expr::Assign(syn::ExprAssign { left, right, .. })
+            | Expr::Binary(syn::ExprBinary { left, right, ..})
+            | Expr::Index(syn::ExprIndex { expr: left, index: right, .. })
+            | Expr::Repeat(syn::ExprRepeat { expr: left, len: right, .. }) => {
+                find_expr_to_convert(left, ty);
+                find_expr_to_convert(right, ty);
+            },
+            Expr::Range(syn::ExprRange { start, end, .. }) => {
+                if let Some(expr) = start {
+                    find_expr_to_convert(expr, ty);
+                }
+                if let Some(expr) = end {
+                    find_expr_to_convert(expr, ty);
+                }
+            },
+            Expr::If(syn::ExprIf { cond, then_branch, else_branch, .. }) => {
+                find_expr_to_convert(cond, ty);
+                find_in_block(then_branch, ty);
+                if let Some((_, expr)) = else_branch {
+                    find_expr_to_convert(expr, ty);
+                }
+            },
+            // Expressions with a list of inner expressions
+            Expr::Array(syn::ExprArray { elems, .. })
+            | Expr::Tuple(syn::ExprTuple { elems, .. })
+                => elems.iter_mut()
+                    .for_each(|expr| find_expr_to_convert(expr, ty)),
+            Expr::Call(syn::ExprCall { func: expr, args, .. })
+            | Expr::MethodCall(syn::ExprMethodCall { receiver: expr, args, .. }) => {
+                find_expr_to_convert(expr, ty);
+                args.iter_mut()
+                    .for_each(|expr| find_expr_to_convert(expr, ty));
+            },
+            Expr::Match(syn::ExprMatch { expr, arms, .. }) => {
+                find_expr_to_convert(expr, ty);
+                for arm in arms {
+                    if let Some((_, expr)) = &mut arm.guard {
+                        find_expr_to_convert(expr, ty);
+                    }
+                    find_expr_to_convert(&mut arm.body, ty);
+                }
+            },
+            Expr::Struct(syn::ExprStruct { fields, rest, .. }) => {
+                for field in fields {
+                    find_expr_to_convert(&mut field.expr, ty)
+                }
+                if let Some(expr) = rest {
+                    find_expr_to_convert(expr, ty);
+                }
+            }
+            // Expressions that are ignored
+            Expr::Closure(syn::ExprClosure { .. })
+            | Expr::Const(syn::ExprConst { .. })
+            | Expr::Continue(syn::ExprContinue { .. })
+            | Expr::Infer(syn::ExprInfer { .. })
+            | Expr::Lit(syn::ExprLit { .. })
+            | Expr::Macro(syn::ExprMacro { .. })
+            | Expr::Path(syn::ExprPath { .. }) => { },
+            // Base cases
+            Expr::Return(syn::ExprReturn { expr, ..})
+            | Expr::Yield(syn::ExprYield { expr, .. }) =>
+                if let Some(expr) = expr {
+                    convert_expr(expr, ty)
+                },
+            Expr::Verbatim(_) => { },
+            _ => {}
+        }
+    }
+
+    match &mut stmt {
+        Stmt::Local(syn::Local { init: Some(syn::LocalInit { expr, diverge, .. }), .. }) => {
+            find_expr_to_convert(expr, ty);
+            if let Some((_, expr)) = diverge {
+                find_expr_to_convert(expr, ty);
+            }
+        },
+        // An expression that itself is not returned, but may have returns within it.
+        Stmt::Expr(expr, Some(_)) => find_expr_to_convert(expr, ty),
+        // An expression at the end of the body, which is returned, but may have other returns within it
+        Stmt::Expr(expr, None) => {
+            find_expr_to_convert(expr, ty);
+            convert_expr(expr, ty);
+        },
+        _ => {},
+    }
+
+    stmt
 }

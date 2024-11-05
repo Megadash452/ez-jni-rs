@@ -60,24 +60,6 @@ pub fn catch_throw<'local, R>(
         }
     }
 }
-/// Same as [`catch_throw()`], but maps the returned `R` to a Java value `J`.
-pub fn catch_throw_map<'local, R, J>(
-    env: &mut JNIEnv<'local>,
-    f: impl FnOnce(&mut JNIEnv<'local>) -> R,
-    // map function should not capture variables
-    map: fn(R, &mut JNIEnv<'local>) -> J,
-) -> J {
-    set_panic_hook();
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(env)))
-        .and_then(|r| std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| map(r, env))))
-    {
-        Ok(j) => j,
-        Err(payload) => {
-            throw_panic(env, payload);
-            unsafe { std::mem::zeroed() }
-        }
-    }
-}
 fn throw_panic(env: &mut JNIEnv, payload: Box<dyn Any + Send>) {
     let panic_msg = match payload.downcast::<&'static str>() {
         Ok(msg) => Some(msg.as_ref().to_string()),
