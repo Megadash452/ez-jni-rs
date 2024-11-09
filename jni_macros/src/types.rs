@@ -129,7 +129,7 @@ impl SpecialCaseConversion for Type {
                     }.unwrap_or(value)
                 };
 
-                quote::quote_spanned! {conversion.span()=> {
+                quote_spanned! {conversion.span()=> {
                     let v = #value;
                     if v.is_null() {
                         #none
@@ -144,8 +144,20 @@ impl SpecialCaseConversion for Type {
         match self {
             Self::Assertive(ty) => ty.convert_rust_to_java(value),
             Self::Array(array) => array.convert_rust_to_java(value),
-            Self::Option { ty: OptionType::Object(class), .. } => class.convert_rust_to_java(value),
-            Self::Option { ty: OptionType::Array(array), .. } => array.convert_rust_to_java(value),
+            Self::Option { ty, .. } => Some({
+                let conversion = {
+                    let value = quote_spanned! {value.span()=> v};
+                    match ty {
+                        OptionType::Array(array) => array.convert_rust_to_java(&value),
+                        OptionType::Object(class) => class.convert_rust_to_java(&value),
+                    }.unwrap_or(value)
+                };
+
+                quote_spanned! {conversion.span()=> match #value {
+                    Some(v) => #conversion,
+                    None => ::jni::objects::JObject::null(),
+                } }
+            }),
         }
     }
 }
@@ -377,14 +389,24 @@ impl SpecialCaseConversion for ArrayType {
                 env.borrow_mut())
             } }
         }
+
         /// Build a *Java Array* from a Rust *slice* in which the inner type is an **Object**.
-        fn convert_object(class: &Class, value: &TokenStream) -> TokenStream {
+        /// 
+        /// **class** is the Class of the elements of the Array, not the array itself.
+        /// 
+        /// **conversion** is code that applies a conversion to each element to convert it from a *Rust Type* to a *Java Object*.
+        /// The conversion must use an [`Ident`] **`v`** as the value.
+        /// For example, the **conversion** argument can be
+        /// ```ignore
+        /// class.convert_rust_to_java(&quote!(v))
+        /// ```
+        fn create_obj_array(class: &Class, conversion: Option<TokenStream>, value: &TokenStream) -> TokenStream {
             // Must be only the Class, without the Object char or Array part. E.g. "java/lang/String"
             let class_path = LitStr::new(&class.to_jni_class_path(), value.span());
 
             // The inner Class of the array might require some conversion
             let converted = {
-                match class.convert_rust_to_java(&quote_spanned! {value.span()=> v}) {
+                match conversion {
                     Some(conversion) => &quote_spanned!(value.span()=>
                         (&(#value)).iter()
                             .map(|v| #conversion)
@@ -408,9 +430,20 @@ impl SpecialCaseConversion for ArrayType {
             Self::Assertive(ty) => match ty {
                 InnerType::JavaPrimitive { ty, .. } => convert_primitive(RustPrimitive::from(*ty), value),
                 InnerType::RustPrimitive { ty, .. } => convert_primitive(*ty, value),
-                InnerType::Object(class) => convert_object(class, value),
+                InnerType::Object(class) => create_obj_array(class, class.convert_rust_to_java(&quote_spanned! {value.span()=> v}), value),
             },
-            Self::Option { class, .. } => todo!("Option not yet supported when converting Rust value to Java value")
+            Self::Option { class, .. } => create_obj_array(class, Some({
+                let conversion = {
+                    let value = quote_spanned! {value.span()=> v};
+                    class.convert_rust_to_java(&value)
+                        .unwrap_or(value)
+                };
+
+                quote_spanned! {conversion.span()=> match v {
+                    Some(v) => #conversion,
+                    None => ::jni::objects::JObject::null(),
+                } }
+            }), value)
         })
     }
 }

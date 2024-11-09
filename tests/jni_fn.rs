@@ -1,6 +1,7 @@
 mod common;
 
 use ez_jni::jni_fn;
+use jni::objects::JObject;
 
 jni_fn! {
     #[class(me.test.Test)]
