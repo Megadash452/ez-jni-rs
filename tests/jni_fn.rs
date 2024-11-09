@@ -74,29 +74,34 @@ jni_fn! {
     }
 
     #[class(me.test.Test)]
-    pub fn test_jni_fn_5<'local>(s: [String]) {
-        let _: Box<[String]> = s;
+    pub fn test_jni_fn_5<'local>(arr: [String]) -> [String] {
+        let _: Box<[String]> = arr;
+        arr
     }
 
     #[class(me.test.Test)]
-    pub fn test_jni_fn_6<'local>() -> [String] {
-        ["Hello", "World"]
+    pub fn test_jni_fn_6<'local>(arr: [java.lang.Object]) -> [java.lang.Object] {
+        let _: Box<[JObject]> = arr;
+        arr
     }
 
     #[class(me.test.Test)]
-    pub fn test_jni_fn_7<'local>(s: Option<String>) {
+    pub fn test_jni_fn_7<'local>(s: Option<String>) -> Option<String> {
         let _: Option<String> = s;
+        None
     }
 
     #[class(me.test.Test)]
-    pub fn test_jni_fn_8<'local>() -> Option<String> {
-        Option::<String>::None
+    pub fn test_jni_fn_8<'local>(arr: Option<[String]>) -> Option<[String]> {
+        let _: Option<Box<[String]>> = arr;
+        None
     }
 
-    // #[class(me.test.Test)]
-    // pub fn test_jni_fn_9<'local>() -> [Option<String>] {
-    //     Option::<String>::None
-    // }
+    #[class(me.test.Test)]
+    pub fn test_jni_fn_9<'local>(arr: [Option<String>]) -> [Option<String>] {
+        let _: Box<[Option<String>]> = arr;
+        arr
+    }
 
     // #[class(me.test.Test)]
     // pub fn test_jni_fn_10<'local>() -> Result<String, java.lang.Exception> {
