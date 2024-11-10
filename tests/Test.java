@@ -54,14 +54,16 @@ public final class Test {
     public static String[][] get2DStringArray() { return new String[][] {new String[] {"Hello", "World"}, new String[] {"How", "are", "you"} }; }
 
     public static boolean[] nullPrimArray() { return null; }
-    public static Object[]  nullObjArray()    { return null; }
+    public static Object[]  nullObjArray()  { return null; }
     public static boolean[] throwPrimArray() throws Exception { throw new Exception("exception"); }
-    public static Object[]  throwObjArray()   throws Exception { throw new Exception("exception"); }
+    public static Object[]  throwObjArray()  throws Exception { throw new Exception("exception"); }
     
     public static void primArgs(boolean z, char c, byte b, short s, int i, long j, float f, double d) { }
     public static void objArgs(Object l, String s) { }
     public static void primArrayArgs(boolean[] z, char[] c, byte[] b, short[] s, int[] i, long[] j, float[] f, double[] d) { }
     public static void objArrayArgs(Object[] l, String[] s) { }
+    public static void prim2DArrayArgs(boolean[][] z, char[][] c, int[][] i) { }
+    public static void obj2DArrayArgs(Object[][] l, String[][] s) { }
 
     public static class Instanced {
         Instanced() {}

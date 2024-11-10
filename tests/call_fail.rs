@@ -121,15 +121,4 @@ error: Can't use 'null' as value of primitive argument type.
 5 | call!(static me.test.Test.method(int(null)) -> void);
   |                                      ^^^^
 "));
-
-assert_compile_fail(t, "param_array_prim_null", "
-use ez_jni::call;
-call!(static me.test.Test.method([int]([1, null])) -> void);
-    ", Some("\
-error: Can't use 'null' as value of primitive argument type.
- --> ./target/tmp/compile_fail/param_array_prim_null.rs:5:44
-  |
-5 | call!(static me.test.Test.method([int]([1, null])) -> void);
-  |                                            ^^^^
-"));
 }

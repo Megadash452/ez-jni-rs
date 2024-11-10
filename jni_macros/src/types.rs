@@ -340,7 +340,7 @@ impl SpecialCaseConversion for ArrayType {
 
             quote_spanned! {value.span() => {
                 use ::std::borrow::BorrowMut as _;
-                ::ez_jni::utils::get_object_array_converted(&(#value), Some(#array_ty), |_element, env| #elem_conversion, env.borrow_mut())
+                ::ez_jni::utils::get_object_array_converted(&(#value), Some(#array_ty), |_element, #[allow(unused_variables)] env| #elem_conversion, env.borrow_mut())
                     .unwrap_or_else(|err| panic!("{err}"))
             } }
         };
@@ -424,7 +424,7 @@ impl SpecialCaseConversion for ArrayType {
                     ::ez_jni::utils::create_object_array_converted(
                         ::std::convert::AsRef::<[_]>::as_ref(&(#value)),
                         #elem_class,
-                        |_element, env| #conversion,
+                        |_element, #[allow(unused_variables)] env| #conversion,
                     env.borrow_mut())
                 } },
                 None => quote_spanned! {value.span()=> {

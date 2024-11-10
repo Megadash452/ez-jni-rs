@@ -196,7 +196,7 @@ fn arguments() {
     // -- Primitive Array Arguments
     // Rust slices stored in variables
     // Also tests types that can be coerced to slice
-    let z = Box::new([true, false]);
+    let z = vec![true, false].into_boxed_slice();
     let c = vec!['a', 'b'];
     let b = &[1i8, 2];
     let s = [1i16, 2];
@@ -254,14 +254,18 @@ fn arguments() {
         [java.lang.Object](&[] as &[JObject]),
         [String]([] as [&str;0])
     ) -> void);
-    // Null keyword
-    call!(static me.test.Test.objArrayArgs(
-        [java.lang.Object]([new!(java.lang.Object()), null]),
-        [java.lang.String](["Hello", null])
-    ) -> void);
     // Optional Strings
-    let s = [Some("Hello"), None];
-    call!(static me.test.Test.objArrayArgs([java.lang.Object]([null, null]), [java.lang.String](s)) -> void);
+    call!(static me.test.Test.objArrayArgs(
+        [Option<java.lang.Object>]([Some(JObject::null()), None]),
+        [Option<String>]([Some("Hello"), None])
+    ) -> void);
+
+    // -- Multidimensional Arrays
+    call!(static me.test.Test.prim2DArrayArgs(
+        [[bool]]([[true], [false]]),
+        [[char]]([['a', 'b'], ['c', 'd']]),
+        [[int]]([[1, 2], [3, 4]]),
+    ) -> void);
 }
 
 #[test]
