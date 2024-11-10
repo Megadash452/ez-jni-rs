@@ -1,6 +1,6 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
-use syn::{braced, ext::IdentExt as _, parenthesized, parse::{Parse, ParseStream}, punctuated::Punctuated, token::{Brace, Bracket, Paren}, Attribute, GenericParam, Generics, Ident, LifetimeParam, LitStr, Token};
+use syn::{braced, ext::IdentExt as _, parenthesized, parse::{Parse, ParseStream}, punctuated::Punctuated, token::{Brace, Paren}, Attribute, GenericParam, Generics, Ident, LifetimeParam, LitStr, Token};
 use crate::{
     types::{ArrayType, Class, InnerType, JavaPrimitive, OptionType, RustPrimitive, SigType, SpecialCaseConversion as _, Type}, utils::{gen_signature, merge_errors, take_class_attribute_required, Spanned}
 };
@@ -226,62 +226,51 @@ impl ToTokens for JniFn {
 /// Get a concrete *return Type* for the closure with the main body of the jni_fn.
 /// This is similar to JniReturn::to_tokens(), but is a rust type
 fn rust_return_type(ty: &JniReturn) -> TokenStream {
-    let mut tt = TokenStream::new();
-    let tokens = &mut tt;
-
-    fn primitive(r_prim: RustPrimitive, ident: &Ident) -> TokenStream {
-        Ident::new(&r_prim.to_string(), ident.span()).to_token_stream()
+    fn primitive(r_prim: RustPrimitive, ident: &Ident, tokens: &mut TokenStream) {
+        Ident::new(&r_prim.to_string(), ident.span()).to_tokens(tokens)
     }
-    fn object(class: &Class) -> TokenStream {
+    fn object(class: &Class, tokens: &mut TokenStream) {
         match class {
             Class::Short(ident) if ident.to_string() == "String" => ident.to_token_stream(),
             Class::Path { .. } if class.to_jni_class_path() == "java/lang/String" => quote_spanned!(class.span()=> String),
             _ => quote_spanned!(class.span()=> ::jni::objects::JObject)
-        }
+        }.to_tokens(tokens);
     }
-    fn array(array: &ArrayType, tokens: &mut TokenStream) {
-        tokens.append_all(quote_spanned! {array.span()=> ::std::boxed::Box<});
-        Bracket::default().surround(tokens, |tokens| {
-            match array {
-                ArrayType::Assertive(InnerType::RustPrimitive { ident, ty })
-                    => tokens.append_all(primitive(*ty, ident)),
-                ArrayType::Assertive(InnerType::JavaPrimitive { ident, ty })
-                    => tokens.append_all(primitive(RustPrimitive::from(*ty), ident)),
-                ArrayType::Assertive(InnerType::Object(class))
-                    => tokens.append_all(object(class)),
-                ArrayType::Option { ident, class } => {
-                    tokens.append_all(quote!(::std::option::#ident<));
-                    tokens.append_all(object(class));
-                    tokens.append_all(quote!(>));
-                }
-            }
-        });
+    fn array_type(array: &ArrayType, tokens: &mut TokenStream) {
+        tokens.append_all(quote_spanned! {array.bracket_token.span.span()=> ::std::boxed::Box<});
+        array.bracket_token.surround(tokens, |tokens| tokens.append_all(type_tokens(&array.ty)));
         tokens.append_all(quote_spanned! {array.span()=> >});
     }
 
-    match ty {
-        JniReturn::Void => tokens.append_all(quote!(())),
-        JniReturn::Type { ty, .. } => {
-            match ty {
-                Type::Assertive(InnerType::RustPrimitive { ident, ty })
-                    => tokens.append_all(primitive(*ty, ident)),
-                Type::Assertive(InnerType::JavaPrimitive { ident, ty })
-                    => tokens.append_all(primitive(RustPrimitive::from(*ty), ident)),
-                Type::Assertive(InnerType::Object(class))
-                    => tokens.append_all(object(class)),
-                Type::Array(arr) => array(arr, tokens),
-                Type::Option { ident, ty } => {
-                    tokens.append_all(quote!(::std::option::#ident<));
-                    match ty {
-                        OptionType::Object(class) => tokens.append_all(object(class)),
-                        OptionType::Array(arr) => array(arr, tokens),
-                    }
-                    tokens.append_all(quote!(>));
+    /// This function is recursive!!
+    fn type_tokens(ty: &Type) -> TokenStream {
+        let mut tt = TokenStream::new();
+        let tokens = &mut tt;
+
+        match ty {
+            Type::Assertive(ty) => match ty {
+                InnerType::RustPrimitive { ident, ty } => primitive(*ty, ident, tokens),
+                InnerType::JavaPrimitive { ident, ty } => primitive(RustPrimitive::from(*ty), ident, tokens),
+                InnerType::Object(class) => object(class, tokens)
+            },
+            Type::Array(array) => array_type(array, tokens),
+            Type::Option { ident, ty } => {
+                tokens.append_all(quote!(::std::option::#ident<));
+                match ty {
+                    OptionType::Object(class) => object(class, tokens),
+                    OptionType::Array(array) => array_type(array, tokens),
                 }
+                tokens.append_all(quote!(>));
             }
         }
+
+        tt
     }
-    tt
+
+    match ty {
+        JniReturn::Void => quote!(()),
+        JniReturn::Type { ty, .. } => type_tokens(ty),
+    }
 }
 
 pub struct JniFnArg {

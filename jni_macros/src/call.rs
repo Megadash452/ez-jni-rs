@@ -186,9 +186,8 @@ impl Parameter {
                 InnerType::RustPrimitive { ident, ty } => (ident.span(), primitive_variant(JavaPrimitive::from(*ty), ident.span())),
                 InnerType::Object(class) => (class.span(), quote!(Object)),
             },
-            Type::Array(ArrayType::Assertive(array)) => (array.span(), quote!(Object)),
-            Type::Option { .. }
-            | Type::Array(ArrayType::Option { .. }) => panic!("Unreachable code; Already checked that Option is not used in arguments")
+            Type::Array(array) => (array.span(), quote!(Object)),
+            Type::Option { .. } => panic!("Unreachable code; Already checked that Option is not used in arguments")
         };
         let mut tt = quote! {};
         tt.append_all(quote_spanned! {ty_span=> ::jni::objects::JValue::#ty_variant });
@@ -215,14 +214,27 @@ impl Parse for Parameter {
 
         let value = value_tokens.parse::<ParamValue>()?;
 
-        // Detect if user uses Option and disallow it
-        match &ty {
-            Type::Option { ident, .. }
-            | Type::Array(ArrayType::Option { ident, .. }) => return Err(syn::Error::new(
-                ident.span(),
-                "Can't use 'Option' in call! or new! arguments. Instead, use 'null' as the value."
-            )),
-            _ => { }
+        // Detect if user uses Option (iteratively) and disallow it
+        {
+            let mut current_ty = &ty;
+
+            let option_ident = loop {
+                match current_ty {
+                    Type::Option { ident, .. } => break Some(ident),
+                    Type::Array(ArrayType { ty, .. }) => {
+                        current_ty = ty.as_ref();
+                        continue;
+                    }
+                    _ => break None,
+                }
+            };
+
+            if let Some(ident) = option_ident {
+                return Err(syn::Error::new(
+                    ident.span(),
+                    "Can't use 'Option' in call! or new! arguments. Instead, use 'null' as the value."
+                ))
+            }
         }
 
         static NULL_ERROR: &str = "Can't use 'null' as value of primitive argument type.";
@@ -238,16 +250,19 @@ impl Parse for Parameter {
             },
             // ArrayNull can only be used with Array of Object
             ParamValue::ArrayNull(array) => match &ty {
-                Type::Array(ArrayType::Assertive(InnerType::Object(_)))  => { },
+                Type::Array(ArrayType { ty, .. }) => match ty.as_ref() {
+                    Type::Assertive(InnerType::Object(_)) => { },
+                    // Create an error out of all the `null` values
+                    Type::Assertive(InnerType::JavaPrimitive { .. } | InnerType::RustPrimitive { .. } )
+                        => return Err(merge_errors(array.iter()
+                            .filter_map(|elem| elem.null())
+                            .map(|null| syn::Error::new(null.span(), NULL_ERROR))
+                        ).expect_err("Got ParamValue::ArrayNull, but did not contain any nulls?")),
+                    Type::Array(_) => todo!("Multidimensional Array Literals in arguments not yet supported"),
+                    Type::Option { .. } => panic!("Unreachable code; Already checked that Option is not used in arguments"),
+                },
                 Type::Assertive(_) => return Err(syn::Error::new(value.span(), "Can't pass an Array value to a parameter that is not an Array.")),
-                // Create an error out of all the `null` values
-                Type::Array(ArrayType::Assertive(InnerType::JavaPrimitive { .. } | InnerType::RustPrimitive { .. } ))
-                    => return Err(merge_errors(array.iter()
-                        .filter_map(|elem| elem.null())
-                        .map(|null| syn::Error::new(null.span(), NULL_ERROR))
-                    ).expect_err("Got ParamValue::ArrayNull, but did not contain any nulls?")),
-                Type::Option { .. }
-                | Type::Array(ArrayType::Option { .. }) => panic!("Unreachable code; Already checked that Option is not used in arguments")
+                Type::Option { .. } => panic!("Unreachable code; Already checked that Option is not used in arguments")
             },
             _ => {}
         };
@@ -259,8 +274,11 @@ impl Parse for Parameter {
             || v_str.ends_with("::null_mut()") {
                 // If ty is any of these, it will not accept the expression of a null value, so use 'null' instead.
                 let should_use_null = match &ty {
-                    Type::Array(ArrayType::Assertive(InnerType::Object(class)))
-                    | Type::Assertive(InnerType::Object(class))  => class.to_jni_class_path() == "java/lang/String",
+                    Type::Array(ArrayType { ty, .. }) => match ty.as_ref() {
+                        Type::Assertive(InnerType::Object(class)) => class.to_jni_class_path() == "java/lang/String",
+                        _ => false,
+                    }
+                    | Type::Assertive(InnerType::Object(class)) => class.to_jni_class_path() == "java/lang/String",
                     _ => false,
                 };
                 if should_use_null {
@@ -282,32 +300,37 @@ impl ToTokens for Parameter {
             ParamValue::Null(null) => quote_spanned!(null.span()=> ::jni::objects::JObject::null()),
             ParamValue::ArrayNull(array) => match &self.ty {
                 // Convert `null` values in Array
-                Type::Array(ArrayType::Assertive(InnerType::Object(class))) =>
-                    if class.to_jni_class_path() == "java/lang/String" {
-                        // Convert [String] to [Option<String>] and convert NULLs to None
-                        let elems = array.iter()
-                            .map(|elem| syn::Expr::Verbatim(match elem {
-                                ArrayElement::Null(null) => quote_spanned!(null.span()=> None),
-                                ArrayElement::Value(value) => quote_spanned!(value.span()=> Some(#value))
-                            }));
-                        let value = quote_spanned!(self.value.span()=> [#(#elems),*]);
-                        self.ty.convert_rust_to_java(&value)
-                            .unwrap_or(value)
-                    } else {
-                        // Replace NULLs in Array literal with JObject::null()
-                        let elems = array.iter()
-                            .map(|elem| syn::Expr::Verbatim(match elem {
-                                ArrayElement::Null(null) => quote_spanned! {null.span()=> ::jni::objects::JObject::null() },
-                                ArrayElement::Value(value) => value.to_token_stream()
-                            }));
-                        let value = quote_spanned!(self.value.span()=> [#(#elems),*]);
-                        self.ty.convert_rust_to_java(&value)
-                            .unwrap_or(value)
-                    },
-                Type::Array(ArrayType::Assertive(_)) => panic!("Unreachable code; 'null' can't be used when ty is a Primitive"),
-                Type::Assertive(_) => panic!("Unreachable code; Can't have Array value but non-array type"),
-                Type::Option { .. }
-                | Type::Array(ArrayType::Option { .. }) => panic!("Unreachable code; Already checked that Option is not used in arguments")
+                Type::Array(ArrayType { ty, .. }) => match ty.as_ref() {
+                    Type::Assertive(InnerType::Object(class)) =>
+                        if class.to_jni_class_path() == "java/lang/String" {
+                            // Convert [String] to [Option<String>] and convert NULLs to None
+                            let elems = array.iter()
+                                .map(|elem| syn::Expr::Verbatim(match elem {
+                                    ArrayElement::Null(null) => quote_spanned!(null.span()=> None),
+                                    ArrayElement::Value(value) => quote_spanned!(value.span()=> Some(#value))
+                                }));
+                            let value = quote_spanned!(self.value.span()=> [#(#elems),*]);
+                            self.ty.convert_rust_to_java(&value)
+                                .unwrap_or(value)
+                        } else {
+                            // Replace NULLs in Array literal with JObject::null()
+                            let elems = array.iter()
+                                .map(|elem| syn::Expr::Verbatim(match elem {
+                                    ArrayElement::Null(null) => quote_spanned! {null.span()=> ::jni::objects::JObject::null() },
+                                    ArrayElement::Value(value) => value.to_token_stream()
+                                }));
+                            let value = quote_spanned!(self.value.span()=> [#(#elems),*]);
+                            self.ty.convert_rust_to_java(&value)
+                                .unwrap_or(value)
+                        },
+                    Type::Array(_) => todo!("Multidimensional Array Literals in arguments not yet supported"),
+                    // 'null' can't be used when ty is a Primitive
+                    Type::Assertive(_)
+                    // Already checked that Option is not used in arguments
+                    | Type::Option { .. }=> panic!("Unreachable code"),
+                },
+                Type::Assertive(_)
+                | Type::Option { .. }=> panic!("Unreachable code; Can't have Array value but non-array type"),
             },
             ParamValue::Value(value) => self.ty.convert_rust_to_java(&value)
                 .unwrap_or_else(|| value.clone())
@@ -361,9 +384,13 @@ impl Parse for ParamValue {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         fn parse_array(input: ParseStream) -> syn::Result<Punctuated<ArrayElement, Token![,]>> {
             fn expr_to_element(expr: Expr) -> ArrayElement {
-                match Parser::parse2(Ident::parse, expr.to_token_stream()) {
-                    Ok(ident) if ident.to_string() == NULL_KEYWORD => ArrayElement::Null(ident),
-                    _ => ArrayElement::Value(expr)
+                if let Expr::Array(_) = expr {
+                    todo!("Multidimensional Array Literals in arguments not yet supported")
+                } else {
+                    match Parser::parse2(Ident::parse, expr.to_token_stream()) {
+                        Ok(ident) if ident.to_string() == NULL_KEYWORD => ArrayElement::Null(ident),
+                        _ => ArrayElement::Value(expr)
+                    }
                 }
             }
 

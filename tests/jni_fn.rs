@@ -104,6 +104,27 @@ jni_fn! {
         arr
     }
 
+    #[class(me.test.Test)]
+    pub fn test_jni_fn_10<'local>(arr: [[String]]) -> [[String]] {
+        let _: Box<[Box<[String]>]> = arr;
+        arr
+    }
+    #[class(me.test.Test)]
+    pub fn test_jni_fn_11<'local>(arr: [[[String]]]) -> [[[String]]] {
+        let _: Box<[Box<[Box<[String]>]>]> = arr;
+        arr
+    }
+    #[class(me.test.Test)]
+    pub fn test_jni_fn_12<'local>(arr: [Option<[String]>]) -> [Option<[String]>] {
+        let _: Box<[Option<Box<[String]>>]> = arr;
+        arr
+    }
+    #[class(me.test.Test)]
+    pub fn test_jni_fn_13<'local>(arr: [[[Option<String>]]]) -> [[[Option<String>]]] {
+        let _: Box<[Box<[Box<[Option<String>]>]>]> = arr;
+        arr
+    }
+
     // #[class(me.test.Test)]
     // pub fn test_jni_fn_10<'local>() -> Result<String, java.lang.Exception> {
         
