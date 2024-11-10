@@ -195,8 +195,6 @@ pub fn create_java_prim_array_converted<'local, 'a, T, J>(
 
 /// Get a Rust [`Vec`] from a Java **Array**, where the element `T` is a *primitive*.
 /// 
-/// This function checks that the Object is of the correct [`Type`][crate::FromObject::PATH].
-/// 
 /// **obj** is the Java Array.
 /// 
 /// **filler** is the function that copies the elements from the Java *Array* to the *Vec*.

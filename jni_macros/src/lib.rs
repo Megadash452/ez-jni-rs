@@ -10,9 +10,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use utils::item_from_derive_input;
 
-/// Converts a Rust function to one that can be called from external Java code.
-/// 
-/// The *arguments* and *return type* must be **Java Types** (or Rust primitives like u8).
+/// Define a function in Rust that can be called from external Java code.
 /// 
 /// You can also do multiple function definitions in one macro call.
 /// 
@@ -24,7 +22,11 @@ use utils::item_from_derive_input;
 /// 3. no generic constants or types,
 /// 4. and no arguments named `env` or `_class`.
 ///
-/// The function must also have a `class` attribute with the *full name* of a Java Class (e.g. `java.lang.String`).
+/// The function must also have a `class` attribute with the *full name* of a Java Class where the native function is declared (e.g. `java.lang.String`).
+/// 
+/// ### Argument and Return Types
+/// 
+/// The **arguments** and **return** can have any Type that is also used for [`ez_jni::call!`](https://docs.rs/ez_jni/latest/ez_jni/macro.call.html#types).
 ///
 /// ### Panic catching
 /// 
@@ -52,13 +54,15 @@ use utils::item_from_derive_input;
 /// expands to
 ///
 /// ```
-/// /// (Ljava/lang/String;)I;
+/// # use jni::{JNIEnv, objects::{JClass, JString}};
+/// /// (Ljava/lang/String;)I
 /// #[no_mangle]
 /// pub extern "system" fn Java_me_author_MyClass_hello_1world<'local>(
-///     mut env: ::jni::JNIEnv<'local>, _class: ::jni::objects::JClass<'local>,
-///     s: ::jni::objects::JString<'local>,
-/// ) -> i32 {
-///     ::ez_jni::__throw::catch_throw(&mut env, move |env| {
+///     mut env: JNIEnv<'local>, _class: JClass<'local>,
+///     s: JString<'local>,
+/// ) -> jni::sys::jint {
+///     ez_jni::__throw::catch_throw(&mut env, move |#[allow(unused_variables)] env| -> i32 {
+///         let s = ez_jni::utils::get_string(s, env);
 ///         3
 ///     })
 /// }
@@ -105,69 +109,69 @@ pub fn jni_fn(input: TokenStream) -> TokenStream {
 /// The function call has *argument* and *return* **types**.
 /// 
 /// A type can be a **[Java Primitive](https://docs.oracle.com/javase/tutorial/java/nutsandbolts/datatypes.html)**,
-/// a **[Rust Primitive](std::primitive)**,
+/// a **[Rust Primitive](std::primitive)** (which is transmuted to the corresponding Java Primitive),
 /// a **Java Class**,
 /// or an **Array** of one of the previous types (the type wrapped in *brackets* `[]`).
 /// 
+/// *Classes* and *Arrays* can be wrapped with [`Option`], but not *primitives*.
+/// This makes it so that *arguments* can be passed without needing a manual conversion from the caller,
+/// and to allow **null** values for the *return* in Rust.
+/// This can be used when the Type in the Java function declaration has the `@Nullable` annotation,
+/// or the function documents that it can accept or return a `null` value.
+/// 
+/// Arrays can be **multi-dimensional** (with unlimited dimensions).
+/// Inner types of the array can also be wrapped with [`Option`] (except primitives, of course).
+/// 
 /// For the class `java.lang.String`, use the Rust type [`String`] instead.
-/// The values will be automatically converted by the macro between Rust and Java
-/// (depending on whether the type is for an *argument* or *return*).
+/// 
+/// [`String`], **Array**, and [`Option`] values will be automatically converted between the 2 languages when making calls.
+/// 
+/// Here are *some* examples of valid Types:
+/// ```ignore
+/// int              // primitive
+/// i32              // Rust primitive
+/// java.lang.Object // object
+/// String           // string
+/// [int]            // primitive array
+/// [String]         // object array
+/// [[int]]          // multidimensional array
+/// Option<String>   // nullable object
+/// Option<[Option<String>]> // nullable array of nullable objects
+/// ```
 /// 
 /// In the sections below, the use of `T` or `Type` means that it can accept any of the types declared above.
 ///
 /// ## Arguments
 ///
-/// The arguments of the method call are placed inside perentheses after the method name,
-/// and can be *primitive values*, *object values*, or *arrays of either* (type wrapped in brackets).
+/// The arguments of the method call are placed inside perentheses after the method name.
+/// The syntax is simple: `type(value)`.
 ///
-/// All arguments have a **type**, and a **value** (wrapped in parenthesis).
-/// The value goes in parenthesis after the argument type, and is any expression that resolves to *primitive* or *object* of the respective type.
+/// All arguments have a **type** (see the [types section](https://docs.rs/ez_jni/latest/ez_jni/macro.call.html#types)),
+/// followed by a **value** (wrapped in parenthesis).
 /// 
 /// **Array** arguments' **values** can be any Rust Type that is `AsRef<[T]>`,
 /// i.e. the value can be read as a *slice* of said type.
 /// e.g. [slice](https://doc.rust-lang.org/std/primitive.slice.html)s, [`Vec`]s, boxed slices, etc.
 /// 
-/// Because `String` arguments only accept Rust strings (which can't be **null**),
+/// Because [`String`] arguments only accept Rust strings (which can't be **null**),
 /// the macro creates a *custom keyword* `null` for the argument values.
 /// This is only usable for *Objects*.
-/// For *String arrays* the value can also be `&[Option<String>]`.
-///
-/// Here are some examples of an argument:
+/// 
+/// Example of `null` argument value:
 /// ```ignore
-/// int(2 + 2)                   // primitive
-/// me.author.ClassName(value)   // object
-/// String("Hello, World!")      // string
-/// [bool]([true, false])        // primitive array
-/// [java.lang.Object](null)     // object array (with null)
-/// [String](["Hello", "World"]) // string array
-/// [String](["Hello", null])    // string array (with null)
+/// String(null)
 /// ```
 ///
 /// ## Return
 ///
 /// The arguments are followed by a *return arrow* `->` and the **return type**.
-/// The return type may be *void*, one of the [`Types`](https://docs.rs/ez_jni/latest/ez_jni/macro.call.html#types) above,
-/// an [`Option`] of a Class, or a [`Result<T, E>`] of any of the previous choices.
+/// The return type may be `void`, one of the [`Types`](https://docs.rs/ez_jni/latest/ez_jni/macro.call.html#types) above,
+/// or a [`Result<T, E>`] of any of the previous choices.
 ///
-/// - Use the **assertive type** (`T` by itself) when the Java method being called *can't return `NULL`* or throw an *exception*,
-///   such as when it is marked with `@NonNull`.
-/// - Use **`Option<T>`** when the method *can return a `NULL`* value, but can't throw an *exception*.
-/// - Use **`Result<T, E>`** when the method can throw an *exception*, e.g. `void method() throws Exception { ... }`, and the return value *can't be `NULL`*.
-/// - Use **`Result<Option<T>, E>`** when the method can throw an *exception*, and the return value *can be `NULL`*.
+/// The real type (`T`) can be wrapped in [`Result`] when the method can return an **Exception**.
+/// Use this when the method is marked with `throws Exception`.
+/// If the method throws, but [`Result`] was not used, a `panic!` will occur.
 /// 
-/// Here are some examples of return types:
-/// ```ignore
-/// -> int
-/// -> java.lang.String
-/// -> [int]
-/// -> [String]
-/// -> Option<java.lang.String>
-/// -> Result<int, String>
-/// -> Result<Option<String>, MyErrorType>
-/// ```
-/// Note that `Option` can't be used with *primitive types* because those can't be `NULL` in Java.
-/// However, it can be used with an *Array of primitives* because Java Arrays are *objects*.
-///
 /// ### Exceptions
 ///
 /// The **`E`** in the [`Result`] type can be any Rust type that *implements [`FromException`](https://docs.rs/ez_jni/latest/ez_jni/trait.FromException.html)*
@@ -177,7 +181,7 @@ pub fn jni_fn(input: TokenStream) -> TokenStream {
 /// the Exception will not be caught and the program will `panic!`.
 /// This is similar to how in Java, if the exception is not of any type of the *catch blocks*, the exception will not be caught.
 ///
-/// When `E` is [`String`], it will catch any Exception.
+/// When `E` is [`String`] or , it will catch any Exception.
 #[proc_macro]
 pub fn call(input: TokenStream) -> TokenStream {
     let call = syn::parse_macro_input!(input as MethodCall);
