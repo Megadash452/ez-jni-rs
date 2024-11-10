@@ -8,7 +8,6 @@ where T: FromObject<'local> {
         Result::from_iter(
             IntoIterator::into_iter(array)
                 .map(|obj| T::from_object(&obj, env))
-                .collect::<Box<[_]>>()
         )
     )
 }

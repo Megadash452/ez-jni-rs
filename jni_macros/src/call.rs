@@ -3,11 +3,11 @@ use either::Either;
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
 use syn::{
-    braced, parenthesized, parse::{discouraged::Speculative, Parse, ParseStream, Parser}, punctuated::{Pair, Punctuated}, Expr, Ident, LitStr, Token
+    braced, parenthesized, parse::{discouraged::Speculative, Parse, ParseStream}, punctuated::Punctuated, Ident, LitStr, Token
 };
 use crate::{
     types::{ArrayType, Class, InnerType, JavaPrimitive, RustPrimitive, SigType, SpecialCaseConversion, Type, NULL_KEYWORD},
-    utils::{first_char_uppercase, gen_signature, join_spans, merge_errors, Spanned}
+    utils::{first_char_uppercase, gen_signature, join_spans, Spanned}
 };
 
 /// Processes input for macro call [super::call!].
@@ -214,55 +214,24 @@ impl Parse for Parameter {
 
         let value = value_tokens.parse::<ParamValue>()?;
 
-        // Detect if user uses Option (iteratively) and disallow it
-        {
-            let mut current_ty = &ty;
-
-            let option_ident = loop {
-                match current_ty {
-                    Type::Option { ident, .. } => break Some(ident),
-                    Type::Array(ArrayType { ty, .. }) => {
-                        current_ty = ty.as_ref();
-                        continue;
-                    }
-                    _ => break None,
-                }
-            };
-
-            if let Some(ident) = option_ident {
-                return Err(syn::Error::new(
-                    ident.span(),
-                    "Can't use 'Option' in call! or new! arguments. Instead, use 'null' as the value."
-                ))
-            }
+        // Detect if user uses Option (iteratively) and disallow it,
+        // But only for the first layer (i.e. Object and top-level array)
+        if let Type::Option { ident, .. } = &ty {
+            return Err(syn::Error::new(
+                ident.span(),
+                "Can't use 'Option' in call! or new! arguments. Instead, use 'null' as the value."
+            ))
         }
 
-        static NULL_ERROR: &str = "Can't use 'null' as value of primitive argument type.";
         // Check that the correct Value was passed in for the correct Type
         match &value {
             // null can be used for Object and Array
             ParamValue::Null(null) => match &ty {
+                Type::Assertive(InnerType::JavaPrimitive { .. } | InnerType::RustPrimitive { .. })
+                    => return Err(syn::Error::new(null.span(), "Can't use 'null' as value of primitive argument type.")),
                 Type::Assertive(InnerType::Object(_))
                 | Type::Option { .. }
                 | Type::Array(_) => { },
-                Type::Assertive(InnerType::JavaPrimitive { .. } | InnerType::RustPrimitive { .. })
-                    => return Err(syn::Error::new(null.span(), NULL_ERROR))
-            },
-            // ArrayNull can only be used with Array of Object
-            ParamValue::ArrayNull(array) => match &ty {
-                Type::Array(ArrayType { ty, .. }) => match ty.as_ref() {
-                    Type::Assertive(InnerType::Object(_)) => { },
-                    // Create an error out of all the `null` values
-                    Type::Assertive(InnerType::JavaPrimitive { .. } | InnerType::RustPrimitive { .. } )
-                        => return Err(merge_errors(array.iter()
-                            .filter_map(|elem| elem.null())
-                            .map(|null| syn::Error::new(null.span(), NULL_ERROR))
-                        ).expect_err("Got ParamValue::ArrayNull, but did not contain any nulls?")),
-                    Type::Array(_) => todo!("Multidimensional Array Literals in arguments not yet supported"),
-                    Type::Option { .. } => panic!("Unreachable code; Already checked that Option is not used in arguments"),
-                },
-                Type::Assertive(_) => return Err(syn::Error::new(value.span(), "Can't pass an Array value to a parameter that is not an Array.")),
-                Type::Option { .. } => panic!("Unreachable code; Already checked that Option is not used in arguments")
             },
             _ => {}
         };
@@ -298,40 +267,6 @@ impl ToTokens for Parameter {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         tokens.append_all(match &self.value {
             ParamValue::Null(null) => quote_spanned!(null.span()=> ::jni::objects::JObject::null()),
-            ParamValue::ArrayNull(array) => match &self.ty {
-                // Convert `null` values in Array
-                Type::Array(ArrayType { ty, .. }) => match ty.as_ref() {
-                    Type::Assertive(InnerType::Object(class)) =>
-                        if class.to_jni_class_path() == "java/lang/String" {
-                            // Convert [String] to [Option<String>] and convert NULLs to None
-                            let elems = array.iter()
-                                .map(|elem| syn::Expr::Verbatim(match elem {
-                                    ArrayElement::Null(null) => quote_spanned!(null.span()=> None),
-                                    ArrayElement::Value(value) => quote_spanned!(value.span()=> Some(#value))
-                                }));
-                            let value = quote_spanned!(self.value.span()=> [#(#elems),*]);
-                            self.ty.convert_rust_to_java(&value)
-                                .unwrap_or(value)
-                        } else {
-                            // Replace NULLs in Array literal with JObject::null()
-                            let elems = array.iter()
-                                .map(|elem| syn::Expr::Verbatim(match elem {
-                                    ArrayElement::Null(null) => quote_spanned! {null.span()=> ::jni::objects::JObject::null() },
-                                    ArrayElement::Value(value) => value.to_token_stream()
-                                }));
-                            let value = quote_spanned!(self.value.span()=> [#(#elems),*]);
-                            self.ty.convert_rust_to_java(&value)
-                                .unwrap_or(value)
-                        },
-                    Type::Array(_) => todo!("Multidimensional Array Literals in arguments not yet supported"),
-                    // 'null' can't be used when ty is a Primitive
-                    Type::Assertive(_)
-                    // Already checked that Option is not used in arguments
-                    | Type::Option { .. }=> panic!("Unreachable code"),
-                },
-                Type::Assertive(_)
-                | Type::Option { .. }=> panic!("Unreachable code; Can't have Array value but non-array type"),
-            },
             ParamValue::Value(value) => self.ty.convert_rust_to_java(&value)
                 .unwrap_or_else(|| value.clone())
         })
@@ -344,65 +279,18 @@ pub enum ParamValue {
     /// *value* [`Null`][ParamValue::Null] and *type* [`Type::is_primitive()`] are mutually exclusive.
     /// This is checked by [`Parameter::parse()`].
     Null(Ident),
-    /// The value is an Array literal of Objects, where some elements are `null`.
-    /// This variant only occurs if the array has a `null` keyword.
-    ///
-    /// *value* [`ArrayNull`][ParamValue::ArrayNull] and *type* [`Type::is_primitive()`] are mutually exclusive.
-    /// This is checked by [`Parameter::parse()`].
-    ArrayNull(Punctuated<ArrayElement, Token![,]>),
     Value(TokenStream)
-}
-pub enum ArrayElement {
-    Null(Ident),
-    Value(Expr)
-}
-impl ArrayElement {
-    /// Get the Null variant.
-    pub fn null(&self) -> Option<&Ident> {
-        match self {
-            Self::Null(null) => Some(null),
-            _ => None
-        }
-    }
 }
 impl Spanned for ParamValue {
     fn span(&self) -> Span {
         match self {
             Self::Null(null) => null.span(),
-            Self::ArrayNull(array) => join_spans(
-                array.pairs()
-                    .map(|pair| join_spans([match pair.value() {
-                        ArrayElement::Null(null) => null.span(),
-                        ArrayElement::Value(value) => value.span(),
-                    }, pair.punct().span()]))
-            ),
             Self::Value(value) => value.span(),
         }
     }
 }
 impl Parse for ParamValue {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        fn parse_array(input: ParseStream) -> syn::Result<Punctuated<ArrayElement, Token![,]>> {
-            fn expr_to_element(expr: Expr) -> ArrayElement {
-                if let Expr::Array(_) = expr {
-                    todo!("Multidimensional Array Literals in arguments not yet supported")
-                } else {
-                    match Parser::parse2(Ident::parse, expr.to_token_stream()) {
-                        Ok(ident) if ident.to_string() == NULL_KEYWORD => ArrayElement::Null(ident),
-                        _ => ArrayElement::Value(expr)
-                    }
-                }
-            }
-
-            let array = input.parse::<syn::ExprArray>()?;
-
-            Ok(array.elems.into_pairs()
-                .map(|pair| pair.into_tuple())
-                .map(|(expr, punct)| Pair::new(expr_to_element(expr), punct))
-                .collect::<Punctuated<_, _>>()
-            )
-        }
-
         let fork = input.fork();
         
         Ok(match fork.parse::<Ident>() {
@@ -411,17 +299,8 @@ impl Parse for ParamValue {
                 input.advance_to(&fork);
                 Self::Null(ident)
             },
-            // Check if argument is an Array literal
-            _ => match parse_array(&fork) {
-                // Only store in Array form if there are `null` values.
-                Ok(array) if array.iter()
-                    .find(|elem| elem.null().is_some()).is_some() => {
-                        input.advance_to(&fork);
-                        Self::ArrayNull(array)
-                    },
-                // The value is the Verbatim TokenStream
-                _ => Self::Value(input.parse()?)
-            }
+            // The value is the Verbatim TokenStream
+            _ => Self::Value(input.parse()?),
         })
     }
 }
@@ -430,12 +309,6 @@ impl Debug for ParamValue {
         match self {
             Self::Null(null) => f.debug_tuple("ParamValue::Null")
                 .field(&null.to_string())
-                .finish(),
-            Self::ArrayNull(array) => f.debug_tuple("ParamValue::ArrayNull")
-                .field(&array.iter().map(|elem| match elem {
-                    ArrayElement::Null(null) => null.to_token_stream().to_string(),
-                    ArrayElement::Value(value) => value.to_token_stream().to_string(),
-                }).collect::<Vec<_>>())
                 .finish(),
             Self::Value(value) => f.debug_tuple("ParamValue::Value")
                 .field(&value.to_string())

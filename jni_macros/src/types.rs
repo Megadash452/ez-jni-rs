@@ -218,13 +218,28 @@ impl SpecialCaseConversion for OptionType {
             match self {
                 Self::Array(array) => array.convert_rust_to_java(&value),
                 Self::Object(class) => class.convert_rust_to_java(&value),
-            }.unwrap_or(value)
+            }
         };
 
-        Some(quote_spanned! {conversion.span()=> match #value {
-            Some(v) => #conversion,
-            None => ::jni::objects::JObject::null(),
-        } })
+        // The conversion will create a new Local Reference to a new `JObject` (unless conversion was None).
+        // In case it was None, the Some(v) branch will return `&JObject`, but None returns `JObject`,
+        // so it must be converted to `JObject` (safely, with `env.new_local_ref()`).
+        //
+        // Note: some ez_jni::utils fns create a new Reference frame to optimize for this situation.
+        Some(match conversion {
+            Some(conversion) => quote_spanned! {conversion.span()=>
+                match #value {
+                    Some(v) => #conversion,
+                    None => ::jni::objects::JObject::null(),
+                }
+            },
+            None => quote_spanned! {conversion.span()=>
+                match #value {
+                    Some(obj) => env.new_local_ref(obj).unwrap(),
+                    None => ::jni::objects::JObject::null(),
+                }
+            }
+        })
     }
 }
 impl Spanned for OptionType {
@@ -325,13 +340,8 @@ impl SpecialCaseConversion for ArrayType {
 
             quote_spanned! {value.span() => {
                 use ::std::borrow::BorrowMut as _;
-                IntoIterator::into_iter(
-                    ::ez_jni::utils::get_object_array(&(#value), Some(#array_ty), env.borrow_mut())
-                        // Error can only be ClassMismatch
-                        .unwrap_or_else(|err| panic!("{err}"))
-                )
-                    .map(|_element| #elem_conversion)
-                    .collect::<Box<[_]>>()
+                ::ez_jni::utils::get_object_array_converted(&(#value), Some(#array_ty), |_element, env| #elem_conversion, env.borrow_mut())
+                    .unwrap_or_else(|err| panic!("{err}"))
             } }
         };
 
@@ -376,27 +386,27 @@ impl SpecialCaseConversion for ArrayType {
 
             let alloc = Ident::new(&format!("new_{j_prim}_array"), value.span());
             let filler = Ident::new(&format!("set_{j_prim}_array_region"), value.span());
-            // The inner type of the array might require some conversion
-            let converted = {
-                match r_prim.convert_rust_to_java(&quote_spanned! {value.span()=> v}) {
-                    Some(conversion) => &quote_spanned!(value.span()=>
-                        #value.iter()
-                            .map(|&v| #conversion)
-                            .collect::<::std::boxed::Box<[_]>>()
-                    ),
-                    None => value
-                }
-            };
+            let r_ty = Ident::new(&r_prim.to_string(), value.span());
 
-            quote_spanned! {value.span()=> {
-                use ::std::borrow::BorrowMut as _;
-                let _slice = &(#converted);
-                ::ez_jni::utils::create_java_prim_array(
-                    ::std::convert::AsRef::<[_]>::as_ref(_slice),
-                    ::jni::JNIEnv::#alloc,
-                    ::jni::JNIEnv::#filler,
-                env.borrow_mut())
-            } }
+            match r_prim.convert_rust_to_java(&quote_spanned! {value.span()=> v}) {
+                Some(conversion) => quote_spanned! {value.span()=> {
+                    use ::std::borrow::BorrowMut as _;
+                    ::ez_jni::utils::create_java_prim_array_converted(
+                        ::std::convert::AsRef::<[#r_ty]>::as_ref(&(#value)),
+                        ::jni::JNIEnv::#alloc,
+                        ::jni::JNIEnv::#filler,
+                        |v| #conversion,
+                    env.borrow_mut())
+                } },
+                None => quote_spanned! {value.span()=> {
+                    use ::std::borrow::BorrowMut as _;
+                    ::ez_jni::utils::create_java_prim_array(
+                        ::std::convert::AsRef::<[#r_ty]>::as_ref(&(#value)),
+                        ::jni::JNIEnv::#alloc,
+                        ::jni::JNIEnv::#filler,
+                    env.borrow_mut())
+                } }
+            }
         }
 
         /// Build a *Java Array* from a Rust *slice* in which the inner type is an **Object**.
@@ -408,26 +418,23 @@ impl SpecialCaseConversion for ArrayType {
         /// class.convert_rust_to_java(&quote!(_element))
         /// ```
         fn create_obj_array(elem_class: LitStr, elem_conversion: Option<TokenStream>, value: &TokenStream) -> TokenStream {
-            // The inner Class of the array might require some conversion
-            let converted = {
-                match elem_conversion {
-                    Some(conversion) => &quote_spanned!(value.span()=>
-                        (&(#value)).iter()
-                            .map(|_element| #conversion)
-                            .collect::<::std::boxed::Box<[_]>>()
-                    ),
-                    None => value
-                }
-            };
-
-            quote_spanned! {value.span()=> {
-                use ::std::borrow::BorrowMut as _;
-                let _slice = &(#converted);
-                ::ez_jni::utils::create_object_array(
-                    ::std::convert::AsRef::<[_]>::as_ref(_slice),
-                    #elem_class,
-                env.borrow_mut())
-            } }
+            match elem_conversion {
+                Some(conversion) => quote_spanned! {value.span()=> {
+                    use ::std::borrow::BorrowMut as _;
+                    ::ez_jni::utils::create_object_array_converted(
+                        ::std::convert::AsRef::<[_]>::as_ref(&(#value)),
+                        #elem_class,
+                        |_element, env| #conversion,
+                    env.borrow_mut())
+                } },
+                None => quote_spanned! {value.span()=> {
+                    use ::std::borrow::BorrowMut as _;
+                    ::ez_jni::utils::create_object_array(
+                        ::std::convert::AsRef::<[_]>::as_ref(&(#value)),
+                        #elem_class,
+                    env.borrow_mut())
+                } }
+            }
         }
 
         Some(match self.ty.as_ref() {
@@ -731,8 +738,7 @@ impl SpecialCaseConversion for Class {
         fn string_conversion(value: &TokenStream) -> TokenStream {
             quote_spanned! {value.span()=> {
                 use ::std::borrow::BorrowMut as _;
-                use ::ez_jni::utils::AsNullableStrArg as _;
-                (&(#value)).as_string_arg(env.borrow_mut())
+                ::ez_jni::utils::new_string(::std::convert::AsRef::<str>::as_ref(&(#value)), env.borrow_mut())
             } }
         }
         match self {
