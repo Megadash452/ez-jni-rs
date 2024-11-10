@@ -399,17 +399,15 @@ impl SpecialCaseConversion for ArrayType {
             } }
         }
 
-        // Build a *Java Array* from a Rust *slice* in which the inner type is an **Object**.
-        // 
-        // **elem_conversion** is code that applies a conversion to each element to convert it from a *Rust Type* to a *Java Object*.
-        // The conversion must use an [`Ident`] **`_element`** as the value.
-        // For example, the **elem_conversion** argument can be
-        // ```ignore
-        // class.convert_rust_to_java(&quote!(_element))
-        // ```
-        let create_obj_array = |elem_conversion: Option<TokenStream>| -> TokenStream {
-            let elem_class = self.sig_type();
-
+        /// Build a *Java Array* from a Rust *slice* in which the inner type is an **Object**.
+        /// 
+        /// **elem_conversion** is code that applies a conversion to each element to convert it from a *Rust Type* to a *Java Object*.
+        /// The conversion must use an [`Ident`] **`_element`** as the value.
+        /// For example, the **elem_conversion** argument can be
+        /// ```ignore
+        /// class.convert_rust_to_java(&quote!(_element))
+        /// ```
+        fn create_obj_array(elem_class: LitStr, elem_conversion: Option<TokenStream>, value: &TokenStream) -> TokenStream {
             // The inner Class of the array might require some conversion
             let converted = {
                 match elem_conversion {
@@ -430,17 +428,29 @@ impl SpecialCaseConversion for ArrayType {
                     #elem_class,
                 env.borrow_mut())
             } }
-        };
+        }
 
         Some(match self.ty.as_ref() {
             Type::Assertive(ty) => match ty {
                 InnerType::JavaPrimitive { ty, .. } => convert_primitive(RustPrimitive::from(*ty), value),
                 InnerType::RustPrimitive { ty, .. } => convert_primitive(*ty, value),
-                InnerType::Object(class) => create_obj_array(class.convert_rust_to_java(&quote_spanned! {value.span()=> _element})),
+                InnerType::Object(class) => create_obj_array(
+                    class.sig_type(),
+                    class.convert_rust_to_java(&quote_spanned! {value.span()=> _element}),
+                    value
+                ),
             },
             // Recursion occurs on these 2 variants
-            Type::Option { ty, .. } => create_obj_array(ty.convert_rust_to_java(&quote_spanned! {value.span()=> _element})),
-            Type::Array(array) => create_obj_array(array.convert_rust_to_java(&quote_spanned! {value.span()=> _element})),
+            Type::Option { ty, .. } => create_obj_array(
+                ty.sig_type(),
+                ty.convert_rust_to_java(&quote_spanned! {value.span()=> _element}),
+                value
+            ),
+            Type::Array(array) => create_obj_array(
+                array.sig_type(),
+                array.convert_rust_to_java(&quote_spanned! {value.span()=> _element}),
+                value
+            ),
         })
     }
 }

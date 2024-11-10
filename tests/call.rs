@@ -19,18 +19,30 @@ fn return_primitives() {
     let _: f32 = call!(static me.test.Test.getFloat() -> float);
     let _: f64 = call!(static me.test.Test.getDouble() -> double);
     // Rust primitive return types
-    let _: bool = call!(static me.test.Test.getBoolean() -> bool);
-    let _: char = call!(static me.test.Test.getChar() -> char);
-    let _: u8 = call!(static me.test.Test.getByte() -> u8);
-    let _: u16 = call!(static me.test.Test.getShort() -> u16);
-    let _: u32 = call!(static me.test.Test.getInt() -> u32);
-    let _: u64 = call!(static me.test.Test.getLong() -> u64);
-    let _: i8 = call!(static me.test.Test.getByte() -> i8);
-    let _: i16 = call!(static me.test.Test.getShort() -> i16);
-    let _: i32 = call!(static me.test.Test.getInt() -> i32);
-    let _: i64 = call!(static me.test.Test.getLong() -> i64);
-    let _: f32 = call!(static me.test.Test.getFloat() -> f32);
-    let _: f64 = call!(static me.test.Test.getDouble() -> f64);
+    let r: bool = call!(static me.test.Test.getBoolean() -> bool);
+    assert_eq!(r, true);
+    let r: char = call!(static me.test.Test.getChar() -> char);
+    assert_eq!(r, 'a');
+    let r: u8 = call!(static me.test.Test.getByte() -> u8);
+    assert_eq!(r, 3);
+    let r: u16 = call!(static me.test.Test.getShort() -> u16);
+    assert_eq!(r, 3);
+    let r: u32 = call!(static me.test.Test.getInt() -> u32);
+    assert_eq!(r, 3);
+    let r: u64 = call!(static me.test.Test.getLong() -> u64);
+    assert_eq!(r, 3);
+    let r: i8 = call!(static me.test.Test.getByte() -> i8);
+    assert_eq!(r, 3);
+    let r: i16 = call!(static me.test.Test.getShort() -> i16);
+    assert_eq!(r, 3);
+    let r: i32 = call!(static me.test.Test.getInt() -> i32);
+    assert_eq!(r, 3);
+    let r: i64 = call!(static me.test.Test.getLong() -> i64);
+    assert_eq!(r, 3);
+    let r: f32 = call!(static me.test.Test.getFloat() -> f32);
+    assert_eq!(r, 3.3);
+    let r: f64 = call!(static me.test.Test.getDouble() -> f64);
+    assert_eq!(r, 3.3);
 }
 
 #[test]
@@ -75,18 +87,34 @@ fn return_arrays() {
     let _: Box<[f32]> = call!(static me.test.Test.getFloatArray() -> [float]);
     let _: Box<[f64]> = call!(static me.test.Test.getDoubleArray() -> [double]);
     // Rust primitives
-    let _: Box<[bool]> = call!(static me.test.Test.getBooleanArray() -> [bool]);
-    let _: Box<[char]> = call!(static me.test.Test.getCharArray() -> [char]);
-    let _: Box<[u8]> = call!(static me.test.Test.getByteArray() -> [u8]);
-    let _: Box<[u16]> = call!(static me.test.Test.getShortArray() -> [u16]);
-    let _: Box<[u32]> = call!(static me.test.Test.getIntArray() -> [u32]);
-    let _: Box<[u64]> = call!(static me.test.Test.getLongArray() -> [u64]);
-    let _: Box<[i8]> = call!(static me.test.Test.getByteArray() -> [i8]);
-    let _: Box<[i16]> = call!(static me.test.Test.getShortArray() -> [i16]);
-    let _: Box<[i32]> = call!(static me.test.Test.getIntArray() -> [i32]);
-    let _: Box<[i64]> = call!(static me.test.Test.getLongArray() -> [i64]);
-    let _: Box<[f32]> = call!(static me.test.Test.getFloatArray() -> [f32]);
-    let _: Box<[f64]> = call!(static me.test.Test.getDoubleArray() -> [f64]);
+    let r: Box<[bool]> = call!(static me.test.Test.getBooleanArray() -> [bool]);
+    assert_eq!(r.as_ref(), &[true, false]);
+    let r: Box<[char]> = call!(static me.test.Test.getCharArray() -> [char]);
+    assert_eq!(r.as_ref(), &['a', 'b', 'c']);
+    let r: Box<[u8]> = call!(static me.test.Test.getByteArray() -> [u8]);
+    assert_eq!(r.as_ref(), &[1, 2, 3]);
+    let r: Box<[u16]> = call!(static me.test.Test.getShortArray() -> [u16]);
+    assert_eq!(r.as_ref(), &[1, 2, 3]);
+    let r: Box<[u32]> = call!(static me.test.Test.getIntArray() -> [u32]);
+    assert_eq!(r.as_ref(), &[1, 2, 3]);
+    let r: Box<[u64]> = call!(static me.test.Test.getLongArray() -> [u64]);
+    assert_eq!(r.as_ref(), &[1, 2, 3]);
+    let r: Box<[i8]> = call!(static me.test.Test.getByteArray() -> [i8]);
+    assert_eq!(r.as_ref(), &[1, 2, 3]);
+    let r: Box<[i16]> = call!(static me.test.Test.getShortArray() -> [i16]);
+    assert_eq!(r.as_ref(), &[1, 2, 3]);
+    let r: Box<[i32]> = call!(static me.test.Test.getIntArray() -> [i32]);
+    assert_eq!(r.as_ref(), &[1, 2, 3]);
+    let r: Box<[i64]> = call!(static me.test.Test.getLongArray() -> [i64]);
+    assert_eq!(r.as_ref(), &[1, 2, 3]);
+    let r: Box<[f32]> = call!(static me.test.Test.getFloatArray() -> [f32]);
+    assert_eq!(r.as_ref(), &[1.1, 2.2, 3.3]);
+    let r: Box<[f64]> = call!(static me.test.Test.getDoubleArray() -> [f64]);
+    assert_eq!(r.as_ref(), &[1.1, 2.2, 3.3]);
+    // Multi-Dimensional Array
+    let r: Box<[Box<[i32]>]> = call!(static me.test.Test.get2DIntArray() -> [[int]]);
+    let expect: Box<[Box<[i32]>]> = Box::new([Box::new([1, 2]), Box::new([3, 4])]);
+    assert_eq!(r, expect);
 }
 
 #[test]
@@ -117,15 +145,21 @@ fn return_arrays_other() {
     assert!(r.is_none());
     // Array Option
     let r: Box<[Option<String>]> = call!(static me.test.Test.getStringArray() -> [Option<String>]);
-    r.into_vec().into_iter().for_each(|s| { s.unwrap(); });
+    let expect: Box<[Option<String>]> = Box::new(["Hello", "World"].map(|s| Some(s.to_string())));
+    assert_eq!(r, expect);
     let r: Box<[Option<String>]> = call!(static me.test.Test.getNullStringArray() -> [Option<String>]);
-    assert_eq!(&r, &(Box::new([Some("Hello".to_string()), None]) as Box<[Option<String>]>));
+    let expect: Box<[Option<String>]> = Box::new([Some("Hello"), None].map(|s| s.map(|s| s.to_string())));
+    assert_eq!(r, expect);
     let r: Box<[Option<JObject>]> = call!(static me.test.Test.getObjectArray() -> [Option<java.lang.Object>]);
     r.into_vec().into_iter().for_each(|s| { s.unwrap(); });
     let r: Option<Box<[Option<String>]>> = call!(static me.test.Test.getStringArray() -> Option<[Option<String>]>);
     r.unwrap().into_vec().into_iter().for_each(|s| { s.unwrap(); });
     let r: Option<Box<[Option<JObject>]>> = call!(static me.test.Test.getObjectArray() -> Option<[Option<java.lang.Object>]>);
     r.unwrap().into_vec().into_iter().for_each(|s| { s.unwrap(); });
+    // Multi-Dimensional Arrays
+    let r: Box<[Box<[String]>]> = call!(static me.test.Test.get2DStringArray() -> [[String]]);
+    let expect: Box<[Box<[String]>]> = Box::new([Box::new(["Hello", "World"].map(|s| s.to_string())), Box::new(["How", "are", "you"].map(|s| s.to_string()))]);
+    assert_eq!(r, expect);
     // Result<Option<_>, _>
     let r: Result<Option<Box<[bool]>>, String> = call!(static me.test.Test.getBooleanArray() -> Result<Option<[bool]>, String>);
     r.unwrap().unwrap();
@@ -225,7 +259,7 @@ fn arguments() {
         [java.lang.Object]([new!(java.lang.Object()), null]),
         [java.lang.String](["Hello", null])
     ) -> void);
-    //Optional Strings
+    // Optional Strings
     let s = [Some("Hello"), None];
     call!(static me.test.Test.objArrayArgs([java.lang.Object]([null, null]), [java.lang.String](s)) -> void);
 }

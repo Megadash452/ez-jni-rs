@@ -50,6 +50,8 @@ public final class Test {
     public static Object[]  getNullObjectArray()  { return new Object[]  {new Object(), null}; }
     public static String[]  getStringArray()  { return new String[]  {"Hello", "World"}; }
     public static String[]  getNullStringArray()  { return new String[]  {"Hello", null}; }
+    public static int[][]   get2DIntArray() { return new int[][] {new int[] {1, 2}, new int[] {3, 4} }; }
+    public static String[][] get2DStringArray() { return new String[][] {new String[] {"Hello", "World"}, new String[] {"How", "are", "you"} }; }
 
     public static boolean[] nullPrimArray() { return null; }
     public static Object[]  nullObjArray()    { return null; }
