@@ -1,7 +1,6 @@
 pub use either::Either;
 use jni::{
-    JNIEnv,
-    objects::{JObject, JString, JThrowable},
+    objects::{GlobalRef, JObject, JString, JThrowable}, JNIEnv
 };
 use std::{any::Any, sync::RwLock};
 use crate::FromException;
@@ -28,9 +27,17 @@ impl std::fmt::Display for PanicLocation {
     }
 }
 static PANIC_LOCATION: RwLock<Option<PanicLocation>> = RwLock::new(None);
+
+/// Tells whether [`set_panic_hook()`] was called and the *hook* was set.
+/// 
+/// This will only be `true` if the Rust code was called from Java (i.e. a [`jni_fn`][ez_jni::jni_fn!]).
+static PANIC_HOOK_SET: RwLock<bool> = RwLock::new(false);
 /// Sets a panic hook to grab [`PANIC_LOCATION`] data.
 fn set_panic_hook() {
     std::panic::set_hook(Box::new(|info| {
+        if let Ok(mut panic_hook_set) = PANIC_HOOK_SET.write() {
+            *panic_hook_set = true;
+        }
         if let Ok(mut panic_location) = PANIC_LOCATION.write() {
             if let Some(location) = info.location() {
                 *panic_location = Some(PanicLocation::from(location))
@@ -83,9 +90,11 @@ fn throw_panic(env: &mut JNIEnv, payload: Box<dyn Any + Send>) {
         Ok(msg) => Some(msg.as_ref().to_string()),
         Err(payload) => match payload.downcast::<String>() {
             Ok(msg) => Some(*msg),
-            Err(payload) => match payload.downcast::<()>() {
-                // Did not panic with a message, but with an "uncaught" exception that has already been rethrown
-                Ok(_) => return,
+            Err(payload) => match payload.downcast::<GlobalRef>() {
+                Ok(exception) => {
+                    env.throw(<&JThrowable>::from(exception.as_obj())).unwrap();
+                    return;
+                },
                 // Unexpected panic type
                 Err(_) => None,
             },
@@ -138,10 +147,11 @@ pub fn try_catch<'local, E: FromException<'local>>(env: &mut JNIEnv<'local>) -> 
         )
 }
 
-/// Throws the exception in the [`JNIEnv`] and **panics**.
+/// Panics with a *Java Exception* instead of  *Rust String message*.
 pub fn panic_exception(ex: JThrowable, env: &mut JNIEnv) -> ! {
-    env.throw(ex).unwrap();
-    ::std::panic::panic_any(())
+    let ex = env.new_global_ref(ex)
+        .unwrap_or_else(|err| panic!("Unable to create Global Reference for Exception Object: {err}"));
+    ::std::panic::panic_any(ex)
 }
 
 /// Checks if there is an **exception** that was thrown by a Java method called from Rust,
@@ -158,19 +168,26 @@ pub fn panic_uncaught_exception(
     method_name: impl AsRef<str>,
 ) {
     if let Some(ex) = catch_exception(env) {
-        let class = match target {
-            Either::Left(s) => s.to_string(),
-            Either::Right(obj) => env
-                .get_object_class(obj)
-                .and_then(|class| env.call_method(class, "getName", "()Ljava/lang/String;", &[]))
-                .and_then(|class| class.l())
-                .and_then(|class| {
-                    unsafe { env.get_string_unchecked(&JString::from(class)) }.map(String::from)
-                })
-                .unwrap_or_else(|_| "<Object>".to_string()),
-        };
-        eprintln!("Rust panic: Encountered an uncaught Java Exception after calling {class}.{}():", method_name.as_ref());
-        panic_exception(ex, env);
+        // If the panic hook was set, this means that the panic payload should be the Exception so that it can be rethrown to Java.
+        if *PANIC_HOOK_SET.read().unwrap() {
+            let class = match target {
+                Either::Left(s) => s.to_string(),
+                Either::Right(obj) => env
+                    .get_object_class(obj)
+                    .and_then(|class| env.call_method(class, "getName", "()Ljava/lang/String;", &[]))
+                    .and_then(|class| class.l())
+                    .and_then(|class| {
+                        unsafe { env.get_string_unchecked(&JString::from(class)) }.map(String::from)
+                    })
+                    .unwrap_or_else(|_| "<Object>".to_string()),
+            };
+            eprintln!("Rust panic: Encountered an uncaught Java Exception after calling {class}.{}():", method_name.as_ref());
+            panic_exception(ex, env)
+        } else {
+            // Otherwise, just panic with the exception message and exit execution.
+            let msg = <String as FromException>::from_exception(&ex, env).unwrap(); // Always returns Ok or panics
+            panic!("{msg}");
+        }
     }
 }
 
