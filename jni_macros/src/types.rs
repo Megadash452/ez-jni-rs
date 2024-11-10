@@ -91,12 +91,15 @@ impl SpecialCaseConversion for Type {
             Self::Assertive(InnerType::Object(_))
             | Self::Array(_) => Some({
                 let conversion = {
-                    let value = quote_spanned! {value.span()=> v};
+                    let v = quote_spanned! {value.span()=> v};
                     match self {
-                        Self::Assertive(InnerType::Object(class)) => class.convert_java_to_rust(&value),
-                        Self::Array(array) => array.convert_java_to_rust(&value),
+                        // Don't do null check if it is string because the Conversion of Object to String already does that
+                        Self::Assertive(InnerType::Object(class)) if class.to_jni_class_path() == "java/lang/String"
+                            => return class.convert_java_to_rust(value),
+                        Self::Assertive(InnerType::Object(class)) => class.convert_java_to_rust(&v),
+                        Self::Array(array) => array.convert_java_to_rust(&v),
                         _ => panic!("Unreachable")
-                    }.unwrap_or(value)
+                    }.unwrap_or(v)
                 };
                 
                 quote::quote_spanned! {conversion.span()=> {
