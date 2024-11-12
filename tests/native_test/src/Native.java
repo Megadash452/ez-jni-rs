@@ -1,5 +1,7 @@
 package me.test;
 
+import java.util.Arrays;
+
 public final class Native {
     static { System.loadLibrary("native_test"); }
     public Native() { }
@@ -14,22 +16,22 @@ public final class Native {
         assert len == 13;
     }
 
-    public void test_native_fns() {
+    private void test_native_fns() {
         boolean z = native_test_bool(true);
-        assert true == false; // FIXME WHY DOES THIS PASS????
         char c = native_test_char('a');
-        assert c == 'a';
         byte b = native_test_byte((byte)3);
-        assert b == 3;
         short s = native_test_short((short)3);
-        assert s == 3;
         int i = native_test_int(3);
-        assert i == 3;
         long j = native_test_long(3L);
-        assert j == 3;
         float f = native_test_float(3.3f);
-        assert f == 3.3;
         double d = native_test_double(3.3);
+        assert z == true;
+        assert c == 'a';
+        assert b == 3;
+        assert s == 3;
+        assert i == 3;
+        assert j == 3;
+        assert f == 3.3f;
         assert d == 3.3;
         // native_test_ubyte(u8);
         // native_test_ushort(u16);
@@ -37,36 +39,37 @@ public final class Native {
         // native_test_ulong(u64);
 
         boolean[] z_a = native_test_bool_array(new boolean[] {true, false});
-        assert z_a == new boolean[] {true, false};
         char[] c_a = native_test_char_array(new char[] {'a', 'b'});
-        assert c_a == new char[] {'a', 'b'};
         byte[] b_a = native_test_byte_array(new byte[] {(byte)1, (byte)2, (byte)3});
-        assert b_a == new byte[] {(byte)1, (byte)2, (byte)3};
         short[] s_a = native_test_short_array(new short[] {(short)1, (short)2, (short)3});
-        assert s_a == new short[] {(short)1, (short)2, (short)3};
         int[] i_a = native_test_int_array(new int[] {1, 2, 3});
-        assert i_a == new int[] {1, 2, 3};
         long[] j_a = native_test_long_array(new long[] {1L, 2L, 3L});
-        assert j_a == new long[] {1L, 2L, 3L};
         float[] f_a = native_test_float_array(new float[] {1.1f, 2.2f, 3.3f});
-        assert f_a == new float[] {1.1f, 2.2f, 3.3f};
         double[] d_a = native_test_double_array(new double[] {1.1, 2.2, 3.3});
-        assert d_a == new double[] {1.1, 2.2, 3.3};
+        assert Arrays.equals(z_a, new boolean[] {true, false});
+        assert Arrays.equals(c_a, new char[] {'a', 'b'});
+        assert Arrays.equals(b_a, new byte[] {(byte)1, (byte)2, (byte)3});
+        assert Arrays.equals(s_a, new short[] {(short)1, (short)2, (short)3});
+        assert Arrays.equals(i_a, new int[] {1, 2, 3});
+        assert Arrays.equals(j_a, new long[] {1L, 2L, 3L});
+        assert Arrays.equals(f_a, new float[] {1.1f, 2.2f, 3.3f});
+        assert Arrays.equals(d_a, new double[] {1.1, 2.2, 3.3});
         // public u8[] native_test_ubyte_array(u8[]);
         // public u16[] native_test_ushort_array(u16[]);
         // public u32[] native_test_uint_array(u32[]);
         // public u64[] native_test_ulong_array(u64[]);
 
+        Object obj_arg = new java.lang.Object();
         native_test_void();
-        assert native_test_str("Hello, World!") == "Hello, World";
-        native_test_obj(new java.lang.Object());
-        native_test_str_arr(new String[] {"Hello", "World"});
-        native_test_obj_arr(new Object[] {new java.lang.Object()});
-        native_test_null_str(null);
-        native_test_str_null_arr(null);
-        native_test_null_str_arr(new String[] {"Hello", null});
-        native_test_2d_str_arr(new String[][] {{"Hello", "Rust"}, {"From", "Java"}});
-        native_test_3d_str_arr(new String[][][] {
+        String str = native_test_str("Hello, World!");
+        Object obj = native_test_obj(obj_arg);
+        String[] str_arr = native_test_str_arr(new String[] {"Hello", "World"});
+        Object[] obj_arr = native_test_obj_arr(new Object[] {obj_arg});
+        String null_str = native_test_null_str(null);
+        String[] str_null_arr = native_test_str_null_arr(null);
+        String[] null_str_arr = native_test_null_str_arr(new String[] {"Hello", null});
+        String[][] _2d_str_arr = native_test_2d_str_arr(new String[][] {{"Hello", "Rust"}, {"From", "Java"}});
+        String[][][] _3d_str_arr = native_test_3d_str_arr(new String[][][] {
             {
                 {"I", "am", "Groot"},
                 {"here", "it", "is"},
@@ -75,8 +78,35 @@ public final class Native {
                 {"From", "Java"},
             }
         });
-        native_test_2d_str_null_arr(new String[][] {{"Hello", "World"}, null});
-        native_test_3d_null_str_arr(new String[][][] {
+        String[][] _2d_str_null_arr = native_test_2d_str_null_arr(new String[][] {{"Hello", "World"}, null});
+        String[][][] _3d_null_str_arr = native_test_3d_null_str_arr(new String[][][] {
+            {
+                {"I", "am", null},
+                {"here", "it", "is"},
+            }, {
+                {"Hello", null},
+                {"From", "Java"},
+            }
+        });
+        assert str.equals("Hello, World!");
+        assert obj == obj_arg; // Object references should be the same
+        assert Arrays.equals(str_arr, new String[] {"Hello", "World"});
+        assert obj_arr[0] == obj_arg; // Object references should be the same
+        assert null_str == null;
+        assert str_null_arr == null;
+        assert Arrays.equals(null_str_arr, new String[] {"Hello", null});
+        assert Arrays.deepEquals(_2d_str_arr, new String[][] {{"Hello", "Rust"}, {"From", "Java"}});
+        assert Arrays.deepEquals(_3d_str_arr, new String[][][] {
+            {
+                {"I", "am", "Groot"},
+                {"here", "it", "is"},
+            }, {
+                {"Hello", "Rust"},
+                {"From", "Java"},
+            }
+        });
+        assert Arrays.deepEquals(_2d_str_null_arr, new String[][] {{"Hello", "World"}, null});
+        assert Arrays.deepEquals(_3d_null_str_arr, new String[][][] {
             {
                 {"I", "am", null},
                 {"here", "it", "is"},
@@ -120,7 +150,7 @@ public final class Native {
     public native String[] native_test_str_arr(String[] t);
     public native Object[] native_test_obj_arr(Object[] l);
     public native String native_test_null_str( String t);
-    public native  String[] native_test_str_null_arr( String[] t);
+    public native String[] native_test_str_null_arr( String[] t);
     public native String[] native_test_null_str_arr(String[] t);
     public native String[][] native_test_2d_str_arr(String[][] t);
     public native String[][][] native_test_3d_str_arr(String[][][] t);

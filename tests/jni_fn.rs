@@ -27,7 +27,8 @@ fn jni_fn() {
     run(Command::new("java")
         .env("LD_LIBRARY_PATH", absolute_path("./target/debug"))
         .current_dir(absolute_path(CLASS_DIR))
-        .args(["me/test/Native"])
+        .stdout(std::io::stdout())
+        .args(["-ea", "me/test/Native"])
     );
 }
 
