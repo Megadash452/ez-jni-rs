@@ -1,0 +1,12 @@
+[package]
+name = "native_test"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "native_test"
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+jni = { workspace = true }
+ez_jni = { workspace = true }

@@ -13,6 +13,12 @@ jni = { version = "0.21", default-features = false }
 ez_jni_macros = { path = "./jni_macros", version = "0.4.0" }
 thiserror = "1.0.63"
 
+[workspace]
+members = [
+    "jni_macros",
+    "tests/native_test"
+]
+
 [workspace.dependencies]
 ez_jni = { path = "./" }
 jni = { version = "0.21.1", features = ["invocation"] }
