@@ -12,6 +12,9 @@ use utils::item_from_derive_input;
 
 /// Define a function in Rust that can be called from external Java code.
 /// 
+/// The function can also be defined with `static` to match the declaration of the *native method* in the Java side.
+/// This means that the function will be called with a *Class* instead of an *Object* as the *receiver*.
+/// 
 /// You can also do multiple function definitions in one macro call.
 /// 
 /// ### Requirements
@@ -20,13 +23,17 @@ use utils::item_from_derive_input;
 /// 1. be defined with `pub` visibility,
 /// 2. have exactly *one lifetime* (named `local`),
 /// 3. no generic constants or types,
-/// 4. and no arguments named `env` or `_class`.
+/// 4. and no arguments named `env` or `this` (or `class` if it is *static*.).
 ///
 /// The function must also have a `class` attribute with the *full name* of a Java Class where the native function is declared (e.g. `java.lang.String`).
 /// 
 /// ### Argument and Return Types
 /// 
 /// The **arguments** and **return** can have any Type that is also used for [`ez_jni::call!`](https://docs.rs/ez_jni/latest/ez_jni/macro.call.html#types).
+/// 
+/// The implicit argument `this` has type [`JObject`][jni::objects::JObject],
+/// or `class` (if it is *static*) has type [`JClass`][jni::objects::JClass],
+/// although both types are essentially the same.
 ///
 /// ### Panic catching
 /// 
@@ -46,7 +53,7 @@ use utils::item_from_derive_input;
 /// # use ez_jni_macros::jni_fn;
 /// jni_fn! {
 ///     #[class(me.author.MyClass)]
-///     pub fn hello_world<'local>(s: java.lang.String) -> int {
+///     pub static fn hello_world<'local>(s: java.lang.String) -> int {
 ///         3
 ///     }
 /// }

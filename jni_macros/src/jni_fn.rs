@@ -30,6 +30,7 @@ pub struct JniFn {
     /// This takes the form of an attribute that is removed after parsing.
     class: Class,
     pub pub_token: Token![pub],
+    pub static_token: Option<Token![static]>,
     pub fn_token: Token![fn],
     pub name: Ident,
     pub lt_token: Token![<],
@@ -59,7 +60,9 @@ impl Parse for JniFn {
                 syn::Error::new(err.span(), format!("{err}; jn_fn must have `pub` because they must be exported by the library"))
             ))
             .ok();
-
+        // Parse `static`
+        let static_token = input.parse::<Token![static]>()
+            .ok();
         // Parse `fn`
         let fn_token = input.parse::<Token![fn]>()
             .map_err(|err| errors.push(err))
@@ -166,7 +169,7 @@ impl Parse for JniFn {
         let class = class.unwrap();
         let lifetime = lifetime.unwrap();
 
-        Ok(Self { attrs, class, pub_token, fn_token, name, lt_token, lifetime, gt_token, paren_token, inputs, output, brace_token, content })
+        Ok(Self { attrs, class, pub_token, static_token, fn_token, name, lt_token, lifetime, gt_token, paren_token, inputs, output, brace_token, content })
     }
 }
 impl ToTokens for JniFn {
@@ -196,7 +199,15 @@ impl ToTokens for JniFn {
         self.lifetime.to_tokens(tokens);
         self.gt_token.to_tokens(tokens);
         self.paren_token.surround(tokens, |tokens| {
-            tokens.append_all(quote_spanned!(self.paren_token.span.span()=> mut env: ::jni::JNIEnv<'local>, _class: ::jni::objects::JClass<'local>,));
+            // Static methods receive the Class, and Object methods receive the Object
+            let receiver = if let Some(static_token) = &self.static_token {
+                quote_spanned!(static_token.span()=> class: ::jni::objects::JClass<'local>)
+            } else {
+                quote!(this: ::jni::objects::JObject<'local>)
+            };
+            tokens.append_all(quote_spanned!(self.paren_token.span.span()=>
+                mut env: ::jni::JNIEnv<'local>, #[allow(unused_variables)] #receiver,
+            ));
             self.inputs.to_tokens(tokens);
         });
         self.output.to_tokens(tokens);
