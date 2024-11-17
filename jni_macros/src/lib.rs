@@ -25,7 +25,11 @@ use utils::item_from_derive_input;
 /// 3. no generic constants or types,
 /// 4. and no arguments named `env` or `this` (or `class` if it is *static*.).
 ///
-/// The function must also have a `class` attribute with the *full name* of a Java Class where the native function is declared (e.g. `java.lang.String`).
+/// All *jni_fn*s must belong to a *Java Class* where the native function is declared.
+/// The class must be the full class path (e.g. `java.lang.String`).
+/// This can be done with a `class` attribute on each function,
+/// or with the Class at the start of the macro input,
+/// which will apply to all functions in that macro invocation.
 /// 
 /// ### Argument and Return Types
 /// 
@@ -51,8 +55,8 @@ use utils::item_from_derive_input;
 /// ### Example
 /// ```
 /// # use ez_jni_macros::jni_fn;
-/// jni_fn! {
-///     #[class(me.author.MyClass)]
+/// jni_fn! { me.author.MyClass =>
+///     // or with attribute: #[class(me.author.MyClass)]
 ///     pub static fn hello_world<'local>(s: java.lang.String) -> int {
 ///         3
 ///     }
@@ -65,7 +69,7 @@ use utils::item_from_derive_input;
 /// /// (Ljava/lang/String;)I
 /// #[no_mangle]
 /// pub extern "system" fn Java_me_author_MyClass_hello_1world<'local>(
-///     mut env: JNIEnv<'local>, _class: JClass<'local>,
+///     mut env: JNIEnv<'local>, #[allow(unused_variables)] class: JClass<'local>,
 ///     s: JString<'local>,
 /// ) -> jni::sys::jint {
 ///     ez_jni::__throw::catch_throw(&mut env, move |#[allow(unused_variables)] env| -> i32 {

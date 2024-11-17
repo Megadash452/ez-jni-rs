@@ -9,10 +9,15 @@ use crate::{
 /// Converts the parsed [`JniFn`] to a regular function used in Rust.
 pub fn jni_fn(input: ParseStream) -> syn::Result<Vec<TokenStream>> {
     let mut inputs = Vec::new();
+    // A (optional) class applied to all the jni_fn in this block
+    let class = input.parse::<Class>().ok();
+    if class.is_some() {
+        input.parse::<Token![=>]>()?;
+    }
 
     // Parse multiple jni_fn
     while !input.is_empty() {
-        inputs.push(input.parse::<JniFn>()?.to_token_stream());
+        inputs.push(input.parse::<JniFn>()?.to_token_stream(class.as_ref())?);
     }
 
     // Convert all JniFn to ItemFn 
@@ -26,9 +31,6 @@ pub fn jni_fn(input: ParseStream) -> syn::Result<Vec<TokenStream>> {
 /// A [`JniFn`] is one that MUST be exported by the user library.
 pub struct JniFn {
     pub attrs: Vec<Attribute>,
-    /// The Java Class the function is a method of.
-    /// This takes the form of an attribute that is removed after parsing.
-    class: Class,
     pub pub_token: Token![pub],
     pub static_token: Option<Token![static]>,
     pub fn_token: Token![fn],
@@ -42,6 +44,84 @@ pub struct JniFn {
     pub output: JniReturn,
     pub brace_token: Brace,
     pub content: TokenStream,
+}
+impl JniFn {
+    /// Fulfills the same role as [`ToTokens::to_tokens`],
+    /// but [`JniFn`] mut have the [`Class`] that it belongs to either in the [`Attribute`]s,
+    /// or provided as the argument to this function.
+    fn to_token_stream(mut self, class: Option<&Class>) -> syn::Result<TokenStream> {
+        let mut tt = TokenStream::new();
+        let tokens = &mut tt;
+
+        // The real name of the function as it will be used by Java
+        let name = {
+            let result = take_class_attribute_required(&mut self.attrs, self.name.span());
+            // Get the class either from the Attributes or the argument
+            let class = match result.as_ref() {
+                Ok(c) => match class {
+                    // class argument should be None if there is a class Attribute
+                    Some(_) => return Err(syn::Error::new(c.span(), "Do not give functions a `class` attribute if the Class was provided with the macro invocation.")),
+                    None => &c,
+                },
+                Err(err) => class.ok_or(err.clone())?,
+            };
+            let class = class.to_string()
+                .replace('.', "_");
+            let name = self.name.to_string().replace('_', "_1");
+    
+            Ident::new(&format!("Java_{class}_{name}"), self.name.span())
+        };
+
+        // Build a java method signature, something like (Ljava.lang.String;)I
+        let method_sig = gen_signature(self.inputs.iter().map(|i| &i.ty), &self.output).value();
+
+        tokens.append_all(&self.attrs);
+        tokens.append_all(quote!(#[doc = ""]));
+        tokens.append_all(quote!(#[doc = #method_sig]));
+        tokens.append_all(quote!(#[no_mangle]));
+        self.pub_token.to_tokens(tokens);
+        tokens.append_all(quote!(extern "system"));
+        self.fn_token.to_tokens(tokens);
+        name.to_tokens(tokens);
+        self.lt_token.to_tokens(tokens);
+        self.lifetime.to_tokens(tokens);
+        self.gt_token.to_tokens(tokens);
+        self.paren_token.surround(tokens, |tokens| {
+            // Static methods receive the Class, and Object methods receive the Object
+            let receiver = if let Some(static_token) = &self.static_token {
+                quote_spanned!(static_token.span()=> class: ::jni::objects::JClass<'local>)
+            } else {
+                quote!(this: ::jni::objects::JObject<'local>)
+            };
+            tokens.append_all(quote_spanned!(self.paren_token.span.span()=>
+                mut env: ::jni::JNIEnv<'local>, #[allow(unused_variables)] #receiver,
+            ));
+            self.inputs.to_tokens(tokens);
+        });
+        self.output.to_tokens(tokens);
+        self.brace_token.surround(tokens, |tokens| {
+            let mut body = TokenStream::new();
+            self.brace_token.surround(&mut body, |tokens| {
+                // Create local variables that hold the converted values of the arguments
+                for arg in &self.inputs {
+                    tokens.append_all(arg.create_rust_val());
+                }
+                self.content.to_tokens(tokens);
+            });
+            let rust_type = rust_return_type(&self.output);
+
+            tokens.append_all(match self.output.convert_rust_to_java(&quote_spanned!(self.output.span()=> r)) {
+                Some(conversion) => quote_spanned! {self.content.span()=>
+                    ::ez_jni::__throw::catch_throw_map(&mut env, move |#[allow(unused_variables)] env| -> #rust_type #body, |r: #rust_type, #[allow(unused_variables)] env| #conversion)
+                },
+                None => quote_spanned! {self.content.span()=>
+                    ::ez_jni::__throw::catch_throw(&mut env, move |#[allow(unused_variables)] env| -> #rust_type #body)
+                }
+            });
+        });
+
+        Ok(tt)
+    }
 }
 impl Parse for JniFn {
     fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -112,7 +192,7 @@ impl Parse for JniFn {
 
         merge_errors(errors)?;
         // If there were any errors, the function returned on the line above, so reaching here means all tokens were parsed successfully.
-        let mut attrs = attrs.unwrap();
+        let attrs = attrs.unwrap();
         let pub_token = pub_token.unwrap();
         let fn_token = fn_token.unwrap();
         let name = name.unwrap();
@@ -122,11 +202,6 @@ impl Parse for JniFn {
 
         // -- Perform checks on the successfully parsed function
         errors = Vec::new();
-
-        // jni_fn must have a `class` attribute
-        let class = take_class_attribute_required(&mut attrs, name.span())
-            .map_err(|err| errors.push(err))
-            .ok();
 
         let mut iter = generics.into_iter();
 
@@ -154,9 +229,9 @@ impl Parse for JniFn {
             errors.push(syn::Error::new(lifetime.span(), LIFETIME_ERROR))
         }
 
-        // Check that the function doesn't have arguments named "env" or "_class" because those are implicitly added
-        for arg_name in ["env", "_class"] {
-            if let Some(arg) = inputs.iter().find(|arg| arg.name.to_string() == arg_name) {
+        // Check that the function doesn't have arguments with these names because those are implicitly added
+        for arg_name in ["env", "class", "this"] {
+            if let Some(arg) = inputs.iter().find(|arg| arg.name == arg_name) {
                 errors.push(syn::Error::new(
                     arg.span(),
                     format!("Function can't have an argument named \"{arg_name}\"; this is added implicitly")
@@ -165,72 +240,9 @@ impl Parse for JniFn {
         }
 
         merge_errors(errors)?;
-
-        let class = class.unwrap();
         let lifetime = lifetime.unwrap();
 
-        Ok(Self { attrs, class, pub_token, static_token, fn_token, name, lt_token, lifetime, gt_token, paren_token, inputs, output, brace_token, content })
-    }
-}
-impl ToTokens for JniFn {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        #[allow(unused_variables)] let a = 0;
-        // The real name of the function as it will be used by Java
-        let name = {
-            let class = self.class.to_string()
-                .replace('.', "_");
-            let name = self.name.to_string().replace('_', "_1");
-    
-            Ident::new(&format!("Java_{class}_{name}"), self.name.span())
-        };
-
-        // Build a java method signature, something like (Ljava.lang.String;)I
-        let method_sig = gen_signature(self.inputs.iter().map(|i| &i.ty), &self.output).value();
-
-        tokens.append_all(&self.attrs);
-        tokens.append_all(quote!(#[doc = ""]));
-        tokens.append_all(quote!(#[doc = #method_sig]));
-        tokens.append_all(quote!(#[no_mangle]));
-        self.pub_token.to_tokens(tokens);
-        tokens.append_all(quote!(extern "system"));
-        self.fn_token.to_tokens(tokens);
-        name.to_tokens(tokens);
-        self.lt_token.to_tokens(tokens);
-        self.lifetime.to_tokens(tokens);
-        self.gt_token.to_tokens(tokens);
-        self.paren_token.surround(tokens, |tokens| {
-            // Static methods receive the Class, and Object methods receive the Object
-            let receiver = if let Some(static_token) = &self.static_token {
-                quote_spanned!(static_token.span()=> class: ::jni::objects::JClass<'local>)
-            } else {
-                quote!(this: ::jni::objects::JObject<'local>)
-            };
-            tokens.append_all(quote_spanned!(self.paren_token.span.span()=>
-                mut env: ::jni::JNIEnv<'local>, #[allow(unused_variables)] #receiver,
-            ));
-            self.inputs.to_tokens(tokens);
-        });
-        self.output.to_tokens(tokens);
-        self.brace_token.surround(tokens, |tokens| {
-            let mut body = TokenStream::new();
-            self.brace_token.surround(&mut body, |tokens| {
-                // Create local variables that hold the converted values of the arguments
-                for arg in &self.inputs {
-                    tokens.append_all(arg.create_rust_val());
-                }
-                self.content.to_tokens(tokens);
-            });
-            let rust_type = rust_return_type(&self.output);
-
-            tokens.append_all(match self.output.convert_rust_to_java(&quote_spanned!(self.output.span()=> r)) {
-                Some(conversion) => quote_spanned! {self.content.span()=>
-                    ::ez_jni::__throw::catch_throw_map(&mut env, move |#[allow(unused_variables)] env| -> #rust_type #body, |r: #rust_type, #[allow(unused_variables)] env| #conversion)
-                },
-                None => quote_spanned! {self.content.span()=>
-                    ::ez_jni::__throw::catch_throw(&mut env, move |#[allow(unused_variables)] env| -> #rust_type #body)
-                }
-            });
-        });
+        Ok(Self { attrs, pub_token, static_token, fn_token, name, lt_token, lifetime, gt_token, paren_token, inputs, output, brace_token, content })
     }
 }
 
