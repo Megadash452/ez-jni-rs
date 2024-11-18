@@ -20,7 +20,6 @@ jobs:
         distribution: 'oracle'
         java-version: '21'
     - name: Build
-      run: rustup target add x86_64-linux-android
-      run: cargo build --target x86_64-linux-android --verbose
+      run: rustup target add x86_64-linux-android && cargo build --target x86_64-linux-android --verbose
     - name: Run tests
       run: cargo test -p ez_jni -p ez_jni_macros --verbose
