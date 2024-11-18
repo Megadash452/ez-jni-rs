@@ -12,24 +12,18 @@ pub use android::*;
 #[cfg(target_os = "android")]
 mod android {
     use jni::JNIEnv;
-    use jni_macros::call;
+    use ez_jni::call;
     
     #[doc(hidden)]
     /// Does the printing for [`jni_macros::println!`].
     pub fn __println(s: String, env: &mut JNIEnv) {
-        call!(static android.util.Log.i(
-            java.lang.String(env.new_string("Rust").unwrap()),
-            java.lang.String(env.new_string(s).unwrap())
-        ) -> int);
+        call!(static android.util.Log.i(java.lang.String("Rust"), java.lang.String(s)) -> int);
     }
     
     #[doc(hidden)]
     /// Does the printing for [`jni_macros::eprintln!`].
     pub fn __eprintln(s: String, env: &mut JNIEnv) {
-        call!(static android.util.Log.e(
-            java.lang.String(env.new_string("Rust").unwrap()),
-            java.lang.String(env.new_string(s).unwrap())
-        ) -> int);
+        call!(static android.util.Log.e(java.lang.String("Rust"), java.lang.String(s)) -> int);
     }
 }
 
