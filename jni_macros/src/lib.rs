@@ -265,13 +265,13 @@ pub fn println(input: TokenStream) -> TokenStream {
         input.clone()
     };
     
-    quote!{
+    quote!{ ::cfg_if::cfg_if! {
         if #[cfg(target_os = "android")] {
             ::ez_jni::utils::__println(format!(#input), env)
         } else {
             ::std::println!(#string)
         }
-    }.into()
+    } }.into()
 }
 
 /// Print error. See [`std::eprintln!`](https://doc.rust-lang.org/std/macro.eprintln.html).
