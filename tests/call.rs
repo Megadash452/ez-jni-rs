@@ -3,7 +3,7 @@ mod common;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use jni::objects::JObject;
-use ez_jni::{call, new};
+use ez_jni::{call, new, println, eprintln};
 
 #[test]
 fn return_primitives() {
@@ -301,4 +301,11 @@ fn obj_method() {
     // Test object expression
     call!((obj).getBoolean() -> boolean);
     call!({ obj }.getBoolean() -> boolean);
+}
+
+#[test]
+fn print() {
+    // This test will NOT run in the android environment, so it is impossible to test if the call to android.util.Log will be successful.
+    println!("Hello, World!");
+    eprintln!("Hello, World!");
 }

@@ -25,6 +25,18 @@ mod android {
     pub fn __eprintln(s: String, env: &mut JNIEnv) {
         call!(static android.util.Log.e(java.lang.String("Rust"), java.lang.String(s)) -> int);
     }
+
+    // This test will NOT run because it only exists in Android build,
+    // but there is no Android device to run it,
+    // so it is impossible to test if the call to android.util.Log will be successful.
+    // However, it will be built with Android compiler by github workflows,
+    // so it is able to test if the macro outputs correct tokens.
+    #[doc(hidden)]
+    fn print(env: &mut JNIEnv) {
+        use ez_jni::{println, eprintln};
+        println!("Hello, World!");
+        eprintln!("Hello, World!");
+    }
 }
 
 /// Get a [`String`] from a `java.lang.String`, asserting that the object is NOT **`NULL`**.

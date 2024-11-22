@@ -172,6 +172,16 @@ enum MyEnumClass {
     Variant2 { str: String },
 }
 
+/// This one is not tested at runtime, as it is identical to [`MyEnumClass`].
+#[allow(dead_code)]
+#[derive(Debug, FromObject)]
+enum MyEnumClass2 {
+    #[class(me.test.Test$SumClass$SumClass1)]
+    Variant1 { number: i32 },
+    #[class(me.test.Test$SumClass$SumClass2)]
+    Variant2 { str: String },
+}
+
 #[test]
 fn from_object() {
     setup_env!(env);
