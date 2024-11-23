@@ -273,7 +273,7 @@ pub fn println(input: TokenStream) -> TokenStream {
         input.clone()
     };
     
-    quote!{ ::cfg_if::cfg_if! {
+    quote!{ ::ez_jni::utils::cfg_if::cfg_if! {
         if #[cfg(target_os = "android")] {
             ::ez_jni::utils::__println(format!(#input), env)
         } else {
@@ -301,7 +301,7 @@ pub fn eprintln(input: TokenStream) -> TokenStream {
         input.clone()
     };
     
-    quote!{ ::cfg_if::cfg_if! {
+    quote!{ ::ez_jni::utils::cfg_if::cfg_if! {
         if #[cfg(target_os = "android")] {
             ::ez_jni::utils::__eprintln(format!(#input), env)
         } else {

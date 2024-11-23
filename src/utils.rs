@@ -6,6 +6,9 @@ use jni::{
 };
 use crate::{call, object::FromObjectError, FromException, __throw::{panic_exception, try_catch}};
 
+#[doc(hidden)]
+pub use cfg_if;
+
 #[cfg(target_os = "android")]
 pub use android::*;
 
