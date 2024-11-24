@@ -1,12 +1,13 @@
 pub use either::Either;
 use jni::{
-    objects::{GlobalRef, JObject, JString, JThrowable}, JNIEnv
+    objects::{GlobalRef, JClass, JObject, JString, JThrowable, JValue}, JNIEnv
 };
-use std::{any::Any, sync::RwLock};
+use std::{any::Any, cell::{Cell, RefCell}, collections::HashMap};
 use crate::FromException;
-use crate::eprintln;
+use crate::{compile_java_class, eprintln};
 
 /// A lot like [std::panic::Location], but uses a [String] instead of `&str`.
+#[derive(Debug, Clone)]
 struct PanicLocation {
     file: String,
     line: u32,
@@ -26,25 +27,27 @@ impl std::fmt::Display for PanicLocation {
         write!(f, "{}:{}:{}", self.file, self.line, self.col)
     }
 }
-static PANIC_LOCATION: RwLock<Option<PanicLocation>> = RwLock::new(None);
 
-/// Tells whether [`set_panic_hook()`] was called and the *hook* was set.
-/// 
-/// This will only be `true` if the Rust code was called from Java (i.e. a [`jni_fn`][ez_jni::jni_fn!]).
-static PANIC_HOOK_SET: RwLock<bool> = RwLock::new(false);
+thread_local! {
+    static PANIC_LOCATION: RefCell<Option<PanicLocation>> = const { RefCell::new(None) };
+    /// Tells whether [`set_panic_hook()`] was called and the *hook* was set.
+    /// 
+    /// This will only be `true` if the Rust code was called from Java (i.e. a [`jni_fn`][ez_jni::jni_fn!]).
+    static PANIC_HOOK_SET: Cell<bool> = const { Cell::new(false) };
+}
+
 /// Sets a panic hook to grab [`PANIC_LOCATION`] data.
 fn set_panic_hook() {
     std::panic::set_hook(Box::new(|info| {
-        if let Ok(mut panic_hook_set) = PANIC_HOOK_SET.write() {
-            *panic_hook_set = true;
+        if !PANIC_HOOK_SET.get() {
+            PANIC_HOOK_SET.set(true);
         }
-        if let Ok(mut panic_location) = PANIC_LOCATION.write() {
-            if let Some(location) = info.location() {
-                *panic_location = Some(PanicLocation::from(location))
-            }
-        }
+        PANIC_LOCATION.set(Some(info.location().unwrap().into()));
     }));
 }
+
+// static PANIC_CLASS: &[u8] = const { compile_java_class!("./src/me/marti/ezjni/RustPanic.java")[0].1 };
+// static LOCATION_CLASS: &[u8] = const { compile_java_class!("./src/me/marti/ezjni/PanicLocation.java")[0].1 };
 
 /// Runs a Rust function and returns its value, catching any `panics!` and throwing them as Java Exceptions.
 ///
@@ -58,14 +61,9 @@ pub fn catch_throw<'local, R>(
     env: &mut JNIEnv<'local>,
     f: impl FnOnce(&mut JNIEnv<'local>) -> R,
 ) -> R {
-    set_panic_hook();
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(env))) {
-        Ok(r) => r,
-        Err(payload) => {
-            throw_panic(env, payload);
-            unsafe { std::mem::zeroed() }
-        }
-    }
+    catch_throw_main(env, |env|
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(env)))
+    )
 }
 /// Same as [`catch_throw()`], but maps the returned `R` to a Java value `J`.
 pub fn catch_throw_map<'local, R, J>(
@@ -74,41 +72,99 @@ pub fn catch_throw_map<'local, R, J>(
     // map function should not capture variables
     map: fn(R, &mut JNIEnv<'local>) -> J,
 ) -> J {
+    catch_throw_main(env, |env|
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(env)))
+            .and_then(|r| std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| map(r, env))))
+    )
+}
+/// Handles the setting up the *panic hook* and throwing the *panic payload*.
+/// 
+/// This function exists to avoid repeating code in [`catch_throw()`] and [`catch_throw_map()`].
+#[allow(unused_must_use)]
+fn catch_throw_main<'local, R>(env: &mut JNIEnv<'local>, catch: impl FnOnce(&mut JNIEnv<'local>) -> std::thread::Result<R>) -> R {
     set_panic_hook();
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(env)))
-        .and_then(|r| std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| map(r, env))))
-    {
-        Ok(j) => j,
+    let result = match catch(env) {
+        Ok(r) => r,
         Err(payload) => {
-            throw_panic(env, payload);
+            throw_panic(env, payload)
+                .unwrap_or_else(|err| {
+                    std::panic::take_hook();
+                    eprintln!("Aborting: {err}");
+                    std::process::abort();
+                });
             unsafe { std::mem::zeroed() }
         }
-    }
+    };
+    std::panic::take_hook();
+    result
 }
-fn throw_panic(env: &mut JNIEnv, payload: Box<dyn Any + Send>) {
+
+/// This function MUST NEVER `panic!`.
+fn throw_panic(env: &mut JNIEnv, payload: Box<dyn Any + Send>) -> Result<(), Box<dyn std::error::Error>> {
     let panic_msg = match payload.downcast::<&'static str>() {
-        Ok(msg) => Some(msg.as_ref().to_string()),
+        Ok(msg) => msg.as_ref().to_string(),
         Err(payload) => match payload.downcast::<String>() {
-            Ok(msg) => Some(*msg),
+            Ok(msg) => *msg,
             Err(payload) => match payload.downcast::<GlobalRef>() {
+                // Panicked with an Exception (should be rethrown)
                 Ok(exception) => {
-                    env.throw(<&JThrowable>::from(exception.as_obj())).unwrap();
-                    return;
+                    env.throw(<&JThrowable>::from(exception.as_obj()))
+                        .map_err(|err| format!("Failed to rethrow exception: {err}"))?;
+                    return Ok(());
                 },
                 // Unexpected panic type
-                Err(_) => None,
+                Err(_) => "Rust panicked!; Unable to obtain panic message".to_string(),
             },
         },
     };
-    let msg = match (panic_msg, &*PANIC_LOCATION.read().unwrap()) {
-        (Some(msg), Some(info)) => format!("panicked at {info}: {msg}"),
-        (Some(msg), None) => format!("panicked at unknown location: {msg}"),
-        (None, Some(info)) => format!("Rust panicked at {info}, but could not obtain message"),
-        (None, None) => "Rust had a panic! but could not obtain any panic data".to_string(),
+    let location = PANIC_LOCATION.try_with(|loc| {
+        loc.try_borrow()
+            .ok()
+            .as_deref()
+            .map(|loc| loc.as_ref().map(|loc| loc.clone()))
+    }).ok()
+        .flatten()
+        .flatten();
+    // TODO: get backtrace
+
+    let classes: HashMap<&str, JClass> = Result::from_iter(
+        compile_java_class!("./src/me/marti/ezjni/RustPanic.java").iter()
+            .map(|(class, binary)|
+                env.define_class(class, &JObject::null(), binary)
+                    .map(|jclass| (*class, jclass))
+            )
+    )?;
+
+    // Create the RustPanic object to throw
+    env.exception_clear()?;
+
+    let panic_class = classes.get("me/marti/ezjni/RustPanic")
+        .ok_or_else(|| format!("No class \"RustPanic\" in the Map of compiled Java files."))?;
+    let location_class = classes.get("me/marti/ezjni/RustPanic$Location")
+        .ok_or_else(|| format!("No class \"Location\" in the Map of compiled Java files."))?;
+
+    println!("Construct Location");
+    let location = match location {
+        Some(location) => {
+            // Call constructor PanicLocation(String file, int line, int col)
+            let file = env.new_string(&location.file)?;
+            env.new_object(location_class, "(Lme/marti/ezjni/RustPanic;Ljava/lang/String;II)V", &[
+                JValue::Object(&file), JValue::Object(&JObject::null()),
+                JValue::Int(unsafe { std::mem::transmute(location.line) }),
+                JValue::Int(unsafe { std::mem::transmute(location.col) }),
+            ])?
+        },
+        None => JObject::null(),
     };
-    // clear any exceptions before throwing the new exception
-    let _ = env.exception_clear();
-    let _ = env.throw_new("java/lang/Exception", msg);
+
+    println!("Construct RustPanic");
+    // Call constructor  RustPanic(PanicLocation location, String message)
+    let msg = env.new_string(panic_msg)?;
+    env.new_object(panic_class, "(Lme/marti/ezjni/RustPanic$Location;Ljava/lang/String;)V", &[
+        JValue::Object(&location), JValue::Object(&msg)
+    ])?;
+    
+    Ok(())
 }
 
 /// Checks if an exception has been thrown from a previous JNI function call,
@@ -169,7 +225,7 @@ pub fn panic_uncaught_exception(
 ) {
     if let Some(ex) = catch_exception(env) {
         // If the panic hook was set, this means that the panic payload should be the Exception so that it can be rethrown to Java.
-        if *PANIC_HOOK_SET.read().unwrap() {
+        if PANIC_HOOK_SET.get() {
             let class = match target {
                 Either::Left(s) => s.to_string(),
                 Either::Right(obj) => env
