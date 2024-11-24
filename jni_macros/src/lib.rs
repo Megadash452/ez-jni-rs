@@ -7,7 +7,10 @@ mod types;
 use call::{ConstructorCall, MethodCall};
 use either::Either;
 use proc_macro::TokenStream;
+use proc_macro2::Span;
 use quote::quote;
+use syn::{LitByteStr, LitStr};
+use std::io;
 use utils::item_from_derive_input;
 
 /// Define a function in Rust that can be called from external Java code.
@@ -41,8 +44,8 @@ use utils::item_from_derive_input;
 ///
 /// ### Panic catching
 /// 
-/// The *block* of the function will be wrapped with a *[special function](https://docs.rs/ez_jni/latest/ez_jni/__throw/fn.catch_throw.html)*
-/// that catches `panics!` and throws them as Java `Exception`s with the panic message.
+/// The *block* of the function will be wrapped with a *special panic catcher*
+/// that catches `panics!` and throws them as an **Exception** of [`me.marti.ezjni.RustPanic`][https://github.com/Megadash452/ez-jni-rs/blob/main/src/me/marti/ezjni/RustPanic.java] with the panic message.
 /// 
 /// When a panic is caught and the exception is *thrown*,
 /// the function will return a *[zeroed](std::mem::zeroed)* representation of the return type.
@@ -308,4 +311,123 @@ pub fn eprintln(input: TokenStream) -> TokenStream {
             ::std::eprintln!(#string)
         }
     } }.into()
+}
+
+/// Compile a `Java File` into a binary `Class file`.
+/// 
+/// The input is the path of the `Java File` relative to the crate root.
+/// 
+/// Outputs a map of the resulting binary `Class File`s,
+/// where the **key** is the *Class Path* and the **value** is a *binary string literal*.
+/// Ensure to *load all* the Classes found in this map.
+/// 
+/// ### Example
+/// ```
+/// static BYTE_CODE: &[(&str, &[u8])] = ez_jni::compile_java_class!("./src/me/marti/ezjni/RustPanic.java");
+/// ```
+/// 
+/// This is only used internally used by `ez_jni::__throw::throw_panic()`.
+#[doc(hidden)]
+#[proc_macro]
+pub fn compile_java_class(input: TokenStream) -> TokenStream {
+    let java_file_path = syn::parse_macro_input!(input as LitStr);
+    match compile_java_class_impl(java_file_path.value()) {
+        Ok(bin) => bin,
+        Err(err) => syn::Error::new(Span::call_site(), err.to_string()).into_compile_error()
+    }.into()
+}
+fn compile_java_class_impl(path: impl AsRef<std::path::Path>) -> io::Result<proc_macro2::TokenStream> {
+    use std::{io, process::Command, path::{Path, PathBuf}};
+
+    // TODO: put all this stuff in a separate module so it can also be used by jni_fn test
+    pub static CLASS_DIR: &'static str = "./target/tmp/classes";
+    fn absolute_path(path: impl AsRef<Path>) -> PathBuf {
+        let path = path.as_ref();
+        path.canonicalize()
+            .unwrap_or_else(|err| panic!("Failed to make path \"{}\" absolute: {err}", path.display()))
+    }
+    fn run(command: &mut Command) -> io::Result<String> {
+        let command_name = command.get_program().to_string_lossy().to_string();
+        // Spawn the command, waiting for it to return.
+        let output = command.output()
+            .map_err(|err| io::Error::new(err.kind(), format!("Failed to spawn command \"{command_name}\": {err}")))?;
+        // Return the command's error stream if it returned an error
+        if !output.status.success() {
+            let error = String::from_utf8_lossy(&output.stderr);
+            return Err(io::Error::other(format!("Command \"{command_name}\" exited with error:\n{error}")))
+        }
+    
+        String::from_utf8(output.stdout)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, format!("Failed to decode output of command \"{command_name}\": {err}")))
+    }
+
+    let path = path.as_ref();
+    let class_dir = PathBuf::from(CLASS_DIR)
+        .join("compile_macro");
+        /*  FIXME: If the compiled files of each macro invocation are not separated,
+            the macro's output will also have the output of ALL other macro invocations combined.
+
+            This is not a problem for now since `ez_jni::__throw::catch_throw()` only compiles one Java file,
+            but ideally the macro should only output the files that it's `javac`` command produced.
+            
+            On the other hand, if the files produced by each invocation are separated,
+            Java files won't be able to reference each other.
+
+            The solution is to output all Classes to the same directory (as is done now),
+            but also somehow get `javac` to tell you what files it produced.
+        */
+        // .join(path.to_str().unwrap().replace('/', "$")); // Isolate classes for each macro invocation?
+
+    // Create directory where Class binaries are stored (if it's not created already)
+    run(Command::new("mkdir")
+        .arg("-p")
+        .arg(&class_dir)
+    )?;
+    // Compile Java code
+    run(Command::new("javac")
+        .arg(path)
+        .arg("--class-path").arg(absolute_path(&class_dir))
+        .arg("-d").arg(absolute_path(&class_dir))
+    )?;
+
+    // Find the class files (could be more than one if it has nested classes) recursively
+    fn find_class_files(root: &Path) -> io::Result<Box<[std::path::PathBuf]>> {
+        let mut results = Vec::<std::path::PathBuf>::new();
+
+        for entry in io::Result::<Vec<_>>::from_iter(std::fs::read_dir(root)?)? {
+            let meta = entry.metadata()?;
+            let path = entry.path();
+
+            if meta.is_dir() {
+                results.extend(find_class_files(&path)?);
+            } else if meta.is_file() {
+                // Check that only .class files exist here
+                if !entry.path().extension().is_some_and(|ext| ext == "class") {
+                    return Err(io::Error::other(format!("This is not a Java Class file: \"{}\"", path.display())))
+                }
+                results.push(path);
+            } else {
+                panic!("javac can't output a symlink")
+            }
+        }
+
+        Ok(results.into_boxed_slice())
+    }
+
+    let class_files = find_class_files(&class_dir)?;
+
+    let keys = class_files.iter()
+        .map(|path| path.strip_prefix(&class_dir).unwrap()) // Class Path
+        .map(|path| path.with_extension("")) // file path without extension
+        .map(|path| LitStr::new(path.to_str().unwrap(), Span::call_site()));
+
+    let values = io::Result::<Vec<_>>::from_iter(
+        class_files.iter()
+            .map(|path| std::fs::read(path))
+    )?.into_iter()
+        .map(|content| LitByteStr::new(&content, Span::call_site()));
+    
+    Ok(quote! { [
+        #( (#keys, #values.as_slice()), )*
+    ].as_slice() })
 }

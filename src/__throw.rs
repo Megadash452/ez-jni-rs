@@ -37,6 +37,7 @@ thread_local! {
 }
 
 /// Runs a Rust function and returns its value, catching any `panics!` and throwing them as Java Exceptions.
+/// Specifically, this will throw a `me.marti.ezjni.RustPanic` exception.
 ///
 /// If **f** `panics!`, this will return the [`Zeroed`][std::mem::zeroed()] representation of the return type.
 /// This means that this function should only return directly to Java.
@@ -88,7 +89,8 @@ fn catch_throw_main<'local, R>(env: &mut JNIEnv<'local>, catch: impl FnOnce(&mut
         }
     };
 
-    // Reset panic hook so that rust behaves normally after this.
+    // Reset panic hook so that rust behaves normally after this,
+    // though this is only considered for tests.
     std::panic::take_hook();
     PANIC_HOOK_SET.set(false);
 

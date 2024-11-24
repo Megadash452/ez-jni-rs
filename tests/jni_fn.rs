@@ -52,3 +52,13 @@ fn run(command: &mut Command) -> String {
     String::from_utf8(output.stdout)
         .unwrap_or_else(|err| panic!("Failed to decode output of command \"{command_name}\": {err}"))
 }
+
+/// Tests when a jni_fn `panic!s` and the panic data jas to be thrown to the JVM.
+#[test]
+fn throw_panic() {
+    setup_env!(env);
+
+    ez_jni::__throw::catch_throw(&mut env, |_| panic!("Release me!"));
+    let exception = ez_jni::__throw::try_catch::<String>(&mut env).unwrap();
+    assert_eq!(exception, "me.marti.ezjni.RustPanic: Release me!");
+}
