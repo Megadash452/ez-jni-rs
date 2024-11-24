@@ -32,22 +32,9 @@ thread_local! {
     static PANIC_LOCATION: RefCell<Option<PanicLocation>> = const { RefCell::new(None) };
     /// Tells whether [`set_panic_hook()`] was called and the *hook* was set.
     /// 
-    /// This will only be `true` if the Rust code was called from Java (i.e. a [`jni_fn`][ez_jni::jni_fn!]).
+    /// This will only be `true` if [`catch_throw()`] was called (i.e. Rust was enetered from Java via a [`jni_fn`][ez_jni::jni_fn!]).
     static PANIC_HOOK_SET: Cell<bool> = const { Cell::new(false) };
 }
-
-/// Sets a panic hook to grab [`PANIC_LOCATION`] data.
-fn set_panic_hook() {
-    std::panic::set_hook(Box::new(|info| {
-        if !PANIC_HOOK_SET.get() {
-            PANIC_HOOK_SET.set(true);
-        }
-        PANIC_LOCATION.set(Some(info.location().unwrap().into()));
-    }));
-}
-
-// static PANIC_CLASS: &[u8] = const { compile_java_class!("./src/me/marti/ezjni/RustPanic.java")[0].1 };
-// static LOCATION_CLASS: &[u8] = const { compile_java_class!("./src/me/marti/ezjni/PanicLocation.java")[0].1 };
 
 /// Runs a Rust function and returns its value, catching any `panics!` and throwing them as Java Exceptions.
 ///
@@ -82,7 +69,12 @@ pub fn catch_throw_map<'local, R, J>(
 /// This function exists to avoid repeating code in [`catch_throw()`] and [`catch_throw_map()`].
 #[allow(unused_must_use)]
 fn catch_throw_main<'local, R>(env: &mut JNIEnv<'local>, catch: impl FnOnce(&mut JNIEnv<'local>) -> std::thread::Result<R>) -> R {
-    set_panic_hook();
+    // Set panic hook to grab [`PANIC_LOCATION`] data.
+    std::panic::set_hook(Box::new(|info| {
+        PANIC_LOCATION.set(Some(info.location().unwrap().into()));
+    }));
+    PANIC_HOOK_SET.set(true);
+
     let result = match catch(env) {
         Ok(r) => r,
         Err(payload) => {
@@ -95,7 +87,11 @@ fn catch_throw_main<'local, R>(env: &mut JNIEnv<'local>, catch: impl FnOnce(&mut
             unsafe { std::mem::zeroed() }
         }
     };
+
+    // Reset panic hook so that rust behaves normally after this.
     std::panic::take_hook();
+    PANIC_HOOK_SET.set(false);
+
     result
 }
 
@@ -124,14 +120,15 @@ fn throw_panic(env: &mut JNIEnv, payload: Box<dyn Any + Send>) -> Result<(), Box
             .map(|loc| loc.as_ref().map(|loc| loc.clone()))
     }).ok()
         .flatten()
-        .flatten();
+        .flatten()
+        .ok_or_else(|| format!("Failed to get panic location"))?;
     // TODO: get backtrace
 
     let classes: HashMap<&str, JClass> = Result::from_iter(
         compile_java_class!("./src/me/marti/ezjni/RustPanic.java").iter()
-            .map(|(class, binary)|
-                env.define_class(class, &JObject::null(), binary)
-                    .map(|jclass| (*class, jclass))
+            .map(|(class_path, binary)|
+                env.define_class(class_path, &JObject::null(), binary)
+                    .map(|jclass| (*class_path, jclass))
             )
     )?;
 
@@ -140,29 +137,18 @@ fn throw_panic(env: &mut JNIEnv, payload: Box<dyn Any + Send>) -> Result<(), Box
 
     let panic_class = classes.get("me/marti/ezjni/RustPanic")
         .ok_or_else(|| format!("No class \"RustPanic\" in the Map of compiled Java files."))?;
-    let location_class = classes.get("me/marti/ezjni/RustPanic$Location")
-        .ok_or_else(|| format!("No class \"Location\" in the Map of compiled Java files."))?;
 
-    println!("Construct Location");
-    let location = match location {
-        Some(location) => {
-            // Call constructor PanicLocation(String file, int line, int col)
-            let file = env.new_string(&location.file)?;
-            env.new_object(location_class, "(Lme/marti/ezjni/RustPanic;Ljava/lang/String;II)V", &[
-                JValue::Object(&file), JValue::Object(&JObject::null()),
-                JValue::Int(unsafe { std::mem::transmute(location.line) }),
-                JValue::Int(unsafe { std::mem::transmute(location.col) }),
-            ])?
-        },
-        None => JObject::null(),
-    };
-
-    println!("Construct RustPanic");
-    // Call constructor  RustPanic(PanicLocation location, String message)
+    let file = env.new_string(location.file)?;
     let msg = env.new_string(panic_msg)?;
-    env.new_object(panic_class, "(Lme/marti/ezjni/RustPanic$Location;Ljava/lang/String;)V", &[
-        JValue::Object(&location), JValue::Object(&msg)
+    // Call constructor RustPanic(java.lang.String, int, int, java.lang.String)
+    let exception = env.new_object(panic_class, "(Ljava/lang/String;IILjava/lang/String;)V", &[
+        JValue::Object(&file),
+        JValue::Int(unsafe { std::mem::transmute(location.line) }),
+        JValue::Int(unsafe { std::mem::transmute(location.line) }),
+        JValue::Object(&msg)
     ])?;
+    // Finally, throw the new Exception
+    env.throw(JThrowable::from(exception))?;
     
     Ok(())
 }
