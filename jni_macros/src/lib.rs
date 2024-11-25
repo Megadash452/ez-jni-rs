@@ -8,8 +8,8 @@ use call::{ConstructorCall, MethodCall};
 use either::Either;
 use proc_macro::TokenStream;
 use proc_macro2::Span;
-use quote::quote;
-use syn::{LitByteStr, LitStr};
+use quote::{quote, ToTokens};
+use syn::{parse::Parser, Token, LitByteStr, LitStr};
 use std::io;
 use utils::item_from_derive_input;
 
@@ -330,13 +330,23 @@ pub fn eprintln(input: TokenStream) -> TokenStream {
 #[doc(hidden)]
 #[proc_macro]
 pub fn compile_java_class(input: TokenStream) -> TokenStream {
-    let java_file_path = syn::parse_macro_input!(input as LitStr);
-    match compile_java_class_impl(java_file_path.value()) {
-        Ok(bin) => bin,
+    // let java_file_path = syn::parse_macro_input!(input as LitStr);
+    let (java_root, class_path) = match Parser::parse(|input: syn::parse::ParseStream| {
+        let java_root = input.parse::<LitStr>()?;
+        input.parse::<Token![,]>()?;
+        let class_path = input.parse::<LitStr>()?;
+        Ok((java_root, class_path))
+    }, input) {
+        Ok(pair) => pair,
+        Err(err) => return err.to_compile_error().into(),
+    };
+
+    match compile_java_class_impl(java_root.value(), &class_path.value()) {
+        Ok(bin) => LitByteStr::new(&bin, Span::call_site()).to_token_stream().into(),
         Err(err) => syn::Error::new(Span::call_site(), err.to_string()).into_compile_error()
     }.into()
 }
-fn compile_java_class_impl(path: impl AsRef<std::path::Path>) -> io::Result<proc_macro2::TokenStream> {
+fn compile_java_class_impl(java_root: impl AsRef<std::path::Path>, class_path: &str) -> io::Result<Box<[u8]>> {
     use std::{io, process::Command, path::{Path, PathBuf}};
 
     // TODO: put all this stuff in a separate module so it can also be used by jni_fn test
@@ -361,8 +371,8 @@ fn compile_java_class_impl(path: impl AsRef<std::path::Path>) -> io::Result<proc
             .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, format!("Failed to decode output of command \"{command_name}\": {err}")))
     }
 
-    let path = path.as_ref();
-    let class_dir = PathBuf::from(CLASS_DIR)
+    let java_root = java_root.as_ref();
+    let class_dir = &PathBuf::from(CLASS_DIR)
         .join("compile_macro");
         /*  FIXME: If the compiled files of each macro invocation are not separated,
             the macro's output will also have the output of ALL other macro invocations combined.
@@ -377,57 +387,23 @@ fn compile_java_class_impl(path: impl AsRef<std::path::Path>) -> io::Result<proc
             but also somehow get `javac` to tell you what files it produced.
         */
         // .join(path.to_str().unwrap().replace('/', "$")); // Isolate classes for each macro invocation?
-
-    // Create directory where Class binaries are stored (if it's not created already)
-    run(Command::new("mkdir")
-        .arg("-p")
-        .arg(&class_dir)
-    )?;
-    // Compile Java code
-    run(Command::new("javac")
-        .arg(path)
-        .arg("--class-path").arg(absolute_path(&class_dir))
-        .arg("-d").arg(absolute_path(&class_dir))
-    )?;
-
-    // Find the class files (could be more than one if it has nested classes) recursively
-    fn find_class_files(root: &Path) -> io::Result<Box<[std::path::PathBuf]>> {
-        let mut results = Vec::<std::path::PathBuf>::new();
-
-        for entry in io::Result::<Vec<_>>::from_iter(std::fs::read_dir(root)?)? {
-            let meta = entry.metadata()?;
-            let path = entry.path();
-
-            if meta.is_dir() {
-                results.extend(find_class_files(&path)?);
-            } else if meta.is_file() {
-                // Check that only .class files exist here
-                if !entry.path().extension().is_some_and(|ext| ext == "class") {
-                    return Err(io::Error::other(format!("This is not a Java Class file: \"{}\"", path.display())))
-                }
-                results.push(path);
-            } else {
-                panic!("javac can't output a symlink")
-            }
-        }
-
-        Ok(results.into_boxed_slice())
+    let class_file = &class_dir.join(class_path).with_extension("class");
+    
+    // Check if the Class (only the one named the same as the file) exists and abort if it does.
+    if std::fs::exists(class_file)? {
+        return std::fs::read(class_file)
+            .map(|bin| bin.into_boxed_slice())
     }
 
-    let class_files = find_class_files(&class_dir)?;
+    // Create directory where Class binaries are stored (if it's not created already)
+    std::fs::create_dir_all(&class_dir)?;
+    // Compile Java code
+    run(Command::new("javac")
+        .arg(java_root.join(class_path).with_extension("java"))
+        .arg("--class-path").arg(absolute_path(class_dir))
+        .arg("-d").arg(absolute_path(class_dir))
+    )?;
 
-    let keys = class_files.iter()
-        .map(|path| path.strip_prefix(&class_dir).unwrap()) // Class Path
-        .map(|path| path.with_extension("")) // file path without extension
-        .map(|path| LitStr::new(path.to_str().unwrap(), Span::call_site()));
-
-    let values = io::Result::<Vec<_>>::from_iter(
-        class_files.iter()
-            .map(|path| std::fs::read(path))
-    )?.into_iter()
-        .map(|content| LitByteStr::new(&content, Span::call_site()));
-    
-    Ok(quote! { [
-        #( (#keys, #values.as_slice()), )*
-    ].as_slice() })
+    std::fs::read(class_file)
+            .map(|bin| bin.into_boxed_slice())
 }
