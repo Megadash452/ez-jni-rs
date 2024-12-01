@@ -1,6 +1,5 @@
-use std::any::Any;
-
 use super::*;
+use std::any::Any;
 use jni::objects::{GlobalRef, JObject, JValue};
 use crate::compile_java_class;
 
@@ -88,9 +87,9 @@ fn throw_panic(env: &mut JNIEnv, payload: Box<dyn Any + Send>) {
                 Ok(exception) => {
                     let exception = <&JThrowable>::from(exception.as_obj());
                     // Inject Backtrace to Exception
-                    prepare_backtrace().map(|backtrace| {
+                    let _ = prepare_backtrace().map(|backtrace| {
                         inject_backtrace(exception, &backtrace, env);
-                    }).unwrap();
+                    });
                     // Finally, rethrow the new Exception
                     env.throw(exception)
                         .map_err(|err| format!("Failed to rethrow exception: {err}"))
@@ -116,21 +115,23 @@ fn throw_panic(env: &mut JNIEnv, payload: Box<dyn Any + Send>) {
     // Create the RustPanic object to throw
     env.exception_clear().unwrap();
 
-    let panic_class = env.define_class("me/marti/ezjni/RustPanic", &JObject::null(), compile_java_class!("./src/", "me/marti/ezjni/RustPanic")).unwrap();
+    let panic_class = env.define_class("me/marti/ezjni/RustPanic", &JObject::null(), compile_java_class!("./src/", "me/marti/ezjni/RustPanic"))
+        .or_else(|_| env.find_class("me/marti/ezjni/RustPanic"))
+        .expect("Failed loading/finding RustPanic class");
 
-    let file = env.new_string(location.file).unwrap();
-    let msg = env.new_string(panic_msg).unwrap();
     // Call constructor RustPanic(java.lang.String, int, int, java.lang.String)
     let exception = env.new_object(panic_class, "(Ljava/lang/String;IILjava/lang/String;)V", &[
-        JValue::Object(&file),
+        JValue::Object(&env.new_string(location.file).unwrap()),
         JValue::Int(unsafe { std::mem::transmute(location.line) }),
-        JValue::Int(unsafe { std::mem::transmute(location.line) }),
-        JValue::Object(&msg)
-    ]).unwrap();
+        JValue::Int(unsafe { std::mem::transmute(location.col) }),
+        JValue::Object(&env.new_string(panic_msg).unwrap())
+    ]);
+    panic_uncaught_exception(env, Either::Left("me.marti.ezjni.RustPanic"), "<init>");
+    let exception = exception.unwrap();
     // Inject Backtrace to Exception
-    prepare_backtrace().map(|backtrace| {
+    let _ = prepare_backtrace().map(|backtrace| {
         inject_backtrace(<&JThrowable>::from(&exception), &backtrace, env);
-    }).unwrap();
+    });
 
     // Finally, throw the new Exception
     env.throw(JThrowable::from(exception)).unwrap();

@@ -10,7 +10,7 @@ public final class RustPanic extends RuntimeException {
     /** Unsigned int */
     public int col;
 
-    RustPanic(String file, int line, int col, String message) {
+    public RustPanic(String file, int line, int col, String message) {
         super(message);
         this.file = file;
         this.line = line;

@@ -59,13 +59,16 @@ enum ParseBacktraceError {
         data: String,
         error: Option<Box<dyn Error>>
     },
+    #[error("The backtrace is empty")]
+    Empty,
     #[error("{0}")]
     Other(Box<dyn Error>)
 }
 
 /// Gets full [`Backtrace`] as a `String` and parses each line as a [`BacktraceElement`].
+/// The returned array will never be empty.
 /// 
-/// This will also strip the Bactrace of verbose/unecessary Stack frames.`
+/// This will also strip the Bakctrace of verbose/unecessary Stack frames.`
 fn prepare_backtrace() -> Result<Box<[BacktraceElement]>, ParseBacktraceError> {
     // Currenlty we are only able to get the full backtrace as a String.
     // Until [this Issue](https://github.com/rust-lang/rust/issues/79676) is resolved.
@@ -83,7 +86,33 @@ fn prepare_backtrace() -> Result<Box<[BacktraceElement]>, ParseBacktraceError> {
     })
         .map_err(|error| ParseBacktraceError::Other(Box::new(error)))??; // Yes, that's a double try branch
 
-    let backtrace = Result::<Box<[_]>, _>::from_iter(IntoIterator::into_iter(parse_backtrace_frames(&backtrace_str)?)
+
+
+    // Filter backtrace frames because some are verbose
+    let filtered = IntoIterator::into_iter(parse_backtrace_frames(&backtrace_str)?)
+        .filter(|(symbol, _)| !{
+            symbol.starts_with("ez_jni::__throw::")
+            || symbol.contains("std::panicking::")
+            || symbol.contains("std::panic::")
+            || symbol.contains("core::panicking::")
+            || symbol.contains("core::panic::")
+            || symbol.starts_with("std::sys::backtrace::")
+            // For tests
+            || symbol.starts_with("test::run_")
+            || symbol.starts_with("std::thread::Builder::spawn_unchecked_")
+            || symbol.starts_with("core::ops::function::FnOnce::call_once")
+        })
+        .filter(|(symbol, _)| ![ // Check exact equality
+            "<alloc::boxed::Box<F,A> as core::ops::function::Fn<Args>>::call",
+            "__rust_try",
+            "rust_begin_unwind",
+            // Encountered during test
+            "test::__rust_begin_short_backtrace",
+            "<alloc::boxed::Box<F,A> as core::ops::function::FnOnce<Args>>::call_once",
+            "std::sys::pal::unix::thread::Thread::new::thread_start",
+        ].contains(symbol));
+
+    let backtrace = Result::<Box<[_]>, _>::from_iter(filtered
         // Frames without file data should be ommited
         .filter_map(|(symbol, file_data)| Some((symbol, file_data?)))
         // Each frame has a symbol (module + function name) and file data (file path + line + column).
@@ -118,31 +147,11 @@ fn prepare_backtrace() -> Result<Box<[BacktraceElement]>, ParseBacktraceError> {
         })})
     )?;
 
-    let filtered = IntoIterator::into_iter(backtrace)
-        .filter(|frame| !{
-            frame.symbol.starts_with("ez_jni::__throw::")
-            || frame.symbol.contains("std::panicking::")
-            || frame.symbol.contains("std::panic::")
-            || frame.symbol.contains("core::panicking::")
-            || frame.symbol.contains("core::panic::")
-            || frame.symbol.starts_with("std::sys::backtrace::")
-            // For tests
-            || frame.symbol.starts_with("test::run_")
-            || frame.symbol.starts_with("std::thread::Builder::spawn_unchecked_")
-            || frame.symbol.starts_with("core::ops::function::FnOnce::call_once")
-        })
-        .filter(|frame| ![
-            "<alloc::boxed::Box<F,A> as core::ops::function::Fn<Args>>::call",
-            "__rust_try",
-            "rust_begin_unwind",
-            // Encountered during test
-            "test::__rust_begin_short_backtrace",
-            "<alloc::boxed::Box<F,A> as core::ops::function::FnOnce<Args>>::call_once",
-            "std::sys::pal::unix::thread::Thread::new::thread_start",
-        ].contains(&frame.symbol.as_str()))
-        .collect::<Box<[_]>>();
+    if backtrace.is_empty() {
+        return Err(ParseBacktraceError::Empty);
+    }
 
-    Ok(filtered)
+    Ok(backtrace)
 }
 /// This is separated for testing purposes
 fn parse_backtrace_frames<'a>(backtrace: &'a str) -> Result<Box<[(&'a str, Option<&'a str>)]>, ParseBacktraceError> {
@@ -196,24 +205,81 @@ fn parse_backtrace_frames<'a>(backtrace: &'a str) -> Result<Box<[(&'a str, Optio
     Ok(frames.into_boxed_slice())
 }
 
+/// Insert the Rust [`Backtrace`] into the exception's `StackTrace`,
+/// replacing the *Native Method* Java frame with said backtrace.
+/// 
+/// Does nothing if cannot match the *bottom backtrace frame* in Rust with the *top-most Native Method frame* in Java.
+/// Or if this thread's Rust execution was not entered from Java (i.e. the Java StackTrace is empty).
+/// 
+/// This is purely for reporting errors to an user and can be slow.
+/// Some verbose Rust stack frames are also ommited to make it simpler for an user to interpret the data.
 fn inject_backtrace(exception: &JThrowable, backtrace: &[BacktraceElement], env: &mut JNIEnv) {
+    // Find the Native Method StackTraceElement 
+    let mut java_trace = call!(exception.getStackTrace() -> [java.lang.StackTraceElement]).into_vec();
+    let index = match java_trace.iter()
+        .enumerate()
+        .find(|(_, frame)| call!(frame.isNativeMethod() -> bool))
+    {
+        Some((i, _)) => i,
+        None => return,
+    };
+    let entry_frame = java_trace.remove(index);
+
+    // Assert that the top Native Method frame (not necessarily the top frame) in Java is the same as the bottom frame in Rust
+    {
+        // TODO: put all this stuff in a separate module so it can also be used by jni_fn test
+        /// Convert the *fully-qualified* name of a a Java method to the name that should be used in the native code.
+        fn java_method_to_symbol(class: &str, method: &str) -> String {
+            format!("Java_{class}_{name}",
+                class = class
+                    .replace('.', "_")
+                    .replace('/', "_"),
+                name = method.replace('_', "_1"),
+            )
+        }
+
+        let bottom = backtrace.last().unwrap();
+        let bottom_name = bottom.symbol
+            .rsplit_once("::")
+            .map(|(_, name)| name)
+            .unwrap_or(bottom.symbol.as_str());
+
+        let entry_name = java_method_to_symbol(
+            &call!(entry_frame.getClassName() -> String),
+            &call!(entry_frame.getMethodName() -> String),
+        );
+
+        if entry_name != bottom_name {
+            return;
+        }
+    }
+
     // Convert BacktraceElement to StackTraceElement
     let rust_trace = backtrace.iter()
-        .map(|frame| new!(java.lang.StackTraceElement(
-            String("Rust"),
-            String(frame.symbol),
-            String(frame.location.file),
-            u32(frame.location.line)
-        )))
+        .map(|frame| {
+            let (class, method) = frame.symbol.rsplit_once("::")
+                .unwrap_or(("Rust", &frame.symbol));
+
+            new!(java.lang.StackTraceElement(
+                String(class),
+                String(method),
+                String(frame.location.file),
+                u32(frame.location.line)
+            ))
+        })
         .collect::<Box<[_]>>();
-    // Find the Native Method StackTraceElement and replace it with the backtrace 
-    let java_trace = call!(exception.getStackTrace() -> [java.lang.StackTraceElement]);
-    
-    todo!()
+
+    // Insert the backtrace in place of the Native Method frame
+    java_trace.splice(index..index, rust_trace);
+
+    // Set Exception's StackTrace
+    call!(exception.setStackTrace([java.lang.StackTraceElement](java_trace)) -> void);
 }
 
-#[test]
-fn parse_backtrace_test() {
+#[cfg(test)]
+mod tests {
+    use super::*;
+
     static SAMPLE: &str = r##"0: ez_jni::__throw::catch_throw_main::{{closure}}
 at /home/marti/source/ez-jni-rs/src/__throw.rs:228:34
 1: <alloc::boxed::Box<F,A> as core::ops::function::Fn<Args>>::call
@@ -254,17 +320,21 @@ at /home/marti/source/ez-jni-rs/tests/native_test/src/lib.rs:9:56
 19: <unknown>
 "##;
 
-    let backtrace = parse_backtrace_frames(SAMPLE)
-        .unwrap()
-        .iter()
-        .enumerate()
-        .map(|(i, (symbol, file_data))| format!(
-            "{i}: {symbol}{}\n", match file_data {
-                Some(file_data) => format!("\nat {file_data}"),
-                None => "".to_string(),
-            }
-        ))
-        .collect::<String>();
+    /// Test that the backtrace can be parsed, and erturned to the original from the parsed data.
+    #[test]
+    fn parse_backtrace_test() {
+        let backtrace = parse_backtrace_frames(SAMPLE)
+            .unwrap()
+            .iter()
+            .enumerate()
+            .map(|(i, (symbol, file_data))| format!(
+                "{i}: {symbol}{}\n", match file_data {
+                    Some(file_data) => format!("\nat {file_data}"),
+                    None => "".to_string(),
+                }
+            ))
+            .collect::<String>();
 
-    assert_eq!(backtrace, SAMPLE);
+        assert_eq!(backtrace, SAMPLE);
+    }
 }
