@@ -6,16 +6,10 @@ description = "Macros and functions that make using Java in rust feel natural"
 repository = "https://github.com/Megadash452/ez-jni-rs"
 license-file = "LICENSE"
 
-[dependencies]
-cfg-if = "1.0.0"
-either = "1.13.0"
-jni = { version = "0.21", default-features = false }
-ez_jni_macros = { path = "./jni_macros", version = "0.5.3" }
-thiserror = "1.0.63"
-
 [workspace]
 members = [
     "jni_macros",
+    "utils",
     "tests/native_test"
 ]
 
@@ -25,10 +19,20 @@ jni = { version = "0.21.1", features = ["invocation"] }
 proc-macro2 = "1.0.87"
 quote = "1.0.37"
 syn = { version = "2.0.72" }
+utils = { path = "./utils" }
+
+[dependencies]
+cfg-if = "1.0.0"
+either = "1.13.0"
+jni = { version = "0.21", default-features = false }
+ez_jni_macros = { path = "./jni_macros", version = "0.5.3" }
+thiserror = "1.0.63"
+utils = { workspace = true }
 
 [dev-dependencies]
 jni = { workspace = true }
 proc-macro2 = { workspace = true }
 quote = { workspace = true }
 syn = { workspace = true }
+utils = { workspace = true }
 trybuild = "1.0.99"

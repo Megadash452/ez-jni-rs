@@ -1,4 +1,4 @@
-use crate::utils::{create_object_array, get_object_array};
+use crate::utils::{create_java_prim_array, create_object_array, get_java_prim_array, get_object_array};
 use super::*;
 
 /// The same as [`get_object_array`], but also converts the [`JObject`]s in the array to the desired type `T`.
@@ -129,12 +129,12 @@ impl<'local> ToObject<'local> for [Option<&str>] {
 
 impl FromObject<'_> for Box<[i8]> {
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        Ok(crate::utils::get_java_prim_array(object, JNIEnv::get_byte_array_region, env))
+        Ok(get_java_prim_array(object, JNIEnv::get_byte_array_region, env))
     }
 }
 impl<'local> ToObject<'local> for [i8] {
     fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        crate::utils::create_java_prim_array(self,
+        create_java_prim_array(self,
             JNIEnv::new_byte_array,
             JNIEnv::set_byte_array_region,
         env)
@@ -143,12 +143,12 @@ impl<'local> ToObject<'local> for [i8] {
 
 impl FromObject<'_> for Box<[i16]> {
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        Ok(crate::utils::get_java_prim_array(object, JNIEnv::get_short_array_region, env))
+        Ok(get_java_prim_array(object, JNIEnv::get_short_array_region, env))
     }
 }
 impl<'local> ToObject<'local> for [i16] {
     fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        crate::utils::create_java_prim_array(self,
+        create_java_prim_array(self,
             JNIEnv::new_short_array,
             JNIEnv::set_short_array_region,
         env)
@@ -157,12 +157,12 @@ impl<'local> ToObject<'local> for [i16] {
 
 impl FromObject<'_> for Box<[i32]> {
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        Ok(crate::utils::get_java_prim_array(object, JNIEnv::get_int_array_region, env))
+        Ok(get_java_prim_array(object, JNIEnv::get_int_array_region, env))
     }
 }
 impl<'local> ToObject<'local> for [i32] {
     fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        crate::utils::create_java_prim_array(self,
+        create_java_prim_array(self,
             JNIEnv::new_int_array,
             JNIEnv::set_int_array_region,
         env)
@@ -171,12 +171,12 @@ impl<'local> ToObject<'local> for [i32] {
 
 impl FromObject<'_> for Box<[i64]> {
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        Ok(crate::utils::get_java_prim_array(object, JNIEnv::get_long_array_region, env))
+        Ok(get_java_prim_array(object, JNIEnv::get_long_array_region, env))
     }
 }
 impl<'local> ToObject<'local> for [i64] {
     fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        crate::utils::create_java_prim_array(self,
+        create_java_prim_array(self,
             JNIEnv::new_long_array,
             JNIEnv::set_long_array_region,
         env)
@@ -185,12 +185,12 @@ impl<'local> ToObject<'local> for [i64] {
 
 impl FromObject<'_> for Box<[f32]> {
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        Ok(crate::utils::get_java_prim_array(object, JNIEnv::get_float_array_region, env))
+        Ok(get_java_prim_array(object, JNIEnv::get_float_array_region, env))
     }
 }
 impl<'local> ToObject<'local> for [f32] {
     fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        crate::utils::create_java_prim_array(self,
+        create_java_prim_array(self,
             JNIEnv::new_float_array,
             JNIEnv::set_float_array_region,
         env)
@@ -199,12 +199,12 @@ impl<'local> ToObject<'local> for [f32] {
 
 impl FromObject<'_> for Box<[f64]> {
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        Ok(crate::utils::get_java_prim_array(object, JNIEnv::get_double_array_region, env))
+        Ok(get_java_prim_array(object, JNIEnv::get_double_array_region, env))
     }
 }
 impl<'local> ToObject<'local> for [f64] {
     fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        crate::utils::create_java_prim_array(self,
+        create_java_prim_array(self,
             JNIEnv::new_double_array,
             JNIEnv::set_double_array_region,
         env)
@@ -215,7 +215,7 @@ impl<'local> ToObject<'local> for [f64] {
 
 impl FromObject<'_> for Box<[u8]> {
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        Ok(IntoIterator::into_iter(crate::utils::get_java_prim_array(object, JNIEnv::get_byte_array_region, env))
+        Ok(IntoIterator::into_iter(get_java_prim_array(object, JNIEnv::get_byte_array_region, env))
             .map(|t| unsafe { std::mem::transmute(t) })
             .collect()
         )
@@ -223,7 +223,7 @@ impl FromObject<'_> for Box<[u8]> {
 }
 impl<'local> ToObject<'local> for [u8] {
     fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        crate::utils::create_java_prim_array(
+        create_java_prim_array(
             self.iter()
                 .map(|&t| unsafe { std::mem::transmute(t) })
                 .collect::<Box<[_]>>()
@@ -236,7 +236,7 @@ impl<'local> ToObject<'local> for [u8] {
 
 impl FromObject<'_> for Box<[u16]> {
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        Ok(IntoIterator::into_iter(crate::utils::get_java_prim_array(object, JNIEnv::get_short_array_region, env))
+        Ok(IntoIterator::into_iter(get_java_prim_array(object, JNIEnv::get_short_array_region, env))
             .map(|t| unsafe { std::mem::transmute(t) })
             .collect()
         )
@@ -244,7 +244,7 @@ impl FromObject<'_> for Box<[u16]> {
 }
 impl<'local> ToObject<'local> for [u16] {
     fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        crate::utils::create_java_prim_array(
+        create_java_prim_array(
             self.iter()
                 .map(|&t| unsafe { std::mem::transmute(t) })
                 .collect::<Box<[_]>>()
@@ -257,7 +257,7 @@ impl<'local> ToObject<'local> for [u16] {
 
 impl FromObject<'_> for Box<[u32]> {
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        Ok(IntoIterator::into_iter(crate::utils::get_java_prim_array(object, JNIEnv::get_int_array_region, env))
+        Ok(IntoIterator::into_iter(get_java_prim_array(object, JNIEnv::get_int_array_region, env))
             .map(|t| unsafe { std::mem::transmute(t) })
             .collect()
         )
@@ -265,7 +265,7 @@ impl FromObject<'_> for Box<[u32]> {
 }
 impl<'local> ToObject<'local> for [u32] {
     fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        crate::utils::create_java_prim_array(
+        create_java_prim_array(
             self.iter()
                 .map(|&t| unsafe { std::mem::transmute(t) })
                 .collect::<Box<[_]>>()
@@ -278,7 +278,7 @@ impl<'local> ToObject<'local> for [u32] {
 
 impl FromObject<'_> for Box<[u64]> {
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        Ok(IntoIterator::into_iter(crate::utils::get_java_prim_array(object, JNIEnv::get_long_array_region, env))
+        Ok(IntoIterator::into_iter(get_java_prim_array(object, JNIEnv::get_long_array_region, env))
             .map(|t| unsafe { std::mem::transmute(t) })
             .collect()
         )
@@ -286,7 +286,7 @@ impl FromObject<'_> for Box<[u64]> {
 }
 impl<'local> ToObject<'local> for [u64] {
     fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        crate::utils::create_java_prim_array(
+        create_java_prim_array(
             self.iter()
                 .map(|&t| unsafe { std::mem::transmute(t) })
                 .collect::<Box<[_]>>()
@@ -301,7 +301,7 @@ impl<'local> ToObject<'local> for [u64] {
 
 impl FromObject<'_> for Box<[bool]> {
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        Ok(IntoIterator::into_iter(crate::utils::get_java_prim_array(object, JNIEnv::get_boolean_array_region, env))
+        Ok(IntoIterator::into_iter(get_java_prim_array(object, JNIEnv::get_boolean_array_region, env))
             .map(|t| unsafe { std::mem::transmute(t) })
             .collect()
         )
@@ -309,7 +309,7 @@ impl FromObject<'_> for Box<[bool]> {
 }
 impl<'local> ToObject<'local> for [bool] {
     fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        crate::utils::create_java_prim_array(
+        create_java_prim_array(
             self.iter()
                 .map(|&t| unsafe { std::mem::transmute(t) })
                 .collect::<Box<[_]>>()
@@ -322,7 +322,7 @@ impl<'local> ToObject<'local> for [bool] {
 
 impl FromObject<'_> for Box<[char]> {
     fn from_object(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        Ok(IntoIterator::into_iter(crate::utils::get_java_prim_array(object, JNIEnv::get_char_array_region, env))
+        Ok(IntoIterator::into_iter(get_java_prim_array(object, JNIEnv::get_char_array_region, env))
             .map(|t| char::decode_utf16(Some(t))
                 .next().unwrap()
                 .unwrap_or(char::REPLACEMENT_CHARACTER)
@@ -333,7 +333,7 @@ impl FromObject<'_> for Box<[char]> {
 }
 impl<'local> ToObject<'local> for [char] {
     fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        crate::utils::create_java_prim_array(
+        create_java_prim_array(
             self.iter()
                 .map(|&t| t.encode_utf16(&mut [0;1])[0])
                 .collect::<Box<[_]>>()

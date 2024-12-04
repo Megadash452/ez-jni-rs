@@ -227,24 +227,13 @@ fn inject_backtrace(exception: &JThrowable, backtrace: &[BacktraceElement], env:
 
     // Assert that the top Native Method frame (not necessarily the top frame) in Java is the same as the bottom frame in Rust
     {
-        // TODO: put all this stuff in a separate module so it can also be used by jni_fn test
-        /// Convert the *fully-qualified* name of a a Java method to the name that should be used in the native code.
-        fn java_method_to_symbol(class: &str, method: &str) -> String {
-            format!("Java_{class}_{name}",
-                class = class
-                    .replace('.', "_")
-                    .replace('/', "_"),
-                name = method.replace('_', "_1"),
-            )
-        }
-
         let bottom = backtrace.last().unwrap();
         let bottom_name = bottom.symbol
             .rsplit_once("::")
             .map(|(_, name)| name)
             .unwrap_or(bottom.symbol.as_str());
 
-        let entry_name = java_method_to_symbol(
+        let entry_name = ::utils::java_method_to_symbol(
             &call!(entry_frame.getClassName() -> String),
             &call!(entry_frame.getMethodName() -> String),
         );

@@ -5,9 +5,10 @@ use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
 use syn::{
     braced, parenthesized, parse::{discouraged::Speculative, Parse, ParseStream}, punctuated::Punctuated, Ident, LitStr, Token
 };
+use utils::first_char_uppercase;
 use crate::{
     types::{ArrayType, Class, InnerType, JavaPrimitive, RustPrimitive, SigType, SpecialCaseConversion, Type, NULL_KEYWORD},
-    utils::{first_char_uppercase, gen_signature, join_spans, Spanned}
+    utils::{gen_signature, join_spans, Spanned}
 };
 
 /// Processes input for macro call [super::call!].
@@ -174,7 +175,7 @@ impl Parameter {
                 &if ty == JavaPrimitive::Boolean {
                     "Bool".to_string()
                 } else {
-                    first_char_uppercase(ty.to_string())
+                    first_char_uppercase(&ty.to_string())
                 },
             span)
                 .to_token_stream()

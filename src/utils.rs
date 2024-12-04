@@ -5,6 +5,7 @@ use jni::{
     objects::{JObject, JObjectArray, JPrimitiveArray, JString, JValueOwned},
 };
 use crate::{call, object::FromObjectError, FromException, __throw::{panic_exception, try_catch}};
+use utils::{first_char_uppercase, java_path_to_dot_notation};
 
 #[doc(hidden)]
 pub use cfg_if;
@@ -334,20 +335,4 @@ pub fn create_object_array_converted<'local, T>(
             .collect::<Box<[_]>>();
         Ok(create_object_array(&slice, elem_class, env))
     }).unwrap()
-}
-
-/// Convert the first letter of a String into uppercase
-fn first_char_uppercase(s: &str) -> String {
-    let mut c = s.chars();
-    match c.next() {
-        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-        None => String::new(),
-    }
-}
-
-/// Converts a ClassPath that uses *slashes* `/` to separate components to a Class that uses *dots* `.`.
-/// 
-/// e.g. `"[Ljava/lang/String;" -> "[Ljava.lang.String;"`
-pub(crate) fn java_path_to_dot_notation(path: &str) -> String {
-    path.replace(['/', '$'], ".")
 }

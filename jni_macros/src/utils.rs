@@ -78,15 +78,6 @@ pub fn item_from_derive_input(input: syn::DeriveInput) -> Either<ItemStruct, Ite
     }
 }
 
-/// Convert the first letter of a String into uppercase
-pub fn first_char_uppercase(s: String) -> String {
-    let mut c = s.chars();
-    match c.next() {
-        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-        None => String::new(),
-    }
-}
-
 /// Generate the signature string for a JNI call.
 /// 
 /// The **params** and **return_type** can be any type in this library that implements [`SigType`],

@@ -1,10 +1,9 @@
 #![allow(unused)]
-use std::{process::Command, sync::LazyLock};
-use jni::JavaVM;
-
 pub mod compile_fail;
 
-pub static CLASS_DIR: &'static str = "./target/tmp/classes";
+use std::{process::Command, sync::LazyLock};
+use jni::JavaVM;
+use utils::CLASS_DIR;
 
 pub static JVM: LazyLock<JavaVM> = LazyLock::new(|| {
     compile_java()

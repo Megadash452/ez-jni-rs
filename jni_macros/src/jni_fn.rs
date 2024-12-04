@@ -1,6 +1,7 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
 use syn::{braced, ext::IdentExt as _, parenthesized, parse::{Parse, ParseStream}, punctuated::Punctuated, token::{Brace, Paren}, Attribute, GenericParam, Generics, Ident, LifetimeParam, LitStr, Token};
+use utils::java_method_to_symbol;
 use crate::{
     types::{ArrayType, Class, InnerType, JavaPrimitive, OptionType, RustPrimitive, SigType, SpecialCaseConversion as _, Type}, utils::{gen_signature, merge_errors, take_class_attribute_required, Spanned}
 };
@@ -65,11 +66,8 @@ impl JniFn {
                 },
                 Err(err) => class.ok_or(err.clone())?,
             };
-            let class = class.to_string()
-                .replace('.', "_");
-            let name = self.name.to_string().replace('_', "_1");
     
-            Ident::new(&format!("Java_{class}_{name}"), self.name.span())
+            Ident::new(&java_method_to_symbol(&class.to_string(), &self.name.to_string()), self.name.span())
         };
 
         // Build a java method signature, something like (Ljava.lang.String;)I

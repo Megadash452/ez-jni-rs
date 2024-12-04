@@ -347,33 +347,11 @@ pub fn compile_java_class(input: TokenStream) -> TokenStream {
     }.into()
 }
 fn compile_java_class_impl(java_root: impl AsRef<std::path::Path>, class_path: &str) -> io::Result<Box<[u8]>> {
-    use std::{io, process::Command, path::{Path, PathBuf}};
-
-    // TODO: put all this stuff in a separate module so it can also be used by jni_fn test
-    pub static CLASS_DIR: &'static str = "./target/tmp/classes";
-    fn absolute_path(path: impl AsRef<Path>) -> PathBuf {
-        let path = path.as_ref();
-        path.canonicalize()
-            .unwrap_or_else(|err| panic!("Failed to make path \"{}\" absolute: {err}", path.display()))
-    }
-    fn run(command: &mut Command) -> io::Result<String> {
-        let command_name = command.get_program().to_string_lossy().to_string();
-        // Spawn the command, waiting for it to return.
-        let output = command.output()
-            .map_err(|err| io::Error::new(err.kind(), format!("Failed to spawn command \"{command_name}\": {err}")))?;
-        // Return the command's error stream if it returned an error
-        if !output.status.success() {
-            let error = String::from_utf8_lossy(&output.stderr);
-            return Err(io::Error::other(format!("Command \"{command_name}\" exited with error:\n{error}")))
-        }
-    
-        String::from_utf8(output.stdout)
-            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, format!("Failed to decode output of command \"{command_name}\": {err}")))
-    }
+    use std::{process::Command, path::PathBuf};
+    use ::utils::{CLASS_DIR, run, absolute_path};
 
     let java_root = java_root.as_ref();
-    let class_dir = &PathBuf::from(CLASS_DIR)
-        .join("compile_macro");
+    let class_dir = &PathBuf::from(CLASS_DIR);
         /*  FIXME: If the compiled files of each macro invocation are not separated,
             the macro's output will also have the output of ALL other macro invocations combined.
 
@@ -405,5 +383,5 @@ fn compile_java_class_impl(java_root: impl AsRef<std::path::Path>, class_path: &
     )?;
 
     std::fs::read(class_file)
-            .map(|bin| bin.into_boxed_slice())
+        .map(|bin| bin.into_boxed_slice())
 }
