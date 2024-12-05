@@ -19,37 +19,43 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
     let arguments = gen_arguments(call.parameters.iter());
 
     // Build the macro function call
-    let jni_call = match &call.call_type {
-        Either::Left(StaticMethod(class)) => {
-            let class = LitStr::new(&class.to_jni_class_path(), class.span());
-            quote! { {
-                #param_vars
-                env.call_static_method(#class, #name, #signature, #arguments)
-            } }
-        }
-        Either::Right(ObjectMethod(object)) => quote! { {
-            #param_vars
-            env.call_method(&(#object), #name, #signature, #arguments)
-        } },
+    let jni_method = if call.call_type.is_static() {
+        quote!(call_static_method)
+    } else {
+        quote!(call_method)
     };
+    let jni_call = quote! { {
+        #param_vars
+        env.#jni_method(__callee, #name, #signature, #arguments)
+    } };
 
     call.return_type.convert_call_result(&name, jni_call, &call.call_type)
 }
 
 /// Processes input for macro call [super::new!].
 pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
-    let class = call.class.to_jni_class_path();
+    // The Class/ClassObject that the constructor was called for
+    let callee = match &call.class {
+        Either::Left(class) => class.to_jni_class_path().to_token_stream(),
+        Either::Right(expr) => quote!(&(#expr)),
+    };
+    let callee_var = quote_spanned!(callee.span()=> __callee);
+    let call_target = match &call.class {
+        Either::Left(_) => quote! { ::ez_jni::__throw::CallTarget::Class(#callee_var) },
+        Either::Right(_) => quote! { ::ez_jni::__throw::CallTarget::ClassObject(#callee_var) },
+    };
     let signature = gen_signature(call.parameters.iter(), &Return::new_void(Span::call_site()));
     let param_vars = gen_arg_vars_defs(call.parameters.iter());
     let arguments = gen_arguments(call.parameters.iter());
     let method_name = format!("<init>{}", signature.value());
-    let call_failed_msg = format!("Failed to call constructor {} on {}: {{err}}", signature.value(), class.to_token_stream());
+    let call_failed_msg = format!("Failed to call constructor {} on {}: {{err}}", signature.value(), callee.to_token_stream());
     
     // The Initial JNI call, before any types or errors are checked
     let initial = quote! {
-        use ::std::borrow::BorrowMut as _;
+        use std::borrow::BorrowMut as _;
+        let __callee = #callee;
         #param_vars
-        let __call = env.new_object(#class, #signature, #arguments);
+        let __call = env.new_object(__callee, #signature, #arguments);
     };
     match call.err_type {
         Some(err) => quote! { {
@@ -59,7 +65,7 @@ pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
         } },
         None => quote! { {
             #initial
-            ::ez_jni::__throw::panic_uncaught_exception(env.borrow_mut(), ::ez_jni::__throw::Either::Left(#class), #method_name);
+            ::ez_jni::__throw::panic_uncaught_exception(env.borrow_mut(), #call_target, #method_name);
             __call
                 .unwrap_or_else(|err| panic!(#call_failed_msg))
         } }
@@ -70,19 +76,14 @@ pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
 ///
 /// See [`crate::call`] for an example.
 pub struct MethodCall {
-    pub call_type: Either<StaticMethod, ObjectMethod>,
+    pub call_type: CallType,
     pub method_name: Ident,
     pub parameters: Punctuated<Parameter, Token![,]>,
     pub return_type: Return,
 }
 impl Parse for MethodCall {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let (call_type, method_name) = if input.parse::<Token![static]>().is_ok() {
-            let (class_path, method_name) = Class::parse_with_trailing_method(input)?;
-            (Either::Left(StaticMethod(class_path)), method_name)
-        } else {
-            (Either::Right(input.parse::<ObjectMethod>()?), input.parse()?)
-        };
+        let (call_type, method_name) = CallType::parse_and_method(input)?;
 
         Ok(Self {
             call_type,
@@ -100,18 +101,81 @@ impl Parse for MethodCall {
     }
 }
 
+pub enum CallType {
+    /// The call is for a `static` method.
+    /// 
+    /// This can be either [`Class`] tokens or an [`Expression`][syn::Expr] (enclosed in `parenthesis` or `braces`)
+    /// that resolves to a [class object][jni::objects::JClass].
+    /// 
+    /// ```ignore
+    /// call!(static java.lang.String.methodName ...);
+    /// ```
+    Static(Either<Class, TokenStream>),
+    /// The call is for a Method of an existing Object, stored in a variable.
+    /// If the object is more than an Ident, it must be enclosed in `parenthesis` or `braces`.
+    /// e.g. `object.methodName(...)` or `(something.object).methodName(...)`.
+    Object(TokenStream),
+}
+impl CallType {
+    pub fn is_static(&self) -> bool {
+        match self {
+            Self::Static(_) => true,
+            Self::Object(_) => false,
+        }
+    }
+
+    /// Returns the [`Class`] or **Object expression** that the *method* (static or not) is being called on.
+    pub fn callee(&self) -> Either<&Class, &TokenStream> {
+        match self {
+            Self::Static(Either::Left(class)) => Either::Left(class),
+            Self::Static(Either::Right(obj))
+            | Self::Object(obj) => Either::Right(obj),
+        }
+    }
+
+    /// Does the job of [`Parse`], but must also parse the **method name**.
+    pub fn parse_and_method(input: ParseStream) -> syn::Result<(Self, Ident)> {
+        let is_static = input.parse::<Token![static]>().is_ok();
+
+        match parse_expr_or_t_with(input, Class::parse_with_trailing_method)? {
+            Either::Left((class, method)) =>
+                if is_static {
+                    Ok((Self::Static(Either::Left(class)), method))
+                } else {
+                    Err(syn::Error::new(class.span(), "Can't call a method on a Class. Try using 'static' at the beginning of the macro, or use the singleton! macro."))
+                },
+            Either::Right(expr) => {
+                input.parse::<Token![.]>()?;
+                let method = input.parse::<Ident>()?;
+
+                if !input.peek(syn::token::Paren) {
+                    return Err(input.error("Error parsing full method call"));
+                }
+
+                let call_type = if is_static {
+                    Self::Static(Either::Right(expr))
+                } else {
+                    Self::Object(expr)
+                };
+
+                Ok((call_type, method))
+            }
+        }
+    }
+}
+
 /// Define a JNI call to a Java Class' constructor.
 /// 
 /// See [`crate::new`] for an example.
 pub struct ConstructorCall {
-    pub class: Class,
+    pub class: Either<Class, TokenStream>,
     pub parameters: Punctuated<Parameter, Token![,]>,
     pub err_type: Option<syn::Path>
 }
 impl Parse for ConstructorCall {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         Ok(Self {
-            class: input.parse()?,
+            class: parse_expr_or_t(input)?,
             parameters: {
                 let arg_tokens;
                 parenthesized!(arg_tokens in input);
@@ -128,34 +192,6 @@ impl Parse for ConstructorCall {
                 }
             }
         })
-    }
-}
-
-/// The call is for a static method.
-/// ```ignore
-/// call!(static java.lang.String.methodName ...);
-/// ```
-pub struct StaticMethod(pub Class);
-
-/// The call is for a Method of an existing Object, stored in a variable.
-/// If the object is more than an Ident, it must be enclosed in `parenthesis` or `braces`.
-/// e.g. `object.methodName(...)` or `(something.object).methodName(...)`.
-pub struct ObjectMethod(pub TokenStream);
-impl Parse for ObjectMethod {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let expr = if input.peek(syn::token::Paren) {
-            let inner;
-            parenthesized!(inner in input);
-            inner.parse::<TokenStream>()?
-        } else if input.peek(syn::token::Brace) {
-            let inner;
-            braced!(inner in input);
-            inner.parse::<TokenStream>()?
-        } else {
-            input.parse::<Ident>()?.to_token_stream()
-        };
-        input.parse::<Token![.]>()?;
-        Ok(Self(expr))
     }
 }
 
@@ -362,14 +398,13 @@ impl Return {
     /// Also checks if the Call resulted in an *exception*.
     /// `panic!s` if there was an exception and the return type was not [`Result`].
     /// Otherwise, wraps the value in a [`Result`].
-    pub fn convert_call_result(&self, method_name: &str, jni_call: TokenStream, call_type: &Either<StaticMethod, ObjectMethod>) -> TokenStream {
+    pub fn convert_call_result(&self, method_name: &str, jni_call: TokenStream, call_type: &CallType) -> TokenStream {
         // Common checks done by all Return variants
         let common = {
             // Induce panic when fails to call method
-            let call_failed_msg = match call_type {
-                Either::Left(StaticMethod(class))
-                    => format!("Failed to call static method {class}.{method_name}(): {{err}}"),
-                Either::Right(ObjectMethod(_)) => format!("Failed to call method {method_name}(): {{err}}"),
+            let call_failed_msg = match call_type.callee() {
+                Either::Left(class) => format!("Failed to call static method {class}.{method_name}(): {{err}}"),
+                Either::Right(_) => format!("Failed to call method {method_name}(): {{err}}"),
             };
             // Induce panic when the returned value is not the expected type
             let incorrect_type_msg = format!("Expected {method_name}() to return {}: {{err}}", self.inner());
@@ -399,19 +434,23 @@ impl Return {
             }
         };
 
-        // The class or object that the method is being called on. Used for panic message.
-        let target = match call_type {
-            Either::Left(StaticMethod(class)) => {
-                let class = class.to_jni_class_path();
-                quote! { ::ez_jni::__throw::Either::Left(#class) }
-            }
-            Either::Right(ObjectMethod(obj)) => quote! { ::ez_jni::__throw::Either::Right(&(#obj)) },
+        // The class or object that the method is being called on.
+        let callee = match call_type.callee() {
+            Either::Left(class) => class.to_jni_class_path().to_token_stream(),
+            Either::Right(expr) => quote!(&(#expr)),
+        };
+        let callee_var = quote_spanned!(callee.span()=> __callee);
+        let target = match &call_type {
+            CallType::Static(Either::Left(_)) => quote! { ::ez_jni::__throw::CallTarget::Class(#callee_var) },
+            CallType::Static(Either::Right(_)) => quote! { ::ez_jni::__throw::CallTarget::ClassObject(#callee_var) },
+            CallType::Object(_) => quote! { ::ez_jni::__throw::CallTarget::Object(#callee_var) },
         };
 
         match self {
             // For return types that are not Result
             Self::Assertive(_) => quote! { {
                 use ::std::borrow::BorrowMut as _;
+                let __callee = #callee;
                 let __call = #jni_call;
                 ::ez_jni::__throw::panic_uncaught_exception(env.borrow_mut(), #target, #method_name);
                 __call #common
@@ -419,6 +458,7 @@ impl Return {
             // Move the result of the method call to a Result if the caller expects that the method could throw.
             Self::Result { err_ty, ..} => quote! { {
                 use ::std::borrow::BorrowMut as _;
+                let __callee = #callee;
                 let __call = #jni_call;
                 ::ez_jni::__throw::catch::<#err_ty>(env.borrow_mut())
                     .map(|_| __call #common)
@@ -552,4 +592,39 @@ fn gen_arguments<'a>(params: impl Iterator<Item = &'a Parameter>) -> TokenStream
             param.jni_variant(Ident::new(&format!("__param_{i}"), param.span()))
         });
     quote! { &[ #( #params ),* ] }
+}
+
+/// Tries to parse a `T`, but it that fails, it will try to parse an [`Expression`][syn::Expr].
+pub fn parse_expr_or_t<T: Parse>(input: ParseStream) -> syn::Result<Either<T, TokenStream>> {
+    parse_expr_or_t_with(input, T::parse)
+}
+/// The same as [`parse_expr_or_t()`], but allows passing in a custom [`Parser`][syn::parse::Parser] function.
+pub fn parse_expr_or_t_with<T>(input: ParseStream, parser: fn(ParseStream) -> syn::Result<T>) -> syn::Result<Either<T, TokenStream>> {
+    let fork = input.fork();
+    // Try parsing T, or move on to Expr if it fails
+    let error = match fork.call(parser) {
+        Ok(t) => {
+            input.advance_to(&fork);
+            return Ok(Either::Left(t))
+        },
+        Err(error) => error,
+    };
+    drop(fork);
+
+    // Check if tokens is a delimited expression
+    if input.peek(syn::token::Paren) {
+        let inner;
+        parenthesized!(inner in input);
+        Ok(Either::Right(inner.parse()?))
+    } else if input.peek(syn::token::Brace) {
+        let inner;
+        braced!(inner in input);
+        Ok(Either::Right(inner.parse()?))
+    } else if let Ok(ident) = input.parse::<Ident>() {
+        // The tokens are not a T, and are not an expression delimited by () or {},
+        Ok(Either::Right(ident.into_token_stream()))
+    } else {
+        // If it is not a single Ident treat it as an error parsing T
+        Err(error)
+    }
 }

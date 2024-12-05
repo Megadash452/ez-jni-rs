@@ -118,6 +118,13 @@ pub fn jni_fn(input: TokenStream) -> TokenStream {
 /// call!((getObject()).myMethod() -> void);
 /// ```
 /// 
+/// You can also pass a [`Class object`][jni::objects::JClass] instead of the full ClassPath,
+/// as if it was an *object method*.
+/// ```ignore
+/// let class = env.get_object_class(obj).unwrap();
+/// call!(static class.methodName() -> void);
+/// ```
+/// 
 /// ## Types
 /// 
 /// The function call has *argument* and *return* **types**.
@@ -223,6 +230,16 @@ pub fn call(input: TokenStream) -> TokenStream {
 pub fn new(input: TokenStream) -> TokenStream {
     let call = syn::parse_macro_input!(input as ConstructorCall);
     call::jni_call_constructor(call).into()
+}
+
+#[proc_macro]
+pub fn class(input: TokenStream) -> TokenStream {
+    todo!()
+}
+
+#[proc_macro]
+pub fn singleton(input: TokenStream) -> TokenStream {
+    todo!()
 }
 
 /// See [`ez_jni::FromObject`](https://docs.rs/ez_jni/latest/ez_jni/trait.FromObject.html).

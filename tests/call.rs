@@ -274,9 +274,14 @@ fn constructor() {
     
     new!(me.test.Test());
     new!(me.test.Test(int(3)));
-    new!(me.test.Test(java.lang.String("Hello, World!")));
-    new!(me.test.Test(java.lang.String("Hello, World!")) throws String).unwrap();
-    new!(me.test.Test(java.lang.String(null)) throws String).unwrap_err();
+    new!(me.test.Test(String("Hello, World!")));
+    new!(me.test.Test(String("Hello, World!")) throws String).unwrap();
+    new!(me.test.Test(String(null)) throws String).unwrap_err();
+
+    let class = env.find_class("me/test/Test").unwrap();
+    new!(class());
+    new!(( class )(int(3)));
+    new!({ class }(String("Hello, World!")));
 
     // Test other class
     new!(java.lang.Object());
@@ -301,6 +306,10 @@ fn obj_method() {
     // Test object expression
     call!((obj).getBoolean() -> boolean);
     call!({ obj }.getBoolean() -> boolean);
+
+    // Test method on class Object
+    let class = env.get_object_class(&obj).unwrap();
+    assert_eq!(call!(class.getName() -> String), "me.test.Test$Instanced");
 }
 
 #[test]

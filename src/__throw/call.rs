@@ -1,5 +1,6 @@
 //! These functions are used in [`call!`] and *similar macros*.
-use jni::objects::{JObject, JString};
+use std::panic::AssertUnwindSafe;
+use jni::objects::{JClass, JObject};
 
 use super::*;
 use crate::FromException;
@@ -48,6 +49,16 @@ pub fn panic_exception(ex: JThrowable, env: &mut JNIEnv) -> ! {
     ::std::panic::panic_any(ex)
 }
 
+/// The Class/Object that a Java method was called on (i.e. the callee).
+pub enum CallTarget<'a, 'local> {
+    /// A *static method* was called on a ClassPath string.
+    Class(&'a str),
+    /// A *static method* was called on a [`Class Object`][JClass];
+    ClassObject(&'a JClass<'local>),
+    /// A method was called on a normal [`Object`][JObject];
+    Object(&'a JObject<'local>)
+}
+
 /// Checks if there is an **exception** that was thrown by a Java method called from Rust,
 /// and that was not caught by the user (did not use [`Result`] for the return type),
 /// and **panics** with that exception.
@@ -58,24 +69,30 @@ pub fn panic_exception(ex: JThrowable, env: &mut JNIEnv) -> ! {
 /// This function is used by [ez_jni_macros::call!].
 pub fn panic_uncaught_exception(
     env: &mut JNIEnv,
-    target: Either<&str, &JObject>,
+    target: CallTarget,
     method_name: impl AsRef<str>,
 ) {
     if let Some(ex) = catch_exception(env) {
         // If the panic hook was set, this means that the panic payload will be thrown to Java, so the payload should be the exception itself.
         // DO NOT inject bactrace here. That is done in throw_panic().
         if PANIC_HOOK_SET.get() {
-            let class = match target {
-                Either::Left(s) => s.to_string(),
-                Either::Right(obj) => env
-                    .get_object_class(obj)
-                    .and_then(|class| env.call_method(class, "getName", "()Ljava/lang/String;", &[]))
-                    .and_then(|class| class.l())
-                    .and_then(|class| {
-                        unsafe { env.get_string_unchecked(&JString::from(class)) }.map(String::from)
-                    })
-                    .unwrap_or_else(|_| "<Object>".to_string()),
-            };
+            // Disable hook temporarily to allow normal panic catching
+            let hook = std::panic::take_hook();
+
+            // This function MUST NOT panic!, so wrap this block with a panic catch to do the JNI calls.
+            let class = std::panic::catch_unwind(AssertUnwindSafe(|| match target {
+                CallTarget::Class(class) => class.to_string(),
+                CallTarget::ClassObject(class) => call!(class.getName() -> String),
+                CallTarget::Object(object) => {
+                    let class = env.get_object_class(object).unwrap();
+                    call!(class.getName() -> String)
+                }
+            }))
+                .unwrap_or("<Object>".to_string());
+            
+            // Restore the panic hook
+            std::panic::set_hook(hook);
+
             eprintln!("Rust panic: Encountered an uncaught Java Exception after calling {class}.{}():", method_name.as_ref());
             panic_exception(ex, env)
         } else {

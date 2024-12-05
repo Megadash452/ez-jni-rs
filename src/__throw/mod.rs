@@ -4,7 +4,6 @@ mod call;
 pub use jni_fn::*;
 pub use call::*;
 
-pub use either::Either;
 use thiserror::Error;
 use jni::{JNIEnv, objects::JThrowable};
 use ez_jni_macros::{call, new};

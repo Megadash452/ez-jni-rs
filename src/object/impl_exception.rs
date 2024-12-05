@@ -1,8 +1,5 @@
-use either::Either;
 use ez_jni_macros::new;
-use jni::objects::JValue;
 use std::io;
-use crate::__throw::panic_uncaught_exception;
 use super::*;
 
 impl FromException<'_> for String {
@@ -112,16 +109,10 @@ impl<'local> ToObject<'local> for std::io::Error {
             .find(|(err, _)| self.kind() == *err)
             .map(|(_, class)| *class)
             .unwrap_or(IO_ERROR_BASE_PATH);
+        let class = env.find_class(class)
+            .expect(&format!("Error getting class \"{class}\""));
 
-        let msg = self.to_string().to_object(env);
-
-        env.new_object(class, "(Ljava.lang.String;)V", &[
-            JValue::Object(&msg)
-        ])
-            .unwrap_or_else(|err| {
-                panic_uncaught_exception(env, Either::Left(class), "ctor"); // Does nothing if there is no exception
-                panic!("Error constructing {} object: {err}", IO_ERROR_BASE_PATH)
-            })
+        new!(class(String(self.to_string())))
     }
 }
 

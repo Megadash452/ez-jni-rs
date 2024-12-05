@@ -1,6 +1,6 @@
 use super::*;
 use std::any::Any;
-use jni::objects::{GlobalRef, JObject, JValue};
+use jni::objects::{GlobalRef, JObject};
 use crate::compile_java_class;
 
 /// Runs a Rust function and returns its value, catching any `panics!` and throwing them as Java Exceptions.
@@ -76,7 +76,7 @@ fn catch_throw_main<'local, R>(env: &mut JNIEnv<'local>, catch: impl FnOnce(&mut
     }
 }
 
-/// This function is allowed to `panic!``
+/// This function is allowed to `panic!`.
 fn throw_panic(env: &mut JNIEnv, payload: Box<dyn Any + Send>) {
     let panic_msg = match payload.downcast::<&'static str>() {
         Ok(msg) => msg.as_ref().to_string(),
@@ -110,24 +110,14 @@ fn throw_panic(env: &mut JNIEnv, payload: Box<dyn Any + Send>) {
         .flatten()
         .flatten()
         .expect("Failed to get panic location");
-    // Get backtrace
 
-    // Create the RustPanic object to throw
     env.exception_clear().unwrap();
 
     let panic_class = env.define_class("me/marti/ezjni/RustPanic", &JObject::null(), compile_java_class!("./src/", "me/marti/ezjni/RustPanic"))
         .or_else(|_| env.find_class("me/marti/ezjni/RustPanic"))
         .expect("Failed loading/finding RustPanic class");
 
-    // Call constructor RustPanic(java.lang.String, int, int, java.lang.String)
-    let exception = env.new_object(panic_class, "(Ljava/lang/String;IILjava/lang/String;)V", &[
-        JValue::Object(&env.new_string(location.file).unwrap()),
-        JValue::Int(unsafe { std::mem::transmute(location.line) }),
-        JValue::Int(unsafe { std::mem::transmute(location.col) }),
-        JValue::Object(&env.new_string(panic_msg).unwrap())
-    ]);
-    panic_uncaught_exception(env, Either::Left("me.marti.ezjni.RustPanic"), "<init>");
-    let exception = exception.unwrap();
+    let exception = new!(panic_class(String(location.file), u32(location.line), u32(location.col), String(panic_msg)));
     // Inject Backtrace to Exception
     let _ = prepare_backtrace().map(|backtrace| {
         inject_backtrace(<&JThrowable>::from(&exception), &backtrace, env);
