@@ -993,25 +993,14 @@ impl From<RustPrimitive> for JavaPrimitive {
 
 #[cfg(test)]
 mod tests {
-    use syn::parse::Parser;
-
     use super::*;
 
     #[test]
     fn class_path() {
-        fn parse_str_with<P>(s: &str, parser: P) -> syn::Result<P::Output>
-        where P: syn::parse::Parser {
-            Parser::parse2(parser, syn::parse_str(s)?)
-        }
-
         syn::parse_str::<Class>("me.author.MyClass").unwrap();
         syn::parse_str::<Class>("me.MyClass").unwrap();
         syn::parse_str::<Class>("me.author.MyClass$Nested").unwrap();
         syn::parse_str::<Class>("me.author.MyClass$Nested$Nested2").unwrap();
-        parse_str_with("me.author.MyClass.method", Class::parse_with_trailing_method).unwrap();
-        parse_str_with("me.MyClass.method", Class::parse_with_trailing_method).unwrap();
-        parse_str_with("me.author.MyClass$Nested.method", Class::parse_with_trailing_method).unwrap();
-        parse_str_with("me.author.MyClass$Nested$Nested2.method", Class::parse_with_trailing_method).unwrap();
         
         // Test errors
         syn::parse_str::<Class>("").unwrap_err();
@@ -1021,7 +1010,5 @@ mod tests {
         syn::parse_str::<Class>("MyClass$Nested").unwrap_err();
         syn::parse_str::<Class>("me.author.MyClass$").unwrap_err();
         syn::parse_str::<Class>("me.author.MyClass$Nested$").unwrap_err();
-        parse_str_with("MyClass.method", Class::parse_with_trailing_method).unwrap_err();
-        parse_str_with("MyClass$Nested.method", Class::parse_with_trailing_method).unwrap_err();
     }
 }

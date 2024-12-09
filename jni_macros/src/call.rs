@@ -3,7 +3,7 @@ use either::Either;
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
 use syn::{
-    parenthesized, parse::{discouraged::Speculative, Parse, ParseStream, Parser}, punctuated::Punctuated, Expr, Ident, LitStr, Token
+    parenthesized, parse::{discouraged::Speculative, Parse, ParseStream, Parser}, punctuated::Punctuated, Ident, LitStr, Token
 };
 use utils::first_char_uppercase;
 use crate::{
@@ -37,7 +37,7 @@ pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
     // The Class/ClassObject that the constructor was called for
     let callee = match &call.class {
         Either::Left(class) => class.to_jni_class_path().to_token_stream(),
-        Either::Right(expr) => quote!(&(#expr)),
+        Either::Right(expr) => quote_spanned!(expr.span()=> (#expr).as_ref()),
     };
     let callee_var = quote_spanned!(callee.span()=> __callee);
     let call_target = match &call.class {
@@ -48,11 +48,12 @@ pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
     let param_vars = gen_arg_vars_defs(call.parameters.iter());
     let arguments = gen_arguments(call.parameters.iter());
     let method_name = format!("<init>{}", signature.value());
-    let call_failed_msg = format!("Failed to call constructor {} on {}: {{err}}", signature.value(), callee.to_token_stream());
+    let call_failed_msg = format!("Failed to call constructor {}: {{err}}", signature.value());
     
     // The Initial JNI call, before any types or errors are checked
     let initial = quote! {
         use std::borrow::BorrowMut as _;
+        use std::convert::AsRef as _;
         let __callee = #callee;
         #param_vars
         let __call = env.new_object(__callee, #signature, #arguments);
@@ -115,7 +116,7 @@ impl Parse for MethodCall {
                                 if let Some((punct, next)) = next.punct() {
                                     if punct.as_char() == '>' && punct.spacing() == Spacing::Alone {
                                         // Found pattern `(...) ->`
-                                        return Ok((group.clone(), next))
+                                        return Ok((group.clone(), next));
                                     }
                                 }
                             }
@@ -199,20 +200,28 @@ impl CallType {
 
     /// Parse [`Class`] or leave as Expression. Then create an instance of this struct.
     pub(self) fn parse_callee(callee: TokenStream, is_static: bool) -> syn::Result<Self> {
+        // Parse speculatively without having to clone TokenStream
         Parser::parse2(|input: ParseStream| {
             let fork = input.fork();
 
-            Ok(match fork.parse::<Class>() {
-                Ok(class) => {
-                    input.advance_to(&fork);
-                    drop(fork);
-
-                    if is_static {
-                        Self::Static(Either::Left(class))
-                        
+            let result = fork.parse::<Class>()
+                .and_then(|class| {
+                    // Must have parsed all tokens, or it is considered error
+                    if !fork.is_empty() {
+                        Err(fork.error("Must parse all tokens"))
                     } else {
-                        return Err(syn::Error::new(class.span(), "Can't call object method on Class. Try using 'static' at the beginning of the macro, or use the singleton! macro."))
+                        input.advance_to(&fork);
+                        drop(fork);
+
+                        Ok(class)
                     }
+                });
+
+            Ok(match result {
+                Ok(class) => if is_static {
+                    Self::Static(Either::Left(class))
+                } else {
+                    return Err(syn::Error::new(class.span(), "Can't call object method on Class. Try using 'static' at the beginning of the macro, or use the singleton! macro."))
                 },
                 // If Class could not be parsed, use verbatim TokenStream.
                 Err(_) => if is_static {
@@ -235,29 +244,65 @@ pub struct ConstructorCall {
 }
 impl Parse for ConstructorCall {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        // TODO: new parsing impl
+        // This is similar to MethodCall::parse() in that it will collect tokens to parse as the class until it finds a certain pattern.
+
+        let mut class_tokens = TokenStream::new();
+        
+        // Iterate through the TokenStream until this pattern is found: `(...)` | `(...) throws`.
+        let param_group = input.step(|cursor| {
+            use proc_macro2::{TokenTree, Delimiter};
+
+            let mut current = *cursor;
+
+            // Look for the pattern while pushing tokens
+            while let Some((token, next)) = current.token_tree() {
+                current = next;
+
+                // Check (...)
+                if let TokenTree::Group(group) = &token {
+                    if group.delimiter() == Delimiter::Parenthesis {
+                        // Check it's the last token
+                        if next.eof() {
+                            // Found pattern `(...)`
+                            return Ok((group.clone(), next));
+                        }
+                        // OR is followed by `throws`
+                        else if let Some((ident, next)) = next.ident() {
+                            if ident == "throws" {
+                                // Found pattern `(...) throws`
+                                return Ok((group.clone(), next))
+                            }
+                        }
+                    }
+                }
+
+                // These tokens don't form the pattern
+                class_tokens.append(token);
+            }
+
+            Err(syn::Error::new(current.span(), "Invalid tokens"))
+        })?;
+
+        // Parse speculatively without having to clone TokenStream
+        let class =  Parser::parse2(|input: ParseStream| {
+            let fork = input.fork();
+
+            fork.parse::<Class>()
+                .inspect(move |_| input.advance_to(&fork))
+                .map(|class| Either::Left(class))
+                .or_else(|err| {
+                    input.parse::<TokenStream>()
+                        .map(|tokens| Either::Right(tokens))
+                        .map_err(|_| err)
+                })
+        }, class_tokens)?;
 
         Ok(Self {
-            class: input.parse::<Class>()
-                .map(|class| Either::Left(class))
-                .or_else(|_| input.parse::<Expr>()
-                    .map(|expr| Either::Right(expr.to_token_stream()))
-                )?,
-            parameters: {
-                let arg_tokens;
-                parenthesized!(arg_tokens in input);
-                Punctuated::parse_terminated(&arg_tokens)?
-            },
-            err_type: {
-                let fork = input.fork();
-                match fork.parse::<Ident>() {
-                    Ok(ident) if ident.to_string() == "throws" => {
-                        input.advance_to(&fork);
-                        Some(input.parse()?)
-                    },
-                    _ => None
-                }
-            }
+            class,
+            parameters: Parser::parse2(Punctuated::parse_terminated, param_group.stream())?,
+            err_type: (!input.is_empty())
+                .then(|| input.parse::<syn::Path>())
+                .transpose()?
         })
     }
 }

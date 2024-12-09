@@ -281,7 +281,10 @@ fn constructor() {
     let class = env.find_class("me/test/Test").unwrap();
     new!(class());
     new!(( class )(int(3)));
-    new!({ class }(String("Hello, World!")));
+    new!({ &class }(String("Hello, World!")));
+    // Allow arbitrary Expressions as the Object
+    new!(Some(Some(&class)).unwrap().unwrap()());
+    new!("me/test/Test"() throws String).unwrap();
 
     // Test other class
     new!(java.lang.Object());
@@ -305,7 +308,9 @@ fn obj_method() {
     call!(obj.arrayArgs([boolean]([true, false]), [java.lang.Object]([JObject::null()])) -> void);
     // Test object expression
     call!((obj).getBoolean() -> boolean);
-    call!({ obj }.getBoolean() -> boolean);
+    call!({ &obj }.getBoolean() -> boolean);
+    // Allow arbitrary Expressions as the Object
+    call!(Some(Some(&obj)).unwrap().unwrap().getBoolean() -> boolean);
 
     // Test method on class Object
     let class = env.get_object_class(&obj).unwrap();
