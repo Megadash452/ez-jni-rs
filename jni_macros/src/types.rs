@@ -629,44 +629,6 @@ pub struct NestedPath {
 impl Class {
     const VALID_SHORTHANDS: [&str; 2] = ["String", "Object"];
 
-    /// Parses the [`ClassPath`] with [`Parse::parse()`], but the final path *component* is a method name.
-    /// 
-    /// Returns the parsed [`ClassPath`] and the **method name**.
-    pub fn parse_with_trailing_method(input: syn::parse::ParseStream) -> syn::Result<(Self, Ident)> {
-        match Self::parse(input)? {
-            Self::Short(class) => return Err(syn::Error::new(class.span(), format!("Must provide method name; e.g. \"{class}\".method"))),
-            Self::Path { mut packages, mut class, nested_path } => {
-                match &nested_path {
-                    // If the ClassPath contains a NestedPath with `$`,
-                    // it will not have parsed the next Dot and component 
-                    // Parse the Dot and method name
-                    Some(_) => {
-                        input.parse::<Token![.]>()?;
-                        let method_name = input.parse::<Ident>()?;
-                        Ok((Self::Path { packages, class, nested_path }, method_name))
-                    },
-                    // If the path had no Nested Classes (i.e. it was only separated by Dots)
-                    // the method name would have already been parsed, so take it out of the path.
-                    None => {
-                        // This implies that the path must be at least 3 components long: 2 for the path and 1 for the method name
-                        if packages.len() < 2 {
-                            let first = &packages[0].0;
-                            return if Self::VALID_SHORTHANDS.contains(&first.to_string().as_str()) {
-                                Ok((Self::Short(first.clone()), class))
-                            } else {
-                                Err(syn::Error::new(first.span(), "Java Class Path must have at least 1 package component (aside from the Class and method), such as `package.Class.method`"))
-                            }
-                        }
-        
-                        let method_name = class;
-                        class = packages.pop().unwrap().0;
-                        Ok((Self::Path { packages, class, nested_path: None }, method_name))
-                    }
-                }
-            }
-        }
-    }
-
     /// Converts the [`ClassPath`] to a string used by `JNI`, where each component is separated by a slash.
     /// e.g. `java/lang/String` or `me/author/Class$Nested`.
     pub fn to_jni_class_path(&self) -> String {

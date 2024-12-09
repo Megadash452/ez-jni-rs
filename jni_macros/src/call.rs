@@ -3,7 +3,7 @@ use either::Either;
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
 use syn::{
-    braced, parenthesized, parse::{discouraged::Speculative, Parse, ParseStream}, punctuated::Punctuated, Ident, LitStr, Token
+    parenthesized, parse::{discouraged::Speculative, Parse, ParseStream, Parser}, punctuated::Punctuated, Expr, Ident, LitStr, Token
 };
 use utils::first_char_uppercase;
 use crate::{
@@ -82,21 +82,85 @@ pub struct MethodCall {
     pub return_type: Return,
 }
 impl Parse for MethodCall {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let (call_type, method_name) = CallType::parse_and_method(input)?;
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        // This parse implementation is complicated to allow parsing arbitrary Expressions as the callee.
+        use proc_macro2::{TokenTree, Delimiter, Spacing};
+
+        let is_static = input.parse::<Token![static]>().is_ok();
+
+        let mut callee_tokens = TokenStream::new();
+        // Keep track of the 2 tokens directly preceding the `(...) ->` pattern, as those are the Dot and Method Ident.
+        let mut method_dot = None;
+        let mut method_ident = None;
+
+        // Now we will iterate through the TokenStream until we find this pattern: `(...) ->`.
+        // These tokens basically split the left and right sides of the function syntax.
+        // We also know that the token before the `(...)` is the Method name,
+        // So we need to keep track of at least 1 previous token.
+        // We also need to keep track of the Dot preceding the Method name so it isn't parsed as part of the callee.
+        let param_group = input.step(|cursor| {
+            let mut current = *cursor;
+
+            // Look for pattern `(...) ->` and aggregate all tokens that come before it
+            while let Some((token, next)) = current.token_tree() {
+                current = next;
+            
+                // Check (...). Btw, welcome to nesting hell.
+                if let TokenTree::Group(group) = &token {
+                    if group.delimiter() == Delimiter::Parenthesis {
+                        // Check -
+                        if let Some((punct, next)) = next.punct() {
+                            if punct.as_char() == '-' && punct.spacing() == Spacing::Joint {
+                                // Check >
+                                if let Some((punct, next)) = next.punct() {
+                                    if punct.as_char() == '>' && punct.spacing() == Spacing::Alone {
+                                        // Found pattern `(...) ->`
+                                        return Ok((group.clone(), next))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // The next tokens don't form the `(...) ->` pattern.
+                // Shift the tokens Dot and Ident tokens to the left.
+                if let Some(ident_token) = (&mut method_ident).take() {
+                    (&mut method_dot).take()
+                        .map(|token| callee_tokens.append(token));
+                    method_dot = Some(ident_token);
+                }
+                method_ident = Some(token)
+
+                // This wasn't it, try next
+            }
+
+            Err(cursor.error("Invalid tokens; Did not find pattern `(...) ->`"))
+        })?;
+
+        // Error used if either method_dot or method_ident were None.
+        let none_err = syn::Error::new(param_group.span(), "Expected Dot and Ident `.methodName`");
+
+        let method_name = method_dot
+            .ok_or_else(|| none_err.clone())
+            .and_then(|token| match token {
+                TokenTree::Punct(punct)
+                    if punct.as_char() == '.'
+                    && punct.spacing() == Spacing::Alone
+                        => Ok(()),
+                _ => Err(syn::Error::new(token.span(), "Expected Dot '.'"))
+            })
+            .and(method_ident.ok_or(none_err))
+            .and_then(|token| match token {
+                TokenTree::Ident(ident) => Ok(ident),
+                _ => Err(syn::Error::new(token.span(), "Expected Ident"))
+            })?;
 
         Ok(Self {
-            call_type,
+            call_type: CallType::parse_callee(callee_tokens, is_static)?,
             method_name,
-            parameters: {
-                let arg_tokens;
-                parenthesized!(arg_tokens in input);
-                Punctuated::parse_terminated(&arg_tokens)?
-            },
-            return_type: {
-                input.parse::<Token![->]>()?;
-                input.parse()?
-            },
+            parameters: Parser::parse2(Punctuated::parse_terminated, param_group.stream())?,
+            return_type: input.parse()?,
         })
     }
 }
@@ -133,34 +197,31 @@ impl CallType {
         }
     }
 
-    /// Does the job of [`Parse`], but must also parse the **method name**.
-    pub fn parse_and_method(input: ParseStream) -> syn::Result<(Self, Ident)> {
-        let is_static = input.parse::<Token![static]>().is_ok();
+    /// Parse [`Class`] or leave as Expression. Then create an instance of this struct.
+    pub(self) fn parse_callee(callee: TokenStream, is_static: bool) -> syn::Result<Self> {
+        Parser::parse2(|input: ParseStream| {
+            let fork = input.fork();
 
-        match parse_expr_or_t_with(input, Class::parse_with_trailing_method)? {
-            Either::Left((class, method)) =>
-                if is_static {
-                    Ok((Self::Static(Either::Left(class)), method))
-                } else {
-                    Err(syn::Error::new(class.span(), "Can't call a method on a Class. Try using 'static' at the beginning of the macro, or use the singleton! macro."))
+            Ok(match fork.parse::<Class>() {
+                Ok(class) => {
+                    input.advance_to(&fork);
+                    drop(fork);
+
+                    if is_static {
+                        Self::Static(Either::Left(class))
+                        
+                    } else {
+                        return Err(syn::Error::new(class.span(), "Can't call object method on Class. Try using 'static' at the beginning of the macro, or use the singleton! macro."))
+                    }
                 },
-            Either::Right(expr) => {
-                input.parse::<Token![.]>()?;
-                let method = input.parse::<Ident>()?;
-
-                if !input.peek(syn::token::Paren) {
-                    return Err(input.error("Error parsing full method call"));
-                }
-
-                let call_type = if is_static {
-                    Self::Static(Either::Right(expr))
+                // If Class could not be parsed, use verbatim TokenStream.
+                Err(_) => if is_static {
+                    Self::Static(Either::Right(input.parse()?))
                 } else {
-                    Self::Object(expr)
-                };
-
-                Ok((call_type, method))
-            }
-        }
+                    Self::Object(input.parse()?)
+                },
+            })
+        }, callee)
     }
 }
 
@@ -173,9 +234,15 @@ pub struct ConstructorCall {
     pub err_type: Option<syn::Path>
 }
 impl Parse for ConstructorCall {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        // TODO: new parsing impl
+
         Ok(Self {
-            class: parse_expr_or_t(input)?,
+            class: input.parse::<Class>()
+                .map(|class| Either::Left(class))
+                .or_else(|_| input.parse::<Expr>()
+                    .map(|expr| Either::Right(expr.to_token_stream()))
+                )?,
             parameters: {
                 let arg_tokens;
                 parenthesized!(arg_tokens in input);
@@ -592,39 +659,4 @@ fn gen_arguments<'a>(params: impl Iterator<Item = &'a Parameter>) -> TokenStream
             param.jni_variant(Ident::new(&format!("__param_{i}"), param.span()))
         });
     quote! { &[ #( #params ),* ] }
-}
-
-/// Tries to parse a `T`, but it that fails, it will try to parse an [`Expression`][syn::Expr].
-pub fn parse_expr_or_t<T: Parse>(input: ParseStream) -> syn::Result<Either<T, TokenStream>> {
-    parse_expr_or_t_with(input, T::parse)
-}
-/// The same as [`parse_expr_or_t()`], but allows passing in a custom [`Parser`][syn::parse::Parser] function.
-pub fn parse_expr_or_t_with<T>(input: ParseStream, parser: fn(ParseStream) -> syn::Result<T>) -> syn::Result<Either<T, TokenStream>> {
-    let fork = input.fork();
-    // Try parsing T, or move on to Expr if it fails
-    let error = match fork.call(parser) {
-        Ok(t) => {
-            input.advance_to(&fork);
-            return Ok(Either::Left(t))
-        },
-        Err(error) => error,
-    };
-    drop(fork);
-
-    // Check if tokens is a delimited expression
-    if input.peek(syn::token::Paren) {
-        let inner;
-        parenthesized!(inner in input);
-        Ok(Either::Right(inner.parse()?))
-    } else if input.peek(syn::token::Brace) {
-        let inner;
-        braced!(inner in input);
-        Ok(Either::Right(inner.parse()?))
-    } else if let Ok(ident) = input.parse::<Ident>() {
-        // The tokens are not a T, and are not an expression delimited by () or {},
-        Ok(Either::Right(ident.into_token_stream()))
-    } else {
-        // If it is not a single Ident treat it as an error parsing T
-        Err(error)
-    }
 }
