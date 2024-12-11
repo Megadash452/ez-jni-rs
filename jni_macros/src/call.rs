@@ -3,7 +3,7 @@ use either::Either;
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
 use syn::{
-    parenthesized, parse::{discouraged::Speculative, Parse, ParseStream, Parser}, punctuated::Punctuated, Ident, LitStr, Token
+    parenthesized, parse::{discouraged::Speculative, Parse, ParseStream, Parser}, punctuated::Punctuated, Expr, Ident, LitStr, Token
 };
 use utils::first_char_uppercase;
 use crate::{
@@ -37,7 +37,7 @@ pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
     // The Class/ClassObject that the constructor was called for
     let callee = match &call.class {
         Either::Left(class) => class.to_jni_class_path().to_token_stream(),
-        Either::Right(expr) => quote_spanned!(expr.span()=> (#expr).as_ref()),
+        Either::Right(expr) => quote_spanned!(expr.span()=> (#expr).borrow()),
     };
     let callee_var = quote_spanned!(callee.span()=> __callee);
     let call_target = match &call.class {
@@ -52,8 +52,9 @@ pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
     
     // The Initial JNI call, before any types or errors are checked
     let initial = quote! {
-        use std::borrow::BorrowMut as _;
-        use std::convert::AsRef as _;
+        use ::std::borrow::BorrowMut as _;
+        use ::std::borrow::Borrow as _;
+        #[allow(noop_method_call)]
         let __callee = #callee;
         #param_vars
         let __call = env.new_object(__callee, #signature, #arguments);
@@ -175,11 +176,11 @@ pub enum CallType {
     /// ```ignore
     /// call!(static java.lang.String.methodName ...);
     /// ```
-    Static(Either<Class, TokenStream>),
+    Static(Either<Class, Expr>),
     /// The call is for a Method of an existing Object, stored in a variable.
     /// If the object is more than an Ident, it must be enclosed in `parenthesis` or `braces`.
     /// e.g. `object.methodName(...)` or `(something.object).methodName(...)`.
-    Object(TokenStream),
+    Object(Expr),
 }
 impl CallType {
     pub fn is_static(&self) -> bool {
@@ -190,7 +191,7 @@ impl CallType {
     }
 
     /// Returns the [`Class`] or **Object expression** that the *method* (static or not) is being called on.
-    pub fn callee(&self) -> Either<&Class, &TokenStream> {
+    pub fn callee(&self) -> Either<&Class, &Expr> {
         match self {
             Self::Static(Either::Left(class)) => Either::Left(class),
             Self::Static(Either::Right(obj))
@@ -224,10 +225,14 @@ impl CallType {
                     return Err(syn::Error::new(class.span(), "Can't call object method on Class. Try using 'static' at the beginning of the macro, or use the singleton! macro."))
                 },
                 // If Class could not be parsed, use verbatim TokenStream.
-                Err(_) => if is_static {
-                    Self::Static(Either::Right(input.parse()?))
+                Err(err) => if is_static {
+                    Self::Static(Either::Right(input.parse()
+                        .map_err(|_| err)?
+                    ))
                 } else {
-                    Self::Object(input.parse()?)
+                    Self::Object(input.parse()
+                        .map_err(|_| err)?
+                    )
                 },
             })
         }, callee)
@@ -238,7 +243,7 @@ impl CallType {
 /// 
 /// See [`crate::new`] for an example.
 pub struct ConstructorCall {
-    pub class: Either<Class, TokenStream>,
+    pub class: Either<Class, Expr>,
     pub parameters: Punctuated<Parameter, Token![,]>,
     pub err_type: Option<syn::Path>
 }
@@ -291,7 +296,7 @@ impl Parse for ConstructorCall {
                 .inspect(move |_| input.advance_to(&fork))
                 .map(|class| Either::Left(class))
                 .or_else(|err| {
-                    input.parse::<TokenStream>()
+                    input.parse::<Expr>()
                         .map(|tokens| Either::Right(tokens))
                         .map_err(|_| err)
                 })
