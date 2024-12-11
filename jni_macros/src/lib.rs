@@ -332,15 +332,17 @@ pub fn eprintln(input: TokenStream) -> TokenStream {
 
 /// Compile a `Java File` into a binary `Class file`.
 /// 
-/// The input is the path of the `Java File` relative to the crate root.
+/// The input is the path to the *java source root*,
+/// and the *Java Class Path*,
+/// which should reflect the path in the *java source*.
 /// 
-/// Outputs a map of the resulting binary `Class File`s,
-/// where the **key** is the *Class Path* and the **value** is a *binary string literal*.
-/// Ensure to *load all* the Classes found in this map.
+/// Outputs the resulting binary `Class file`.
+/// Since this can only output the binary of *one* file,
+/// Java files with *nested classes* are not supported.
 /// 
 /// ### Example
 /// ```
-/// static BYTE_CODE: &[(&str, &[u8])] = ez_jni::compile_java_class!("./src/me/marti/ezjni/RustPanic.java");
+/// static BYTE_CODE: &[u8] = ez_jni::compile_java_class!("./src/", "me/marti/ezjni/RustPanic");
 /// ```
 /// 
 /// This is only used internally used by `ez_jni::__throw::throw_panic()`.
