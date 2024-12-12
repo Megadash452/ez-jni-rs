@@ -10,6 +10,7 @@ use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::{quote, ToTokens};
 use syn::{parse::Parser, Token, LitByteStr, LitStr};
+use types::Class;
 use std::io;
 use utils::item_from_derive_input;
 
@@ -233,13 +234,40 @@ pub fn new(input: TokenStream) -> TokenStream {
 }
 
 #[proc_macro]
-pub fn class(input: TokenStream) -> TokenStream {
-    todo!()
+pub fn field(input: TokenStream) -> TokenStream {
+    call::get_field().into()
 }
 
+/// Get the **class Object** for some Class.
+/// The returned object has type [`java.lang.Class`][https://docs.oracle.com/javase/8/docs/api/java/lang/Class.html]
+/// and is wrapped with [`JClass`][jni::objects::JClass].
+/// 
+/// Takes the *fully-qualified* **Class** as input.
+/// 
+/// ```ignore
+/// let class: JClass = class!(me.author.Class);
+/// ```
+/// 
+/// This is essentially just a shortcut to [`JNIEnv::find_class()`][jni::JNIEnv::find_class].
+#[proc_macro]
+pub fn class(input: TokenStream) -> TokenStream {
+    let class = syn::parse_macro_input!(input as Class);
+    call::get_class(class).into()
+}
+
+/// Get the *instance Object* of a **Singleton Class** by calling the `getInstance()` *static method* on the Class.
+/// 
+/// Takes the *fully-qualified* **Class** as input.
+/// 
+/// ```ignore
+/// singleton!(me.author.Singleton);
+/// ```
+/// 
+/// This is essentially just a shortcut to [`call!`] `Class.getInstance() -> Class`.
 #[proc_macro]
 pub fn singleton(input: TokenStream) -> TokenStream {
-    todo!()
+    let class = syn::parse_macro_input!(input as Class);
+    call::singleton_instance(class).into()
 }
 
 /// See [`ez_jni::FromObject`](https://docs.rs/ez_jni/latest/ez_jni/trait.FromObject.html).
