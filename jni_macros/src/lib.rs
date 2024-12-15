@@ -4,7 +4,7 @@ mod object;
 mod utils;
 mod types;
 
-use call::{ConstructorCall, MethodCall};
+use call::{ConstructorCall, FieldCall, MethodCall};
 use either::Either;
 use proc_macro::TokenStream;
 use proc_macro2::Span;
@@ -235,7 +235,8 @@ pub fn new(input: TokenStream) -> TokenStream {
 
 #[proc_macro]
 pub fn field(input: TokenStream) -> TokenStream {
-    call::get_field().into()
+    let call = syn::parse_macro_input!(input as FieldCall);
+    call::get_field(call).into()
 }
 
 /// Get the **class Object** for some Class.

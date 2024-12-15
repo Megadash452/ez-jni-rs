@@ -8,7 +8,7 @@ use syn::{
 use utils::first_char_uppercase;
 use crate::{
     types::{ArrayType, Class, InnerType, JavaPrimitive, RustPrimitive, SigType, SpecialCaseConversion, Type, NULL_KEYWORD},
-    utils::{gen_signature, join_spans, Spanned}
+    utils::{gen_signature, join_spans, Spanned, TokenTreeExt as _}
 };
 
 /// Processes input for macro call [super::call!].
@@ -68,16 +68,29 @@ pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
     } }
 }
 
-pub fn get_field() -> TokenStream {
+/// Processes input for macro call [super::field!].
+pub fn get_field(call: FieldCall) -> TokenStream {
     todo!()
 }
 
+/// Processes input for macro call [super::class!].
 pub fn get_class(class: Class) -> TokenStream {
-    todo!()
+    let class = class.to_jni_class_path();
+    quote! { {
+        use ::std::borrow::BorrowMut as _;
+        env.find_class(#class)
+            .unwrap_or_else(|err| ::ez_jni::__throw::handle_jni_call_error(err, env.borrow_mut()))
+    } }
 }
 
+/// Processes input for macro call [super::singleton!].
 pub fn singleton_instance(class: Class) -> TokenStream {
-    todo!()
+    jni_call(MethodCall {
+        call_type: CallType::Static(Either::Left(class.clone())),
+        method_name: Ident::new("getInstance", Span::call_site()),
+        parameters: Punctuated::new(),
+        return_type: Return::Assertive(ReturnableType::Type(Type::Assertive(InnerType::Object(class.clone())))),
+    })
 }
 
 /// Define a JNI call to a Java method with parameters with expected types, and an expected return type.
@@ -96,59 +109,25 @@ impl Parse for MethodCall {
 
         let is_static = input.parse::<Token![static]>().is_ok();
 
-        let mut callee_tokens = TokenStream::new();
-        // Keep track of the 2 tokens directly preceding the `(...) ->` pattern, as those are the Dot and Method Ident.
-        let mut method_dot = None;
-        let mut method_ident = None;
+        let result = crate::utils::step_until_each(input, [
+            // Check (...)
+            |token: &TokenTree| matches!(token, TokenTree::Group(group) if group.delimiter() == Delimiter::Parenthesis),
+            // Check -
+            |token: &TokenTree| matches!(token, TokenTree::Punct(punct) if punct.as_char() == '-' && punct.spacing() == Spacing::Joint),
+            // Check >
+            |token: &TokenTree| matches!(token, TokenTree::Punct(punct) if punct.as_char() == '>' && punct.spacing() == Spacing::Alone),
+        ])?;
 
-        // Now we will iterate through the TokenStream until we find this pattern: `(...) ->`.
-        // These tokens basically split the left and right sides of the function syntax.
-        // We also know that the token before the `(...)` is the Method name,
-        // So we need to keep track of at least 1 previous token.
-        // We also need to keep track of the Dot preceding the Method name so it isn't parsed as part of the callee.
-        let param_group = input.step(|cursor| {
-            let mut current = *cursor;
+        let param_group = result.pattern_tokens[0].clone().group()?;
+        let mut callee_tokens = result.pre_tokens;
 
-            // Look for pattern `(...) ->` and aggregate all tokens that come before it
-            while let Some((token, next)) = current.token_tree() {
-                current = next;
-            
-                // Check (...). Btw, welcome to nesting hell.
-                if let TokenTree::Group(group) = &token {
-                    if group.delimiter() == Delimiter::Parenthesis {
-                        // Check -
-                        if let Some((punct, next)) = next.punct() {
-                            if punct.as_char() == '-' && punct.spacing() == Spacing::Joint {
-                                // Check >
-                                if let Some((punct, next)) = next.punct() {
-                                    if punct.as_char() == '>' && punct.spacing() == Spacing::Alone {
-                                        // Found pattern `(...) ->`
-                                        return Ok((group.clone(), next));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // The next tokens don't form the `(...) ->` pattern.
-                // Shift the tokens Dot and Ident tokens to the left.
-                if let Some(ident_token) = (&mut method_ident).take() {
-                    (&mut method_dot).take()
-                        .map(|token| callee_tokens.append(token));
-                    method_dot = Some(ident_token);
-                }
-                method_ident = Some(token)
-
-                // This wasn't it, try next
-            }
-
-            Err(cursor.error("Invalid tokens; Did not find pattern `(...) ->`"))
-        })?;
+        let method_ident = callee_tokens.pop();
+        let method_dot = callee_tokens.pop();
 
         // Error used if either method_dot or method_ident were None.
         let none_err = syn::Error::new(param_group.span(), "Expected Dot and Ident `.methodName`");
 
+        // Get the method name from the stepped tokens, ensureing there is also the Dot.
         let method_name = method_dot
             .ok_or_else(|| none_err.clone())
             .and_then(|token| match token {
@@ -165,11 +144,23 @@ impl Parse for MethodCall {
             })?;
 
         Ok(Self {
-            call_type: CallType::parse_callee(callee_tokens, is_static)?,
+            call_type: CallType::parse_callee(callee_tokens.into_iter().collect(), is_static)?,
             method_name,
             parameters: Parser::parse2(Punctuated::parse_terminated, param_group.stream())?,
             return_type: input.parse()?,
         })
+    }
+}
+
+
+pub struct FieldCall {
+    pub call_type: CallType,
+    pub field_name: Ident,
+    pub ty: Type
+}
+impl Parse for FieldCall {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        todo!()
     }
 }
 
@@ -215,7 +206,7 @@ impl CallType {
                 .and_then(|class| {
                     // Must have parsed all tokens, or it is considered error
                     if !fork.is_empty() {
-                        Err(fork.error("Must parse all tokens"))
+                        Err(syn::Error::new(fork.cursor().token_stream().span(), "Unparsed tokens"))
                     } else {
                         input.advance_to(&fork);
                         drop(fork);
@@ -256,43 +247,33 @@ pub struct ConstructorCall {
 impl Parse for ConstructorCall {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         // This is similar to MethodCall::parse() in that it will collect tokens to parse as the class until it finds a certain pattern.
+        use proc_macro2::{TokenTree, Delimiter};
+        use crate::utils::StepResult;
 
-        let mut class_tokens = TokenStream::new();
-        
-        // Iterate through the TokenStream until this pattern is found: `(...)` | `(...) throws`.
-        let param_group = input.step(|cursor| {
-            use proc_macro2::{TokenTree, Delimiter};
-
-            let mut current = *cursor;
-
-            // Look for the pattern while pushing tokens
-            while let Some((token, next)) = current.token_tree() {
-                current = next;
-
-                // Check (...)
-                if let TokenTree::Group(group) = &token {
-                    if group.delimiter() == Delimiter::Parenthesis {
-                        // Check it's the last token
-                        if next.eof() {
-                            // Found pattern `(...)`
-                            return Ok((group.clone(), next));
-                        }
-                        // OR is followed by `throws`
-                        else if let Some((ident, next)) = next.ident() {
-                            if ident == "throws" {
-                                // Found pattern `(...) throws`
-                                return Ok((group.clone(), next))
-                            }
+        // Search for pattern `(...)` | `(...) throws`
+        let StepResult { pre_tokens, pattern_tokens } = crate::utils::step_until(input, |first, next| {
+            // Check (...)
+            if let TokenTree::Group(group) = first {
+                if group.delimiter() == Delimiter::Parenthesis {
+                    // Check it's the last token
+                    if next.eof() {
+                        // Found pattern `(...)`
+                        return Some(next);
+                    }
+                    // OR is followed by `throws`
+                    else if let Some((ident, next)) = next.ident() {
+                        if ident == "throws" {
+                            // Found pattern `(...) throws`
+                            return Some(next)
                         }
                     }
                 }
-
-                // These tokens don't form the pattern
-                class_tokens.append(token);
             }
 
-            Err(syn::Error::new(current.span(), "Invalid tokens"))
+            None
         })?;
+
+        let param_tokens = pattern_tokens[0].clone().group()?.stream();
 
         // Parse speculatively without having to clone TokenStream
         let class =  Parser::parse2(|input: ParseStream| {
@@ -306,11 +287,11 @@ impl Parse for ConstructorCall {
                         .map(|tokens| Either::Right(tokens))
                         .map_err(|_| err)
                 })
-        }, class_tokens)?;
+        }, pre_tokens.into_iter().collect())?;
 
         Ok(Self {
             class,
-            parameters: Parser::parse2(Punctuated::parse_terminated, param_group.stream())?,
+            parameters: Parser::parse2(Punctuated::parse_terminated, param_tokens)?,
             err_type: (!input.is_empty())
                 .then(|| input.parse::<syn::Path>())
                 .transpose()?

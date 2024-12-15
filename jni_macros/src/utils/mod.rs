@@ -1,10 +1,15 @@
 //! Common functions used by all macros in this crate.
 
+mod step;
+
+pub use step::*;
+
 use either::Either;
-use proc_macro2::{TokenStream, Span};
+use proc_macro2::{Span, TokenStream, TokenTree};
 use quote::{ToTokens, TokenStreamExt as _};
 use syn::{ItemEnum, ItemStruct, LitStr};
 use crate::types::{Class, SigType};
+
 
 /// The same as [`syn::spanned::Spanned`].
 /// 
@@ -23,6 +28,59 @@ where T: syn::spanned::Spanned {
         syn::spanned::Spanned::span(self)
     }
 }
+
+/// Provides unwrapping shortcuts for [`TokenTree`].
+#[allow(unused)]
+pub trait TokenTreeExt {
+    /// Unwraps the [`TokenTree`], expecting it is a [`Group`][TokenTree::Group].
+    fn group(self) -> syn::Result<proc_macro2::Group>;
+    /// Unwraps the [`TokenTree`], expecting it is a [`Ident`][TokenTree::Ident].
+    fn ident(self) -> syn::Result<proc_macro2::Ident>;
+    /// Unwraps the [`TokenTree`], expecting it is a [`Punct`][TokenTree::Punct].
+    fn punct(self) -> syn::Result<proc_macro2::Punct>;
+    /// Unwraps the [`TokenTree`], expecting it is a [`Literal`][TokenTree::Literal].
+    fn lit(self) -> syn::Result<proc_macro2::Literal>;
+}
+impl TokenTreeExt for TokenTree {
+    fn group(self) -> syn::Result<proc_macro2::Group> {
+        if let TokenTree::Group(group) = self {
+            Ok(group)
+        } else {
+            Err(syn::Error::new(self.span(), format!("Expected TokenTree::Group, found {}", tt_variant(&self))))
+        }
+    }
+    fn ident(self) -> syn::Result<proc_macro2::Ident> {
+        if let TokenTree::Ident(ident) = self {
+            Ok(ident)
+        } else {
+            Err(syn::Error::new(self.span(), format!("Expected TokenTree::Ident, found {}", tt_variant(&self))))
+        }
+    }
+    fn punct(self) -> syn::Result<proc_macro2::Punct> {
+        if let TokenTree::Punct(punct) = self {
+            Ok(punct)
+        } else {
+            Err(syn::Error::new(self.span(), format!("Expected TokenTree::Punct, found {}", tt_variant(&self))))
+        }
+    }
+    fn lit(self) -> syn::Result<proc_macro2::Literal> {
+        if let TokenTree::Literal(literal) = self {
+            Ok(literal)
+        } else {
+            Err(syn::Error::new(self.span(), format!("Expected TokenTree::Literal, found {}", tt_variant(&self))))
+        }
+    }
+}
+
+fn tt_variant(tt: &TokenTree) -> &'static str {
+    match tt {
+        TokenTree::Group(_) => "TokenTree::Group",
+        TokenTree::Ident(_) => "TokenTree::Ident",
+        TokenTree::Punct(_) => "TokenTree::Punct",
+        TokenTree::Literal(_) => "TokenTree::Literal",
+    }
+}
+
 
 /// Collect multiple syn errors into one error.
 pub fn merge_errors(errors: impl IntoIterator<Item = syn::Error>) -> syn::Result<()> {
