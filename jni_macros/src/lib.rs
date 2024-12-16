@@ -233,6 +233,28 @@ pub fn new(input: TokenStream) -> TokenStream {
     call::jni_call_constructor(call).into()
 }
 
+/// Access a Java Field.
+/// 
+/// This macro will try to access the *Java field* directly.
+/// If the field coudln't be accessed (because it doesn't exist, it's private, etc.),
+/// then this macro will call a *Getter method* with that name.
+/// This is similar to Kotlin does [properties for Java classses](https://kotlinlang.org/docs/java-interop.html#getters-and-setters).
+/// 
+/// # Syntax
+/// 
+/// ```ignore
+/// call!(static me.author.ClassName.fieldName: String)
+///    Callee -->\_________________/            \____/
+///    Field type ---------------------------------^
+/// ```
+/// 
+/// Use `static` if the field is a static field of a *Class*,
+/// or ommit it if the field is of an *Object*.
+/// 
+/// The **callee** could be *Class Path* or *Object*,
+/// following the same syntax as in [`call!`](https://docs.rs/ez_jni/latest/ez_jni/macro.call.html#types).
+/// 
+/// The **type** follows the same syntax as in [`call!`](https://docs.rs/ez_jni/latest/ez_jni/macro.call.html#types).
 #[proc_macro]
 pub fn field(input: TokenStream) -> TokenStream {
     let call = syn::parse_macro_input!(input as FieldCall);

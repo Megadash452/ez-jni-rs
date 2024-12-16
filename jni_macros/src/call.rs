@@ -8,7 +8,7 @@ use syn::{
 use utils::first_char_uppercase;
 use crate::{
     types::{ArrayType, Class, InnerType, JavaPrimitive, RustPrimitive, SigType, SpecialCaseConversion, Type, NULL_KEYWORD},
-    utils::{gen_signature, join_spans, Spanned, TokenTreeExt as _}
+    utils::{gen_signature, join_spans, Spanned, StepResult, TokenTreeExt as _}
 };
 
 /// Processes input for macro call [super::call!].
@@ -39,8 +39,8 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
 pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
     // The Class/ClassObject that the constructor was called for
     let callee = match &call.class {
-        Either::Left(class) => class.to_jni_class_path().to_token_stream(),
-        Either::Right(expr) => quote_spanned!(expr.span()=> (#expr).borrow()),
+        ClassRepr::String(class) => class.to_jni_class_path().to_token_stream(),
+        ClassRepr::Object(expr) => quote_spanned!(expr.span()=> (#expr).borrow()),
     };
     let signature = gen_signature(call.parameters.iter(), &Return::new_void(Span::call_site()));
     let param_vars = gen_arg_vars_defs(call.parameters.iter());
@@ -70,7 +70,34 @@ pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
 
 /// Processes input for macro call [super::field!].
 pub fn get_field(call: FieldCall) -> TokenStream {
-    todo!()
+    // The class or object that the method is being called on.
+    let callee = match &call.call_type {
+        CallType::Static(ClassRepr::String(class)) => {
+            let class = class.to_jni_class_path();
+            quote!(::ez_jni::utils::ClassRepr::String(#class))
+        },
+        CallType::Static(ClassRepr::Object(class)) => quote!(::ez_jni::utils::ClassRepr::Object(&(#class))),
+        CallType::Object(expr) => quote!(&(#expr)),
+    };
+    let name = call.field_name.to_string();
+    let signature = call.ty.sig_type();
+    let sig_char = call.ty.sig_char();
+    let conversion = call.ty.convert_java_to_rust(&quote_spanned!(call.ty.span()=> v))
+        .map(|conversion| quote! { .map(|v| #conversion) });
+
+    // Build the macro function call
+    let jni_method = if call.call_type.is_static() {
+        quote!(::ez_jni::utils::get_static_field)
+    } else {
+        quote!(::ez_jni::utils::get_obj_field)
+    };
+    quote! { {
+        use ::std::borrow::BorrowMut as _;
+        #jni_method(#callee, #name, #signature, env.borrow_mut())
+            .#sig_char()
+            #conversion // Might be empty tokens
+            .unwrap_or_else(|err| ::ez_jni::__throw::handle_jni_call_error(err, env.borrow_mut()))
+    } }
 }
 
 /// Processes input for macro call [super::class!].
@@ -86,10 +113,10 @@ pub fn get_class(class: Class) -> TokenStream {
 /// Processes input for macro call [super::singleton!].
 pub fn singleton_instance(class: Class) -> TokenStream {
     jni_call(MethodCall {
-        call_type: CallType::Static(Either::Left(class.clone())),
+        call_type: CallType::Static(ClassRepr::String(class.clone())),
         method_name: Ident::new("getInstance", Span::call_site()),
         parameters: Punctuated::new(),
-        return_type: Return::Assertive(ReturnableType::Type(Type::Assertive(InnerType::Object(class.clone())))),
+        return_type: Return::Assertive(ReturnableType::Type(Type::Assertive(InnerType::Object(class)))),
     })
 }
 
@@ -109,14 +136,13 @@ impl Parse for MethodCall {
 
         let is_static = input.parse::<Token![static]>().is_ok();
 
+        // Search for pattern `(...) ->`
         let result = crate::utils::step_until_each(input, [
-            // Check (...)
-            |token: &TokenTree| matches!(token, TokenTree::Group(group) if group.delimiter() == Delimiter::Parenthesis),
-            // Check -
-            |token: &TokenTree| matches!(token, TokenTree::Punct(punct) if punct.as_char() == '-' && punct.spacing() == Spacing::Joint),
-            // Check >
-            |token: &TokenTree| matches!(token, TokenTree::Punct(punct) if punct.as_char() == '>' && punct.spacing() == Spacing::Alone),
-        ])?;
+            |token| matches!(token, TokenTree::Group(group) if group.delimiter() == Delimiter::Parenthesis),
+            |token| matches!(token, TokenTree::Punct(punct) if punct.as_char() == '-' && punct.spacing() == Spacing::Joint),
+            |token| matches!(token, TokenTree::Punct(punct) if punct.as_char() == '>' && punct.spacing() == Spacing::Alone),
+        ])
+        .map_err(|err| syn::Error::new(err.span(), format!("{err}; Expected pattern `(...) ->`")))?;
 
         let param_group = result.pattern_tokens[0].clone().group()?;
         let mut callee_tokens = result.pre_tokens;
@@ -152,28 +178,24 @@ impl Parse for MethodCall {
     }
 }
 
-
-pub struct FieldCall {
-    pub call_type: CallType,
-    pub field_name: Ident,
-    pub ty: Type
-}
-impl Parse for FieldCall {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        todo!()
-    }
+/// A wrapper for a [`Class`] value that will be used in a **JNI Call**.
+pub enum ClassRepr {
+    /// The class is represented by a [`ClassPath`][Class] of tokens.
+    /// The *ClassPath* will have to be looked up to get a *Class Object*
+    String(Class),
+    /// The class is represented by a [`Rust Expr`][Expr] that resolves to a [class object][jni::objects::JClass].
+    /// 
+    /// The class object has already been looked up and can be operated on with JNI.
+    Object(Expr),
 }
 
 pub enum CallType {
     /// The call is for a `static` method.
     /// 
-    /// This can be either [`Class`] tokens or an [`Expression`][syn::Expr] (enclosed in `parenthesis` or `braces`)
-    /// that resolves to a [class object][jni::objects::JClass].
-    /// 
     /// ```ignore
     /// call!(static java.lang.String.methodName ...);
     /// ```
-    Static(Either<Class, Expr>),
+    Static(ClassRepr),
     /// The call is for a Method of an existing Object, stored in a variable.
     /// If the object is more than an Ident, it must be enclosed in `parenthesis` or `braces`.
     /// e.g. `object.methodName(...)` or `(something.object).methodName(...)`.
@@ -190,13 +212,15 @@ impl CallType {
     /// Returns the [`Class`] or **Object expression** that the *method* (static or not) is being called on.
     pub fn callee(&self) -> Either<&Class, &Expr> {
         match self {
-            Self::Static(Either::Left(class)) => Either::Left(class),
-            Self::Static(Either::Right(obj))
+            Self::Static(ClassRepr::String(class)) => Either::Left(class),
+            Self::Static(ClassRepr::Object(obj))
             | Self::Object(obj) => Either::Right(obj),
         }
     }
 
     /// Parse [`Class`] or leave as Expression. Then create an instance of this struct.
+    /// 
+    /// This function parses *ALL* tokens in the [`TokenStream`] and returns `Error` if this is not the case.
     pub(self) fn parse_callee(callee: TokenStream, is_static: bool) -> syn::Result<Self> {
         // Parse speculatively without having to clone TokenStream
         Parser::parse2(|input: ParseStream| {
@@ -217,13 +241,13 @@ impl CallType {
 
             Ok(match result {
                 Ok(class) => if is_static {
-                    Self::Static(Either::Left(class))
+                    Self::Static(ClassRepr::String(class))
                 } else {
                     return Err(syn::Error::new(class.span(), "Can't call object method on Class. Try using 'static' at the beginning of the macro, or use the singleton! macro."))
                 },
                 // If Class could not be parsed, use verbatim TokenStream.
                 Err(err) => if is_static {
-                    Self::Static(Either::Right(input.parse()
+                    Self::Static(ClassRepr::Object(input.parse()
                         .map_err(|_| err)?
                     ))
                 } else {
@@ -236,11 +260,39 @@ impl CallType {
     }
 }
 
+pub struct FieldCall {
+    pub call_type: CallType,
+    pub field_name: Ident,
+    pub ty: Type
+}
+impl Parse for FieldCall {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        use proc_macro2::{TokenTree, Spacing};
+
+        let is_static = input.parse::<Token![static]>().is_ok();
+        
+        // Search for pattern `.#Ident :`
+        let StepResult { pre_tokens, mut pattern_tokens } = crate::utils::step_until_each(input, [
+            |token| matches!(token, TokenTree::Punct(punct) if punct.as_char() == '.' && punct.spacing() == Spacing::Alone),
+            |token| matches!(token, TokenTree::Ident(_)),
+            |token| matches!(token, TokenTree::Punct(punct) if punct.as_char() == ':' && punct.spacing() == Spacing::Alone),
+        ])
+        .map_err(|err| syn::Error::new(err.span(), format!("{err}; Expected pattern `.#Ident :`")))?;
+
+
+        Ok(Self {
+            call_type: CallType::parse_callee(pre_tokens.into_iter().collect(), is_static)?,
+            field_name: pattern_tokens.remove(1).ident()?,
+            ty: input.parse()?
+        })
+    }
+}
+
 /// Define a JNI call to a Java Class' constructor.
 /// 
 /// See [`crate::new`] for an example.
 pub struct ConstructorCall {
-    pub class: Either<Class, Expr>,
+    pub class: ClassRepr,
     pub parameters: Punctuated<Parameter, Token![,]>,
     pub err_type: Option<syn::Path>
 }
@@ -248,7 +300,6 @@ impl Parse for ConstructorCall {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         // This is similar to MethodCall::parse() in that it will collect tokens to parse as the class until it finds a certain pattern.
         use proc_macro2::{TokenTree, Delimiter};
-        use crate::utils::StepResult;
 
         // Search for pattern `(...)` | `(...) throws`
         let StepResult { pre_tokens, pattern_tokens } = crate::utils::step_until(input, |first, next| {
@@ -271,7 +322,8 @@ impl Parse for ConstructorCall {
             }
 
             None
-        })?;
+        })
+        .map_err(|err| syn::Error::new(err.span(), format!("{err}; Expected pattern `(...)/EOF` or `(...) throws`")))?;
 
         let param_tokens = pattern_tokens[0].clone().group()?.stream();
 
@@ -281,10 +333,10 @@ impl Parse for ConstructorCall {
 
             fork.parse::<Class>()
                 .inspect(move |_| input.advance_to(&fork))
-                .map(|class| Either::Left(class))
+                .map(|class| ClassRepr::String(class))
                 .or_else(|err| {
                     input.parse::<Expr>()
-                        .map(|tokens| Either::Right(tokens))
+                        .map(|tokens| ClassRepr::Object(tokens))
                         .map_err(|_| err)
                 })
         }, pre_tokens.into_iter().collect())?;
@@ -486,17 +538,6 @@ impl Return {
     pub fn new_void(span: Span) -> Self {
         Self::Assertive(ReturnableType::Void(Ident::new("void", span)))
     }
-    /// Returns the inner type (as String).
-    pub fn inner(&self) -> String {
-        let ty = match self {
-            Self::Assertive(ty) => ty,
-            Self::Result { ty, .. } => ty
-        };
-        match ty {
-            ReturnableType::Void(ident) => ident.to_string(),
-            ReturnableType::Type(ty) => ty.to_string(),
-        }
-    }
     /// Converts to value of the JNI Call to a *Rust value*.
     /// 
     /// Also checks if the Call resulted in an *exception*.
@@ -518,12 +559,10 @@ impl Return {
             | Self::Result { ty: ReturnableType::Void(_), .. } => None,
             // Normal conversion
             Self::Assertive(ReturnableType::Type(ty))
-            | Self::Result { ty: ReturnableType::Type(ty), .. } => ty.convert_java_to_rust(&quote_spanned!(jni_call.span()=> v))
+            | Self::Result { ty: ReturnableType::Type(ty), .. } => ty.convert_java_to_rust(&quote_spanned!(ty.span()=> v))
                 .map(|conversion| quote! { .map(|v| #conversion) }),
         };
 
-        // Induce panic when the returned value is not the expected type
-        let incorrect_type_msg = format!("Expected method to return {}: {{err}}", self.inner());
         let sig_char = self.sig_char();
 
         // Handle call result depending on whether it is expected to throw or not
@@ -535,14 +574,14 @@ impl Return {
                     .unwrap_or_else(|err| ::ez_jni::__throw::handle_jni_call_error(err, env.borrow_mut()))
                     .#sig_char()
                     #conversion // Might be empty tokens
-                    .unwrap_or_else(|err| panic!(#incorrect_type_msg))
+                    .unwrap_or_else(|err| ::ez_jni::__throw::handle_jni_call_error(err, env.borrow_mut()))
             } },
             // Move the result of the method call to a Result if the caller expects that the method could throw.
             Self::Result { err_ty, ..} =>  quote! { {
                 use ::std::borrow::BorrowMut as _;
                 #jni_call
                     .map_err(|err| ::ez_jni::__throw::handle_exception_conversion::<#err_ty>(err, env.borrow_mut()))
-                    .map(|v| v.#sig_char().unwrap_or_else(|err| panic!(#incorrect_type_msg)))
+                    .map(|v| v.#sig_char().unwrap_or_else(|err| ::ez_jni::__throw::handle_jni_call_error(err, env.borrow_mut())))
                     #conversion // Might be empty tokens
             } },
         }

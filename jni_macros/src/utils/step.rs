@@ -9,51 +9,51 @@ pub enum TokensMatchResult<'c> {
     NoMoreTokens,
 }
 
-pub trait TokenPattern {
-    fn matches<'c>(&self, first: &TokenTree, cursor: Cursor<'c>) -> TokensMatchResult<'c>;
-}
-impl<F> TokenPattern for F
-where F: for<'c> Fn(&TokenTree, Cursor<'c>) -> Option<Cursor<'c>> {
-    #[inline]
-    fn matches<'c>(&self, first: &TokenTree, cursor: Cursor<'c>) -> TokensMatchResult<'c> {
-        match self(first, cursor) {
-            Some(next) => TokensMatchResult::Matched(next),
-            None => TokensMatchResult::NotMatched,
-        }
-    }
-}
-/// Implement [`TokenPattern`] for a list of functions that match each token consecutively,
-/// requiring that all `F`s be matched.
-impl<F> TokenPattern for [F]
-where F: Fn(&TokenTree) -> bool {
-    /// Matches a pattern in a [`ParseStream`] where each consecutive token must match its respective pattern function `F`.
-    fn matches<'c>(&self, first: &TokenTree, cursor: Cursor<'c>) -> TokensMatchResult<'c> {
-        let mut pattern_cursor = CursorIter::new(cursor);
-        // The token that is currently being processed
-        let mut token = first.clone();
-        // Tells whether the following loop can continue checking if the pattern matches, or if should stop
-        let mut matching = true;
-
-        for predicate in self.into_iter() {
-            if !predicate(&token) {
-                matching = false;
-                break;
-            }
-            // Setup nenxt token
-            token = match pattern_cursor.next() {
-                Some(token) => token,
-                None => return TokensMatchResult::NoMoreTokens,
-            };
-        }
-
-        if matching {
-            // The pattern matched
-            TokensMatchResult::Matched(pattern_cursor.cursor)
-        } else {
-            TokensMatchResult::NotMatched
-        }
-    }
-}
+// pub trait TokenPattern {
+//     fn matches<'c>(&self, first: &TokenTree, cursor: Cursor<'c>) -> TokensMatchResult<'c>;
+// }
+// impl<F> TokenPattern for F
+// where F: for<'c> Fn(&TokenTree, Cursor<'c>) -> Option<Cursor<'c>> {
+//     #[inline]
+//     fn matches<'c>(&self, first: &TokenTree, cursor: Cursor<'c>) -> TokensMatchResult<'c> {
+//         match self(first, cursor) {
+//             Some(next) => TokensMatchResult::Matched(next),
+//             None => TokensMatchResult::NotMatched,
+//         }
+//     }
+// }
+// /// Implement [`TokenPattern`] for a list of functions that match each token consecutively,
+// /// requiring that all `F`s be matched.
+// impl<F> TokenPattern for [F]
+// where F: Fn(&TokenTree) -> bool {
+//     /// Matches a pattern in a [`ParseStream`] where each consecutive token must match its respective pattern function `F`.
+//     fn matches<'c>(&self, first: &TokenTree, cursor: Cursor<'c>) -> TokensMatchResult<'c> {
+//         let mut pattern_cursor = CursorIter::new(cursor);
+//         // The token that is currently being processed
+//         let mut token = first.clone();
+//         // Tells whether the following loop can continue checking if the pattern matches, or if should stop
+//         let mut matching = true;
+//
+//         for predicate in self.into_iter() {
+//             if !predicate(&token) {
+//                 matching = false;
+//                 break;
+//             }
+//             // Setup nenxt token
+//             token = match pattern_cursor.next() {
+//                 Some(token) => token,
+//                 None => return TokensMatchResult::NoMoreTokens,
+//             };
+//         }
+//
+//         if matching {
+//             // The pattern matched
+//             TokensMatchResult::Matched(pattern_cursor.cursor)
+//         } else {
+//             TokensMatchResult::NotMatched
+//         }
+//     }
+// }
 
 /// Holds the return values for [`step_until()`].
 pub struct StepResult {
@@ -63,7 +63,22 @@ pub struct StepResult {
     pub pattern_tokens: Vec<TokenTree>,
 }
 
-// TODO: doc
+/// Parses an **input** [`ParseStream`] and looks for a **pattern** defined by a function `F`.
+/// 
+/// If some tokens are found that match the **pattern**,
+/// the [`ParseStream`] will be *advanced* to the token *directly after* the last token in the pattern.
+/// The [**return value**][StepResult] will contain the tokens that *matched the pattern*
+/// and the tokens that were *skipped* while looking for the pattern.
+/// 
+/// In the case that no tokens matching the pattern were found,
+/// an [`Error`][syn::Error] will be returned.
+/// 
+/// ## Pattern function
+/// 
+/// The **pattern** is a function that takes the *current token* and a [`Cursor`] containing the *next token*.
+/// The *pattern function* steps through the tokens,
+/// and if it finds a match it returns the [`Cursor`] for the next token after the pattern tokens.
+/// If no match was found it will return [`None`].
 pub fn step_until<F>(input: ParseStream<'_>, pattern: F) -> syn::Result<StepResult>
 where F: for<'c> Fn(&TokenTree, Cursor<'c>) -> Option<Cursor<'c>> {
     step_until_impl(input, |first, next| {
@@ -81,7 +96,7 @@ where F: for<'c> Fn(&TokenTree, Cursor<'c>) -> Option<Cursor<'c>> {
 /// 
 /// `panic!s` if **pattern** is empty.
 pub fn step_until_each<F>(input: ParseStream<'_>, pattern: impl AsRef<[F]>) -> syn::Result<StepResult>
-where F: Fn(&TokenTree) -> bool {
+where F: Fn(TokenTree) -> bool {
     let pattern = pattern.as_ref()
         .iter()
         .collect::<Box<[_]>>();
@@ -94,7 +109,7 @@ where F: Fn(&TokenTree) -> bool {
 
         loop {
             // Match the current token with the current function
-            if !predicate(&token) {
+            if !predicate(token) {
                 return TokensMatchResult::NotMatched
             }
             // Check if there are more functions to match a token with
@@ -154,7 +169,7 @@ where M: for<'c> Fn(&TokenTree, Cursor<'c>) -> TokensMatchResult<'c> {
             }
         }
 
-        Err(syn::Error::new(Span::call_site(), "Invalid tokens; Did not find desired pattern"))
+        Err(syn::Error::new(Span::call_site(), "Invalid tokens; Pattern not found"))
     })?;
 
     Ok(StepResult { pre_tokens, pattern_tokens })
@@ -165,7 +180,7 @@ where M: for<'c> Fn(&TokenTree, Cursor<'c>) -> TokensMatchResult<'c> {
 //     // Tokens that were skipped while parsing until the pattern was found.
 //     // AKA these tokense precede the pattern.
 //     let mut pre_tokens = Vec::new();
-
+//
 //     // The tokens that matched with the pattern
 //     let pattern_tokens = input.step(|cursor| {
 //         let mut main_cursor = CursorIter::new(*cursor);
@@ -181,20 +196,20 @@ where M: for<'c> Fn(&TokenTree, Cursor<'c>) -> TokensMatchResult<'c> {
 //                         if main_cursor.current == next {
 //                             break;
 //                         }
-
+//
 //                         pattern_tokens.push(token);
 //                     }
-
+//
 //                     return Ok((pattern_tokens, next));
 //                 },
 //                 TokensMatchResult::NoMoreTokens => break,
 //                 TokensMatchResult::NotMatched => pre_tokens.push(token),
 //             }
 //         }
-
+//
 //         Err(syn::Error::new(Span::call_site(), "Invalid tokens; Did not find desired pattern"))
 //     })?;
-
+//
 //     Ok(StepResult { pre_tokens, pattern_tokens })
 // } 
 
@@ -218,35 +233,3 @@ impl<'a> Iterator for CursorIter<'a> {
         Some(token)
     }
 }
-
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use proc_macro2::Spacing;
-//     use syn::parse::Parser;
-// 
-//     static TOKENS: &str = "Hello World; Good bye World";
-// 
-//     #[test]
-//     fn step_until_fn() {
-//         Parser::parse2(|input| {
-//             step_until(input, |first, next| {
-//                 if matches!(first, TokenTree::Ident(ident) if ident == "World") {
-//                     if let Some((punct, next)) = next.punct() {
-//                         if punct.as_char() == ';' && punct.spacing() == Spacing::Alone {
-//                             return Some(next)
-//                         }
-//                     }
-//                 }
-// 
-//                 None
-//             })
-//         }, syn::parse_str(TOKENS).unwrap())
-//             .unwrap();
-//     }
-// 
-//     #[test]
-//     fn step_until_list() {
-//         todo!()
-//     }
-// }
