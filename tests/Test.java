@@ -23,6 +23,10 @@ public final class Test {
         return this.memberField;
     }
 
+    public static int member1 = 3;
+    public static String member2 = "Hello, World!";
+    public static char getMember3() { return 'a'; }
+
     public static void    getVoid()    { return; }
     public static boolean getBoolean() { return true; }
     public static char    getChar()    { return 'a'; }
@@ -65,13 +69,37 @@ public final class Test {
     public static void prim2DArrayArgs(boolean[][] z, char[][] c, int[][] i) { }
     public static void obj2DArrayArgs(Object[][] l, String[][] s) { }
 
+    // Test methods and fields on an Object rather than on a Class
     public static class Instanced {
         Instanced() {}
+
+        public int member1 = 3;
+        public String member2 = "Hello, World!";
+        public char getMember3() { return 'a'; }
+
         // Just test one primitive and one object this time
         public boolean getBoolean() { return true; }
         public Object getObject() { return new Object(); }
         public void args(boolean z, Object l) { }
         public void arrayArgs(boolean[] z, Object[] l) { }
+    }
+
+    public static class Singleton {
+        private static Singleton instance = null;
+        public static Singleton getInstance() {
+            if (instance == null)
+                instance = new Singleton();
+ 
+            return instance;
+        }
+
+        public int member;
+
+        public int method() { return 3; }
+
+        private Singleton() {
+            this.member = 3;
+        }
     }
 
     public static sealed class SumClass {
@@ -89,13 +117,4 @@ public final class Test {
             public String getStr() { return this.str; }
         }
     }
-
-    public void testNativeMethods() {
-        this.test_jni_fn_1();
-        this.test_jni_fn_2("Hello, World!");
-        this.test_jni_fn_3("Hello, World!");
-    }
-    private native void test_jni_fn_1();
-    private native int test_jni_fn_2(String s);
-    private native String test_jni_fn_3(String s);
 }

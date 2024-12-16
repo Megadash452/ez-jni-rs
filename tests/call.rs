@@ -2,8 +2,8 @@ mod common;
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-use jni::objects::JObject;
-use ez_jni::{call, new, println, eprintln};
+use ez_jni::{call, class, eprintln, field, new, println, singleton};
+use jni::objects::{JClass, JObject};
 
 #[test]
 fn return_primitives() {
@@ -58,9 +58,11 @@ fn return_other() {
     let r: Result<bool, String> = call!(static me.test.Test.throwPrim() -> Result<bool, String>);
     r.unwrap_err();
     // Result Object
-    let r: Result<JObject, String> = call!(static me.test.Test.getObject() -> Result<java.lang.Object, String>);
+    let r: Result<JObject, String> =
+        call!(static me.test.Test.getObject() -> Result<java.lang.Object, String>);
     r.unwrap();
-    let r: Result<JObject, String> = call!(static me.test.Test.throwObj() -> Result<java.lang.Object, String>);
+    let r: Result<JObject, String> =
+        call!(static me.test.Test.throwObj() -> Result<java.lang.Object, String>);
     r.unwrap_err();
     // Option
     let r: Option<JObject> = call!(static me.test.Test.getObject() -> Option<java.lang.Object>);
@@ -68,9 +70,11 @@ fn return_other() {
     let r: Option<JObject> = call!(static me.test.Test.nullable() -> Option<java.lang.Object>);
     assert!(r.is_none());
     // Result<Option<_>, _>
-    let r: Result<Option<JObject>, String> = call!(static me.test.Test.getObject() -> Result<Option<java.lang.Object>, String>);
+    let r: Result<Option<JObject>, String> =
+        call!(static me.test.Test.getObject() -> Result<Option<java.lang.Object>, String>);
     r.unwrap().unwrap();
-    let r: Result<Option<JObject>, String> = call!(static me.test.Test.nullable() -> Result<Option<java.lang.Object>, String>);
+    let r: Result<Option<JObject>, String> =
+        call!(static me.test.Test.nullable() -> Result<Option<java.lang.Object>, String>);
     assert!(r.unwrap().is_none());
 }
 
@@ -125,63 +129,95 @@ fn return_arrays_other() {
     let _: Box<[String]> = call!(static me.test.Test.getStringArray() -> [java.lang.String]);
     let _: Box<[String]> = call!(static me.test.Test.getStringArray() -> [String]);
     // Result Primitive
-    let r: Result<Box<[bool]>, String> = call!(static me.test.Test.getBooleanArray() -> Result<[bool], String>);
+    let r: Result<Box<[bool]>, String> =
+        call!(static me.test.Test.getBooleanArray() -> Result<[bool], String>);
     r.unwrap();
-    let r: Result<Box<[bool]>, String> = call!(static me.test.Test.throwPrimArray() -> Result<[bool], String>);
+    let r: Result<Box<[bool]>, String> =
+        call!(static me.test.Test.throwPrimArray() -> Result<[bool], String>);
     r.unwrap_err();
     // Result Object
-    let r: Result<Box<[JObject]>, String> = call!(static me.test.Test.getObjectArray() -> Result<[java.lang.Object], String>);
+    let r: Result<Box<[JObject]>, String> =
+        call!(static me.test.Test.getObjectArray() -> Result<[java.lang.Object], String>);
     r.unwrap();
-    let r: Result<Box<[JObject]>, String> = call!(static me.test.Test.throwObjArray() -> Result<[java.lang.Object], String>);
+    let r: Result<Box<[JObject]>, String> =
+        call!(static me.test.Test.throwObjArray() -> Result<[java.lang.Object], String>);
     r.unwrap_err();
     // Option
     let r: Option<Box<[bool]>> = call!(static me.test.Test.getBooleanArray() -> Option<[bool]>);
     r.unwrap();
     let r: Option<Box<[bool]>> = call!(static me.test.Test.nullPrimArray() -> Option<[bool]>);
     assert!(r.is_none());
-    let r: Option<Box<[JObject]>> = call!(static me.test.Test.getObjectArray() -> Option<[java.lang.Object]>);
+    let r: Option<Box<[JObject]>> =
+        call!(static me.test.Test.getObjectArray() -> Option<[java.lang.Object]>);
     r.unwrap();
-    let r: Option<Box<[JObject]>> = call!(static me.test.Test.nullObjArray() -> Option<[java.lang.Object]>);
+    let r: Option<Box<[JObject]>> =
+        call!(static me.test.Test.nullObjArray() -> Option<[java.lang.Object]>);
     assert!(r.is_none());
     // Array Option
     let r: Box<[Option<String>]> = call!(static me.test.Test.getStringArray() -> [Option<String>]);
     let expect: Box<[Option<String>]> = Box::new(["Hello", "World"].map(|s| Some(s.to_string())));
     assert_eq!(r, expect);
-    let r: Box<[Option<String>]> = call!(static me.test.Test.getNullStringArray() -> [Option<String>]);
-    let expect: Box<[Option<String>]> = Box::new([Some("Hello"), None].map(|s| s.map(|s| s.to_string())));
+    let r: Box<[Option<String>]> =
+        call!(static me.test.Test.getNullStringArray() -> [Option<String>]);
+    let expect: Box<[Option<String>]> =
+        Box::new([Some("Hello"), None].map(|s| s.map(|s| s.to_string())));
     assert_eq!(r, expect);
-    let r: Box<[Option<JObject>]> = call!(static me.test.Test.getObjectArray() -> [Option<java.lang.Object>]);
-    r.into_vec().into_iter().for_each(|s| { s.unwrap(); });
-    let r: Option<Box<[Option<String>]>> = call!(static me.test.Test.getStringArray() -> Option<[Option<String>]>);
-    r.unwrap().into_vec().into_iter().for_each(|s| { s.unwrap(); });
-    let r: Option<Box<[Option<JObject>]>> = call!(static me.test.Test.getObjectArray() -> Option<[Option<java.lang.Object>]>);
-    r.unwrap().into_vec().into_iter().for_each(|s| { s.unwrap(); });
+    let r: Box<[Option<JObject>]> =
+        call!(static me.test.Test.getObjectArray() -> [Option<java.lang.Object>]);
+    r.into_vec().into_iter().for_each(|s| {
+        s.unwrap();
+    });
+    let r: Option<Box<[Option<String>]>> =
+        call!(static me.test.Test.getStringArray() -> Option<[Option<String>]>);
+    r.unwrap().into_vec().into_iter().for_each(|s| {
+        s.unwrap();
+    });
+    let r: Option<Box<[Option<JObject>]>> =
+        call!(static me.test.Test.getObjectArray() -> Option<[Option<java.lang.Object>]>);
+    r.unwrap().into_vec().into_iter().for_each(|s| {
+        s.unwrap();
+    });
     // Multi-Dimensional Arrays
     let r: Box<[Box<[String]>]> = call!(static me.test.Test.get2DStringArray() -> [[String]]);
-    let expect: Box<[Box<[String]>]> = Box::new([Box::new(["Hello", "World"].map(|s| s.to_string())), Box::new(["How", "are", "you"].map(|s| s.to_string()))]);
+    let expect: Box<[Box<[String]>]> = Box::new([
+        Box::new(["Hello", "World"].map(|s| s.to_string())),
+        Box::new(["How", "are", "you"].map(|s| s.to_string())),
+    ]);
     assert_eq!(r, expect);
     // Result<Option<_>, _>
-    let r: Result<Option<Box<[bool]>>, String> = call!(static me.test.Test.getBooleanArray() -> Result<Option<[bool]>, String>);
+    let r: Result<Option<Box<[bool]>>, String> =
+        call!(static me.test.Test.getBooleanArray() -> Result<Option<[bool]>, String>);
     r.unwrap().unwrap();
-    let r: Result<Option<Box<[bool]>>, String> = call!(static me.test.Test.nullPrimArray() -> Result<Option<[bool]>, String>);
+    let r: Result<Option<Box<[bool]>>, String> =
+        call!(static me.test.Test.nullPrimArray() -> Result<Option<[bool]>, String>);
     assert!(r.unwrap().is_none());
-    let r: Result<Option<Box<[JObject]>>, String> = call!(static me.test.Test.getObjectArray() -> Result<Option<[java.lang.Object]>, String>);
+    let r: Result<Option<Box<[JObject]>>, String> =
+        call!(static me.test.Test.getObjectArray() -> Result<Option<[java.lang.Object]>, String>);
     r.unwrap().unwrap();
-    let r: Result<Option<Box<[JObject]>>, String> = call!(static me.test.Test.nullObjArray() -> Result<Option<[java.lang.Object]>, String>);
+    let r: Result<Option<Box<[JObject]>>, String> =
+        call!(static me.test.Test.nullObjArray() -> Result<Option<[java.lang.Object]>, String>);
     assert!(r.unwrap().is_none());
 }
 
 #[test]
 fn return_fail() {
     setup_env!(env);
-    catch_unwind(AssertUnwindSafe(|| call!(static me.test.Test.nullable() -> java.lang.Object)))
-        .unwrap_err();
-    catch_unwind(AssertUnwindSafe(|| call!(static me.test.Test.nullObjArray() -> [java.lang.Object])))
-        .unwrap_err();
-    catch_unwind(AssertUnwindSafe(|| call!(static me.test.Test.getNullObjectArray() -> [java.lang.Object])))
-        .unwrap_err();
-    catch_unwind(AssertUnwindSafe(|| call!(static me.test.Test.nullObjArray() -> [Option<java.lang.Object>])))
-        .unwrap_err();
+    catch_unwind(AssertUnwindSafe(
+        || call!(static me.test.Test.nullable() -> java.lang.Object),
+    ))
+    .unwrap_err();
+    catch_unwind(AssertUnwindSafe(
+        || call!(static me.test.Test.nullObjArray() -> [java.lang.Object]),
+    ))
+    .unwrap_err();
+    catch_unwind(AssertUnwindSafe(
+        || call!(static me.test.Test.getNullObjectArray() -> [java.lang.Object]),
+    ))
+    .unwrap_err();
+    catch_unwind(AssertUnwindSafe(
+        || call!(static me.test.Test.nullObjArray() -> [Option<java.lang.Object>]),
+    ))
+    .unwrap_err();
 }
 
 #[test]
@@ -271,7 +307,7 @@ fn arguments() {
 #[test]
 fn constructor() {
     setup_env!(env);
-    
+
     new!(me.test.Test());
     new!(me.test.Test(int(3)));
     new!(me.test.Test(String("Hello, World!")));
@@ -280,7 +316,7 @@ fn constructor() {
 
     let class = env.find_class("me/test/Test").unwrap();
     new!(class());
-    new!(( class )(int(3)));
+    new!((class)(int(3)));
     new!({ &class }(String("Hello, World!")));
     // Allow arbitrary Expressions as the Object
     new!(Some(Some(&class)).unwrap().unwrap()());
@@ -293,8 +329,10 @@ fn constructor() {
 fn constructor_fail() {
     setup_env!(env);
     // Should panic if the constructor throws, but user did not indicate that the constructor could throw
-    catch_unwind(AssertUnwindSafe(|| new!(me.test.Test(java.lang.String(null)))))
-        .unwrap_err();
+    catch_unwind(AssertUnwindSafe(|| {
+        new!(me.test.Test(java.lang.String(null)))
+    }))
+    .unwrap_err();
 }
 
 #[test]
@@ -315,6 +353,43 @@ fn obj_method() {
     // Test method on class Object
     let class = env.get_object_class(&obj).unwrap();
     assert_eq!(call!(class.getName() -> String), "me.test.Test$Instanced");
+}
+
+#[test]
+fn field() {
+    setup_env!(env);
+
+    assert_eq!(field!(static me.test.Test.member1: u32), 3);
+    assert_eq!(field!(static me.test.Test.member2: String), "Hello, World!");
+    assert_eq!(field!(static me.test.Test.member3: char), 'a');
+
+    let class = class!(me.test.Test);
+    assert_eq!(field!(static class.member1: u32), 3);
+
+    let obj = new!(me.test.Test$Instanced());
+    assert_eq!(field!(obj.member1: u32), 3);
+    assert_eq!(field!(obj.member2: String), "Hello, World!");
+    assert_eq!(field!(obj.member3: char), 'a');
+}
+
+#[test]
+fn class() {
+    setup_env!(env);
+    let mut class: JClass<'_>;
+
+    class = class!(me.test.Test);
+    assert_eq!(call!(class.getName() -> String), "me.test.Test");
+    class = class!(me.test.Test$Instanced);
+    assert_eq!(call!(class.getName() -> String), "me.test.Test$Instanced");
+}
+
+#[test]
+fn singleton() {
+    setup_env!(env);
+
+    let obj = singleton!(me.test.Test$Singleton);
+    assert_eq!(call!(obj.method() -> int), 3);
+    assert_eq!(field!(obj.member: int), 3);
 }
 
 #[test]
