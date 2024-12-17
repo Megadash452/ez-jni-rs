@@ -372,9 +372,9 @@ fn field() {
     assert_eq!(field!(obj.member3: char), 'a');
 
     // Set field values
-    field!(static me.test.Test.memeber1: u32 = 5);
-    field!(static me.test.Test.memeber2: String = "Goodbye, World!");
-    field!(static me.test.Test.memeber3: char = 'b');
+    field!(static me.test.Test.member1: u32 = 5);
+    field!(static me.test.Test.member2: String = "Goodbye, World!");
+    field!(static me.test.Test.member3: char = 'b');
 
     field!(obj.member1: u32 = 5);
     field!(obj.member2: String = "Goodbye, World!");
