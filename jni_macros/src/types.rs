@@ -834,10 +834,10 @@ impl SpecialCaseConversion for RustPrimitive {
                     .unwrap_or(char::REPLACEMENT_CHARACTER)
             }),
             // Transmute from the regular (signed) Java Type to the unsigned type
-            _ if self.is_unsigned() => {
+            _ if self.is_unsigned() => Some({
                 let target_ty = Ident::new(&self.to_string(), Span::call_site());
-                Some(quote_spanned! {value.span()=> unsafe { ::std::mem::transmute::<_, #target_ty>(#value) } })
-            },
+                quote_spanned! {value.span()=> unsafe { ::std::mem::transmute::<_, #target_ty>(#value) } }
+            }),
             // No more conversion
             _ => None
         }
@@ -849,7 +849,10 @@ impl SpecialCaseConversion for RustPrimitive {
             // Char must be encoded to UTF-16 (will panic! if the conversion fails)
             Self::Char => Some(quote_spanned!(value.span()=> (#value).encode_utf16(&mut [0;1])[0])),
             // Transmute Rust unsigned integers to Java signed integers
-            _ if self.is_unsigned() => Some(quote_spanned!(value.span()=> unsafe { ::std::mem::transmute(#value) })),
+            _ if self.is_unsigned() => Some({
+                let target_ty = Ident::new(&self.to_string(), Span::call_site());
+                quote_spanned! {value.span()=> unsafe { ::std::mem::transmute::<#target_ty, _>(#value) } }
+            }),
             // No more conversion
             _ => None
         }

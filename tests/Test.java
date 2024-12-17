@@ -25,7 +25,9 @@ public final class Test {
 
     public static int member1 = 3;
     public static String member2 = "Hello, World!";
-    public static char getMember3() { return 'a'; }
+    private static char _member3 = 'a';
+    public static char getMember3() { return _member3; }
+    public static char setMember3(char val) { _member3 = val; }
 
     public static void    getVoid()    { return; }
     public static boolean getBoolean() { return true; }
@@ -75,7 +77,9 @@ public final class Test {
 
         public int member1 = 3;
         public String member2 = "Hello, World!";
-        public char getMember3() { return 'a'; }
+        private char _member3 = 'a';
+        public char getMember3() { return this._member3; }
+        public char setMember3(char val) { this._member3 = val; } 
 
         // Just test one primitive and one object this time
         public boolean getBoolean() { return true; }

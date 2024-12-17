@@ -258,7 +258,7 @@ pub fn new(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn field(input: TokenStream) -> TokenStream {
     let call = syn::parse_macro_input!(input as FieldCall);
-    call::get_field(call).into()
+    call::field(call).into()
 }
 
 /// Get the **class Object** for some Class.

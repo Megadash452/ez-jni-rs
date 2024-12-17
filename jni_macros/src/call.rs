@@ -69,7 +69,7 @@ pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
 }
 
 /// Processes input for macro call [super::field!].
-pub fn get_field(call: FieldCall) -> TokenStream {
+pub fn field(call: FieldCall) -> TokenStream {
     // The class or object that the method is being called on.
     let callee = match &call.call_type {
         CallType::Static(ClassRepr::String(class)) => {
@@ -86,18 +86,42 @@ pub fn get_field(call: FieldCall) -> TokenStream {
         .map(|conversion| quote! { .map(|v| #conversion) });
 
     // Build the macro function call
-    let jni_method = if call.call_type.is_static() {
-        quote!(::ez_jni::utils::get_static_field)
-    } else {
-        quote!(::ez_jni::utils::get_obj_field)
-    };
-    quote! { {
-        use ::std::borrow::BorrowMut as _;
-        #jni_method(#callee, #name, #signature, env.borrow_mut())
-            .#sig_char()
-            #conversion // Might be empty tokens
-            .unwrap_or_else(|err| ::ez_jni::__throw::handle_jni_call_error(err, env.borrow_mut()))
-    } }
+    match call.set_val {
+        Some(val) => {
+            let jni_method = if call.call_type.is_static() {
+                quote!(::ez_jni::utils::set_static_field)
+            } else {
+                quote!(::ez_jni::utils::set_obj_field)
+            };
+            let arg = jvalue_variant(&call.ty, quote_spanned!(val.span()=> __param_0));
+            // The value being set is given to the JNI call as an argument. It must also be stored in a local var.
+            let param_var = gen_arg_vars_defs(std::iter::once(&Parameter {
+                ty: call.ty,
+                value: ParamValue::Value(val.into_token_stream())
+            }));
+
+            quote! { {
+                use ::std::borrow::BorrowMut as _;
+                #param_var
+                #jni_method(#callee, #name, #signature, #arg, env.borrow_mut())
+            } }
+        },
+        None => {
+            let jni_method = if call.call_type.is_static() {
+                quote!(::ez_jni::utils::get_static_field)
+            } else {
+                quote!(::ez_jni::utils::get_obj_field)
+            };
+
+            quote! { {
+                use ::std::borrow::BorrowMut as _;
+                #jni_method(#callee, #name, #signature, env.borrow_mut())
+                    .#sig_char()
+                    #conversion // Might be empty tokens
+                    .unwrap_or_else(|err| ::ez_jni::__throw::handle_jni_call_error(err, env.borrow_mut()))
+            } }
+        }
+    }
 }
 
 /// Processes input for macro call [super::class!].
@@ -189,6 +213,7 @@ pub enum ClassRepr {
     Object(Expr),
 }
 
+/// Wether a JNI call is being done for a **static** or **object** member.
 pub enum CallType {
     /// The call is for a `static` method.
     /// 
@@ -260,10 +285,13 @@ impl CallType {
     }
 }
 
+/// A JNI call to *access* or *set* the value fo a **field**.
 pub struct FieldCall {
     pub call_type: CallType,
     pub field_name: Ident,
-    pub ty: Type
+    pub ty: Type,
+    /// If the field is being set, this is the value it will be set to.
+    pub set_val: Option<Expr>,
 }
 impl Parse for FieldCall {
     fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -279,11 +307,18 @@ impl Parse for FieldCall {
         ])
         .map_err(|err| syn::Error::new(err.span(), format!("{err}; Expected pattern `.#Ident :`")))?;
 
-
         Ok(Self {
             call_type: CallType::parse_callee(pre_tokens.into_iter().collect(), is_static)?,
             field_name: pattern_tokens.remove(1).ident()?,
-            ty: input.parse()?
+            ty: input.parse()?,
+            set_val: {
+                // If there is an equal sign, this means the field is being set
+                if input.parse::<Token![=]>().is_ok() {
+                    Some(input.parse()?)
+                } else {
+                    None
+                }
+            }
         })
     }
 }
@@ -357,36 +392,6 @@ impl Parse for ConstructorCall {
 pub struct Parameter {
     ty: Type,
     value: ParamValue,
-}
-impl Parameter {
-    /// Conver the parameter to a `Jvalue` enum variant that will be used in the JNI call parameter list.
-    /// The variant will have one of the parameter variables as the inner value.
-    pub fn jni_variant(&self, var_name: Ident) -> TokenStream {
-        fn primitive_variant(ty: JavaPrimitive, span: Span) -> TokenStream {
-            Ident::new(
-                &if ty == JavaPrimitive::Boolean {
-                    "Bool".to_string()
-                } else {
-                    first_char_uppercase(&ty.to_string())
-                },
-            span)
-                .to_token_stream()
-        }
-        
-        let (ty_span, ty_variant) = match &self.ty {
-            Type::Assertive(ty) => match ty {
-                InnerType::JavaPrimitive { ident, ty } => (ident.span(), primitive_variant(*ty, ident.span())),
-                InnerType::RustPrimitive { ident, ty } => (ident.span(), primitive_variant(JavaPrimitive::from(*ty), ident.span())),
-                InnerType::Object(class) => (class.span(), quote!(Object)),
-            },
-            Type::Array(array) => (array.span(), quote!(Object)),
-            Type::Option { .. } => panic!("Unreachable code; Already checked that Option is not used in arguments")
-        };
-        let mut tt = quote! {};
-        tt.append_all(quote_spanned! {ty_span=> ::jni::objects::JValue::#ty_variant });
-        tt.append_all(quote_spanned! {var_name.span()=> (#var_name) });
-        tt
-    }
 }
 impl SigType for Parameter {
     fn sig_char(&self) -> Ident {
@@ -710,7 +715,36 @@ fn gen_arguments<'a>(params: impl Iterator<Item = &'a Parameter>) -> TokenStream
     let params = params
         .enumerate()
         .map(|(i, param)| {
-            param.jni_variant(Ident::new(&format!("__param_{i}"), param.span()))
+            jvalue_variant(&param.ty, Ident::new(&format!("__param_{i}"), param.span()).into_token_stream())
         });
     quote! { &[ #( #params ),* ] }
+}
+
+/// Conver the parameter to a `Jvalue` enum variant that will be used in the JNI call parameter list.
+/// The variant will have one of the parameter variables as the inner value.
+pub fn jvalue_variant(ty: &Type, val: TokenStream) -> TokenStream {
+    fn primitive_variant(ty: JavaPrimitive, span: Span) -> TokenStream {
+        Ident::new(
+            &if ty == JavaPrimitive::Boolean {
+                "Bool".to_string()
+            } else {
+                first_char_uppercase(&ty.to_string())
+            },
+        span)
+            .to_token_stream()
+    }
+    
+    let (ty_span, ty_variant) = match ty {
+        Type::Assertive(ty) => match ty {
+            InnerType::JavaPrimitive { ident, ty } => (ident.span(), primitive_variant(*ty, ident.span())),
+            InnerType::RustPrimitive { ident, ty } => (ident.span(), primitive_variant(JavaPrimitive::from(*ty), ident.span())),
+            InnerType::Object(class) => (class.span(), quote!(Object)),
+        },
+        Type::Array(array) => (array.span(), quote!(Object)),
+        Type::Option { .. } => panic!("Unreachable code; Already checked that Option is not used in arguments")
+    };
+    let mut tt = quote! {};
+    tt.append_all(quote_spanned! {ty_span=> ::jni::objects::JValue::#ty_variant });
+    tt.append_all(quote_spanned! {val.span()=> (#val) });
+    tt
 }
