@@ -7,10 +7,11 @@ use crate::FromException;
 /// but no Exception was found.
 static JNI_CALL_GHOST_EXCEPTION: &str = "JNI Call returned with Error::JavaException, but no exception was found.";
 
-/// Similar to [`catch()`], but will not panic if the exception's type did not match the desired type.
-/// Instead it will continue to be thrown until another [`try_catch`] is called with the correct type.
+/// Checks if there is a *pending Exception* that was thrown from a previous JNI call,
+/// and tries to convert it to an `E` and the Exception is caught and cleared.
 /// 
-/// Returns the Exception if it was caught.
+/// If the `Exception` can't be converted to an `E`,
+/// this function will *re-throw* the Exception so that another [`try_catch`] call can catch the exception.
 pub fn try_catch<'local, E: FromException<'local>>(env: &mut JNIEnv<'local>) -> Option<E> {
     catch_exception(env)
         .and_then(|ex|
@@ -22,7 +23,10 @@ pub fn try_catch<'local, E: FromException<'local>>(env: &mut JNIEnv<'local>) -> 
 
 /// Panics with a *Java Exception* instead of *Rust String message*.
 /// 
-/// 
+/// If this is called within the context of a [`jni_fn`][crate::jni_fn!],
+/// This will panic with the **Exception Object** instead of a regular `panic!` message.
+/// In this case, the panic payload will be a [`GlobalRef`][jni::objects::GlobalRef].
+/// Otherwise, the panic payload will be a [`String`].
 pub fn panic_exception(ex: JThrowable, env: &mut JNIEnv) -> ! {
     // If the panic hook was set, this means that the panic payload will be thrown to Java,
     // so the payload should be the exception itself.
@@ -58,7 +62,9 @@ pub fn handle_jni_call_error(error: JNIError, env: &mut JNIEnv) -> ! {
 /// Handles the error returned by any [*JNI Call*](https://docs.rs/jni/0.21.1/jni/struct.JNIEnv.html#implementations)
 /// by converting the `Exception` to a *Rust Type*.
 /// 
-/// If the **error** was not [`Exception`][JNIError::JavaException] this will `panic!`.
+/// If the **error** was not [`Exception`][JNIError::JavaException],
+/// or if the **Exception** was could not be converted to th eexpceted type `E`,
+/// this function will `panic!` with a message, or the Exception itself.
 ///
 /// This function is used by [ez_jni_macros::call!].
 pub fn handle_exception_conversion<'local, E: FromException<'local>>(error: JNIError, env: &mut JNIEnv<'local>) -> E {

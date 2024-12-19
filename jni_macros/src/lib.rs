@@ -37,7 +37,7 @@ use utils::item_from_derive_input;
 /// 
 /// ### Argument and Return Types
 /// 
-/// The **arguments** and **return** can have any Type that is also used for [`ez_jni::call!`](https://docs.rs/ez_jni/latest/ez_jni/macro.call.html#types).
+/// The **arguments** and **return** can have any Type that is also used for [`call!`][call!#types].
 /// 
 /// The implicit argument `this` has type [`JObject`][jni::objects::JObject],
 /// or `class` (if it is *static*) has type [`JClass`][jni::objects::JClass],
@@ -46,10 +46,10 @@ use utils::item_from_derive_input;
 /// ### Panic catching
 /// 
 /// The *block* of the function will be wrapped with a *special panic catcher*
-/// that catches `panics!` and throws them as an **Exception** of [`me.marti.ezjni.RustPanic`][https://github.com/Megadash452/ez-jni-rs/blob/main/src/me/marti/ezjni/RustPanic.java] with the panic message.
+/// that catches `panics!` and throws them as an **Exception** of [`me.marti.ezjni.RustPanic`](https://github.com/Megadash452/ez-jni-rs/blob/main/src/me/marti/ezjni/RustPanic.java) with the panic message.
 /// 
 /// When a panic is caught and the exception is *thrown*,
-/// the function will return a *[zeroed](std::mem::zeroed)* representation of the return type.
+/// the function will return a *[zeroed][std::mem::zeroed]* representation of the return type.
 /// 
 /// ### Mark of the sig
 /// 
@@ -131,7 +131,7 @@ pub fn jni_fn(input: TokenStream) -> TokenStream {
 /// The function call has *argument* and *return* **types**.
 /// 
 /// A type can be a **[Java Primitive](https://docs.oracle.com/javase/tutorial/java/nutsandbolts/datatypes.html)**,
-/// a **[Rust Primitive](std::primitive)** (which is transmuted to the corresponding Java Primitive),
+/// a **[Rust Primitive][std::primitive]** (which is transmuted to the corresponding Java Primitive),
 /// a **Java Class**,
 /// or an **Array** of one of the previous types (the type wrapped in *brackets* `[]`).
 /// 
@@ -168,7 +168,7 @@ pub fn jni_fn(input: TokenStream) -> TokenStream {
 /// The arguments of the method call are placed inside perentheses after the method name.
 /// The syntax is simple: `type(value)`.
 ///
-/// All arguments have a **type** (see the [types section](https://docs.rs/ez_jni/latest/ez_jni/macro.call.html#types)),
+/// All arguments have a **type** (see the [types section][call!#types]),
 /// followed by a **value** (wrapped in parenthesis).
 /// 
 /// **Array** arguments' **values** can be any Rust Type that is `AsRef<[T]>`,
@@ -187,7 +187,7 @@ pub fn jni_fn(input: TokenStream) -> TokenStream {
 /// ## Return
 ///
 /// The arguments are followed by a *return arrow* `->` and the **return type**.
-/// The return type may be `void`, one of the [`Types`](https://docs.rs/ez_jni/latest/ez_jni/macro.call.html#types) above,
+/// The return type may be `void`, one of the [`Types`](call!#types) above,
 /// or a [`Result<T, E>`] of any of the previous choices.
 ///
 /// The real type (`T`) can be wrapped in [`Result`] when the method can return an **Exception**.
@@ -212,7 +212,7 @@ pub fn call(input: TokenStream) -> TokenStream {
 
 /// Call a Java Class' constructor.
 /// 
-/// Has similar syntax as [*calling a static method*][crate::call!], but there is no *method name* or *return value*.
+/// Has similar syntax as [*calling a static method*][call!#method-types], but there is no *method name* or *return value*.
 /// 
 /// ```ignore
 /// new!(me.author.ClassName(int(arg1), java.lang.String(arg2)))
@@ -220,7 +220,7 @@ pub fn call(input: TokenStream) -> TokenStream {
 /// 
 /// ### Exceptions
 /// 
-/// The constructor can be followed by **`throws`** with a Rust type that *implements [`FromException`]*.
+/// The constructor can be followed by **`throws`** with a Rust type that *implements [`FromException`](https://docs.rs/ez_jni/latest/ez_jni/trait.FromException.html)*.
 /// This will make the constructor call return a `Result<JObject, E>` instead,
 /// and the exception will be caught if it occurs.
 /// 
@@ -233,7 +233,7 @@ pub fn new(input: TokenStream) -> TokenStream {
     call::jni_call_constructor(call).into()
 }
 
-/// Access a Java Field.
+/// Access or Set the value of a Java Field.
 /// 
 /// This macro will try to access the *Java field* directly.
 /// If the field coudln't be accessed (because it doesn't exist, it's private, etc.),
@@ -242,7 +242,7 @@ pub fn new(input: TokenStream) -> TokenStream {
 /// 
 /// # Syntax
 /// 
-/// ```ignore
+/// ```text
 /// call!(static me.author.ClassName.fieldName: String)
 ///    Callee -->\_________________/            \____/
 ///    Field type ---------------------------------^
@@ -252,9 +252,9 @@ pub fn new(input: TokenStream) -> TokenStream {
 /// or ommit it if the field is of an *Object*.
 /// 
 /// The **callee** could be *Class Path* or *Object*,
-/// following the same syntax as in [`call!`](https://docs.rs/ez_jni/latest/ez_jni/macro.call.html#types).
+/// following the same syntax as in [`call!`](call!#types).
 /// 
-/// The **type** follows the same syntax as in [`call!`](https://docs.rs/ez_jni/latest/ez_jni/macro.call.html#types).
+/// The **type** follows the same syntax as in [`call!`](call!#types).
 #[proc_macro]
 pub fn field(input: TokenStream) -> TokenStream {
     let call = syn::parse_macro_input!(input as FieldCall);
@@ -262,7 +262,7 @@ pub fn field(input: TokenStream) -> TokenStream {
 }
 
 /// Get the **class Object** for some Class.
-/// The returned object has type [`java.lang.Class`][https://docs.oracle.com/javase/8/docs/api/java/lang/Class.html]
+/// The returned object has type [`java.lang.Class`](https://docs.oracle.com/javase/8/docs/api/java/lang/Class.html)
 /// and is wrapped with [`JClass`][jni::objects::JClass].
 /// 
 /// Takes the *fully-qualified* **Class** as input.
@@ -271,7 +271,7 @@ pub fn field(input: TokenStream) -> TokenStream {
 /// let class: JClass = class!(me.author.Class);
 /// ```
 /// 
-/// This is essentially just a shortcut to [`JNIEnv::find_class()`][jni::JNIEnv::find_class].
+/// This is essentially just a shortcut to [`JNIEnv::find_class()`][jni::JNIEnv::find_class()].
 #[proc_macro]
 pub fn class(input: TokenStream) -> TokenStream {
     let class = syn::parse_macro_input!(input as Class);
@@ -325,14 +325,14 @@ pub fn from_exception(input: TokenStream) -> TokenStream {
     }.into()
 }
 
-/// Print output. See [`std::println!`](https://doc.rust-lang.org/std/macro.println.html).
+/// Print output. See [`std::println!`].
 /// 
 /// In Android, printing to `STDOUT` does not work because apparently it redirects to `/dev/null`.
 /// This macro will instead crate a String and send it to `android.util.Log`.
 /// 
 /// Requires the [`env`][jni::JNIEnv] argument be present in the calling function.
 /// 
-/// Use this macro instead of [`std::println!`](https://doc.rust-lang.org/std/macro.println.html) everywhere.
+/// Use this macro instead of [`std::println!`] everywhere.
 /// 
 /// See also [`eprintln!`].
 #[proc_macro]
@@ -353,14 +353,14 @@ pub fn println(input: TokenStream) -> TokenStream {
     } }.into()
 }
 
-/// Print error. See [`std::eprintln!`](https://doc.rust-lang.org/std/macro.eprintln.html).
+/// Print error. See [`std::eprintln!`].
 /// 
 /// In Android, printing to `STDERR` does not work because apparently it redirects to `/dev/null`.
 /// This macro will instead crate a String and send it to `android.util.Log`.
 /// 
 /// Requires the [`env`][jni::JNIEnv] argument be present in the calling function.
 /// 
-/// Use this macro instead of [`std::eprintln!`](https://doc.rust-lang.org/std/macro.eprintln.html) everywhere.
+/// Use this macro instead of [`std::eprintln!`] everywhere.
 /// 
 /// See also [`println!`].
 #[proc_macro]

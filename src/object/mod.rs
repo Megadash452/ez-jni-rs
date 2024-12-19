@@ -37,7 +37,7 @@ pub enum FromObjectError {
 ///   - **`name`**: Use a different name for the Object's field lookup instead of the field's name.
 ///     Mutually exclusive with `call`.
 ///   - **`call`**: Instead of accessing a field, Call a *getter method* with this name.
-///   - **`class`**: If the struct field's type is [`JObject`][jni::objects::JObject] require that it be of this class.
+///   - **`class`**: If the struct field's type is [`JObject`] require that it be of this class.
 ///     This property is required for *non-primitives*.
 /// 
 /// ```

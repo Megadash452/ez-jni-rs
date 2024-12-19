@@ -150,7 +150,7 @@ pub fn call_getter<'local>(
         })
 }
 
-/// A wrapper for a [`Class`] value that will be used in a **JNI Call**.
+/// A wrapper for a `Class` value that will be used in a **JNI Call**.
 pub enum ClassRepr<'a, 'local> {
     /// The class is represented by a **ClassPath** in [`String`][str] form.
     /// An actual *Class Object* will be looked up in the *JNI Call*.
