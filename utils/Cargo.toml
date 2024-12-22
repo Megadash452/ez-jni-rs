@@ -1,6 +1,10 @@
 [package]
-name = "utils"
+name = "ez_jni_general_utils"
+description = "General utility functions and data that are common for the ez_jni crate, its macros, and its tests"
+repository = "https://github.com/Megadash452/ez-jni-rs"
 edition = "2021"
+version = "0.1.0"
+license-file = "../LICENSE"
 
 [lib]
 name = "utils"
