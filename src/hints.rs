@@ -3,6 +3,7 @@ use jni::{
     objects::{JObject, JClass},
     JNIEnv
 };
+use itertools::Itertools as _;
 use crate::call;
 #[allow(unused)]
 use crate::{println, eprintln};
@@ -28,6 +29,20 @@ pub fn check_field_existence(class: JClass<'_>, field_name: &'static str, field_
     /// No Generic types included.
     /// E.g. `int` -> `I`, `java.lang.String[]` -> `[Ljava.lang.String;`
     fn get_jni_type(mut type_name: &str) -> String {
+        fn component_ty(type_name: &str) -> String {
+            match type_name {
+                "byte"    => "B".to_string(),
+                "boolean" => "Z".to_string(),
+                "char"    => "C".to_string(),
+                "short"   => "S".to_string(),
+                "int"     => "I".to_string(),
+                "long"    => "J".to_string(),
+                "float"   => "F".to_string(),
+                "double"  => "D".to_string(),
+                _ => format!("L{};", type_name.replace('.', "/")),
+            }
+        }
+
         // Check if is Array
         let mut array_dimensions = 0;
         while let Some(ty) = type_name.strip_suffix("[]") {
@@ -35,20 +50,10 @@ pub fn check_field_existence(class: JClass<'_>, field_name: &'static str, field_
             type_name = ty;
         }
         if array_dimensions > 0 {
-            return format!("{brackets}{type_name}", brackets = "[".repeat(array_dimensions));
+            return format!("{brackets}{ty}", ty = component_ty(type_name), brackets = "[".repeat(array_dimensions));
         }
 
-        match type_name {
-            "Byte"    => "B",
-            "Boolean" => "Z",
-            "Char"    => "C",
-            "Short"   => "S",
-            "Int"     => "I",
-            "Long"    => "J",
-            "Float"   => "F",
-            "Double"  => "D",
-            _ => type_name
-        }.to_string()
+        component_ty(type_name)
     }
 
     let mut same_name_type_fields = Vec::new();
@@ -79,14 +84,16 @@ pub fn check_field_existence(class: JClass<'_>, field_name: &'static str, field_
 
         for method in methods {
             let name = call!(method.getName() -> String);
+            // TODO: use all lowercase
             let similar_name = name.ends_with(&utils::first_char_uppercase(field_name)) || name.ends_with(field_name);
             // The method is considered to have the "same type" as the field if it has only one argument with the same type OR the return type is the same type.
             let same_type = {
                 let params = call!(method.getParameterTypes() -> [java.lang.Class]);
                 let return_type = call!(method.getReturnType() -> java.lang.Class);
+                let return_type = get_jni_type(&call!(return_type.getTypeName() -> String));
 
-                (params.len() == 1 && get_jni_type(&call!(params[0].getTypeName() -> String)) == field_ty)
-                || get_jni_type(&call!(return_type.getTypeName() -> String)) == field_ty
+                (params.len() == 1 && return_type == "V" && get_jni_type(&call!(params[0].getTypeName() -> String)) == field_ty)
+                || (params.len() == 0 && return_type == field_ty)
             };// one argumetn void return, or no arguments one return
 
             if similar_name && same_type {
@@ -149,14 +156,22 @@ pub fn check_field_existence(class: JClass<'_>, field_name: &'static str, field_
         }
     }
     fn print_methods(methods: &[JObject<'_>], env: &mut JNIEnv<'_>) {
+        #![allow(unstable_name_collisions)]
         for method in methods {
             let class = call!(method.getDeclaringClass() -> java.lang.Class);
             let class = call!(class.getTypeName() -> String);
             let name = call!(method.getName() -> String);
-            let params = todo!();
+            let params = call!(method.getParameterTypes() -> [java.lang.Class])
+                .iter()
+                .map(|ty| call!(ty.getTypeName() -> String))
+                .intersperse(", ".to_string())
+                .collect::<String>();
             let return_ty = call!(method.getReturnType() -> java.lang.Class);
             let return_ty = call!(return_ty.getTypeName() -> String);
-            let mods = call!(method.getModifiers() -> String);
+            let mods = access_modifiers(call!(method.getModifiers() -> int), env);
+            let mods = mods.iter()
+                .map(|m| format!("{m} "))
+                .collect::<String>();
             println!("\t{mods}{class}.{name}({params}): {return_ty}");
         }
     }
@@ -166,7 +181,7 @@ pub fn check_field_existence(class: JClass<'_>, field_name: &'static str, field_
         let mods = access_modifiers(call!(same_name_type_fields[0].getModifiers() -> int), env);
         print!("Found field \"{field_name}\" with type {field_ty}");
         if mods.len() > 0 {
-            print!(": The field is {}", natural_display(&mods));
+            print!(": The Field is {}", natural_display(&mods));
         }
         println!(".");
         if same_name_type_fields.len() > 1 {
@@ -177,9 +192,9 @@ pub fn check_field_existence(class: JClass<'_>, field_name: &'static str, field_
         let ty = call!(same_name_fields[0].getType() -> java.lang.Class);
         let ty = get_jni_type(&call!(ty.getTypeName() -> String));
         let mods = access_modifiers(call!(same_name_fields[0].getModifiers() -> int), env);
-        print!("Field \"{field_name}\" does not have type {field_ty}; the field has type {ty}");
+        print!("Field \"{field_name}\" does not have type {field_ty}: the Field has type {ty}");
         if mods.len() > 0 {
-            print!("and is {}", natural_display(&mods));
+            print!(" and is {}", natural_display(&mods));
         }
         println!(".");
         if same_name_fields.len() > 1 {
@@ -187,15 +202,49 @@ pub fn check_field_existence(class: JClass<'_>, field_name: &'static str, field_
             print_fields(&same_name_fields[1..], env);
         }
     } else if !similar_name_type_methods.is_empty() {
-        print!("Found methods with similar name:");
-        todo!()
+        println!("Field not found, but found methods that might provide access to the field:");
+        print_methods(&similar_name_type_methods, env);
     } else if !similar_name_methods.is_empty() {
         println!("Found methods with similar name, but don't have the same type:");
-        todo!()
+        print_methods(&similar_name_methods, env);
     } else if !same_type_fields.is_empty() || !same_type_methods.is_empty() {
         println!("Did not find any fields or methods with this name. These fields and methods have the same type:");
-        todo!()
+        print_fields(&same_type_fields, env);
+        print_methods(&same_type_methods, env);
     } else {
-        println!("DId not find any other Fields or Methods that are similar to \"{field_name}: {field_ty}\"");
+        println!("Did not find any other Fields or Methods that are similar to \"{field_name}: {field_ty}\"");
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use jni::JavaVM;
+    use crate::println;
+    use super::*;
+
+    #[test]
+    fn test_check_field_existence() {
+        let jvm = JavaVM::new(jni::InitArgsBuilder::new()
+            .build()
+            .unwrap()
+        )
+            .unwrap_or_else(|err| panic!("Error starting JavaVM: {err}"));
+        let mut env = jvm.attach_current_thread_permanently()
+            .unwrap_or_else(|err| panic!("Error attaching current thread to JavaVM: {err}"));
+
+        println!("--- Same Name and same Type Fields");
+        check_field_existence(env.find_class("java/lang/Integer").unwrap(), "SIZE", "I", &mut env).unwrap();
+        println!("--- Same Name but different Type Fields");
+        check_field_existence(env.find_class("java/lang/Integer").unwrap(), "SIZE", "J", &mut env).unwrap();
+        println!("--- Similar Name and same Type Methods");
+        check_field_existence(env.find_class("java/lang/Integer").unwrap(), "intValue", "I", &mut env).unwrap();
+        check_field_existence(env.find_class("java/lang/Integer").unwrap(), "string", "Ljava/lang/String;", &mut env).unwrap();
+        println!("--- Similar Name but different Type Methods");
+        check_field_existence(env.find_class("java/lang/Integer").unwrap(), "intValue", "J", &mut env).unwrap();
+        println!("--- Fields and Methods with the same Type");
+        check_field_existence(env.find_class("java/lang/Integer").unwrap(), "myOwnField", "I", &mut env).unwrap();
+        println!("--- No matches");
+        check_field_existence(env.find_class("java/lang/Integer").unwrap(), "myOwnField", "Lme.my.Class;", &mut env).unwrap();
+        panic!("---");
+    }
 }
