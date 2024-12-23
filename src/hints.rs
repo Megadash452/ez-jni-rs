@@ -3,10 +3,13 @@ use jni::{
     objects::{JObject, JClass},
     JNIEnv
 };
+use std::fmt::Display;
 use itertools::Itertools as _;
 use crate::call;
 #[allow(unused)]
 use crate::{println, eprintln};
+
+// TODO: implement hint for method calls
 
 /// Check why getting a Field or getter/setter Method failed.
 /// 
@@ -17,8 +20,6 @@ use crate::{println, eprintln};
 /// so it only exists in DEBUG builds.
 #[cfg(debug_assertions)]
 pub fn check_field_existence(class: JClass<'_>, field_name: &'static str, field_ty: &'static str, env: &mut JNIEnv<'_>) -> JNIResult<()> {
-    use std::fmt::Display;
-
     // Find all the classes that this Class is a descendant of (including itself)
     let mut classes = vec![class];
     while let Some(class) = env.get_superclass(classes.last().unwrap())? {
@@ -70,8 +71,7 @@ pub fn check_field_existence(class: JClass<'_>, field_name: &'static str, field_
 
         for field in fields {
             let name = call!(field.getName() -> String);
-            let ty = call!(field.getType() -> java.lang.Class);
-            let ty = get_jni_type(&call!(ty.getTypeName() -> String));
+            let ty = get_jni_type(&call!(call!(field.getType() -> java.lang.Class).getTypeName() -> String));
 
             if name == field_name && ty == field_ty {
                 same_name_type_fields.push(field);
@@ -89,8 +89,7 @@ pub fn check_field_existence(class: JClass<'_>, field_name: &'static str, field_
             // The method is considered to have the "same type" as the field if it has only one argument with the same type OR the return type is the same type.
             let same_type = {
                 let params = call!(method.getParameterTypes() -> [java.lang.Class]);
-                let return_type = call!(method.getReturnType() -> java.lang.Class);
-                let return_type = get_jni_type(&call!(return_type.getTypeName() -> String));
+                let return_type = get_jni_type(&call!(call!(method.getReturnType() -> java.lang.Class).getTypeName() -> String));
 
                 (params.len() == 1 && return_type == "V" && get_jni_type(&call!(params[0].getTypeName() -> String)) == field_ty)
                 || (params.len() == 0 && return_type == field_ty)
@@ -143,13 +142,11 @@ pub fn check_field_existence(class: JClass<'_>, field_name: &'static str, field_
 
     fn print_fields(fields: &[JObject<'_>], env: &mut JNIEnv<'_>) {
         for field in fields {
-            let class = call!(field.getDeclaringClass() -> java.lang.Class);
-            let class = call!(class.getTypeName() -> String);
+            let class = call!(call!(field.getDeclaringClass() -> java.lang.Class).getTypeName() -> String);
             let name = call!(field.getName() -> String);
-            let ty = call!(field.getType() -> java.lang.Class);
-            let ty = call!(ty.getTypeName() -> String);
-            let mods = access_modifiers(call!(field.getModifiers() -> int), env);
-            let mods = mods.iter()
+            let ty = call!(call!(field.getType() -> java.lang.Class).getTypeName() -> String);
+            let mods = access_modifiers(call!(field.getModifiers() -> int), env)
+                .iter()
                 .map(|m| format!("{m} "))
                 .collect::<String>();
             println!("\t{mods}{class}.{name}: {ty}");
@@ -158,18 +155,16 @@ pub fn check_field_existence(class: JClass<'_>, field_name: &'static str, field_
     fn print_methods(methods: &[JObject<'_>], env: &mut JNIEnv<'_>) {
         #![allow(unstable_name_collisions)]
         for method in methods {
-            let class = call!(method.getDeclaringClass() -> java.lang.Class);
-            let class = call!(class.getTypeName() -> String);
+            let class = call!(call!(method.getDeclaringClass() -> java.lang.Class).getTypeName() -> String);
             let name = call!(method.getName() -> String);
             let params = call!(method.getParameterTypes() -> [java.lang.Class])
                 .iter()
                 .map(|ty| call!(ty.getTypeName() -> String))
                 .intersperse(", ".to_string())
                 .collect::<String>();
-            let return_ty = call!(method.getReturnType() -> java.lang.Class);
-            let return_ty = call!(return_ty.getTypeName() -> String);
-            let mods = access_modifiers(call!(method.getModifiers() -> int), env);
-            let mods = mods.iter()
+            let return_ty = call!(call!(method.getReturnType() -> java.lang.Class).getTypeName() -> String);
+            let mods = access_modifiers(call!(method.getModifiers() -> int), env)
+                .iter()
                 .map(|m| format!("{m} "))
                 .collect::<String>();
             println!("\t{mods}{class}.{name}({params}): {return_ty}");
@@ -189,8 +184,7 @@ pub fn check_field_existence(class: JClass<'_>, field_name: &'static str, field_
             print_fields(&same_name_type_fields[1..], env);
         }
     } else if !same_name_fields.is_empty() {
-        let ty = call!(same_name_fields[0].getType() -> java.lang.Class);
-        let ty = get_jni_type(&call!(ty.getTypeName() -> String));
+        let ty = get_jni_type(&call!(call!(same_name_fields[0].getType() -> java.lang.Class).getTypeName() -> String));
         let mods = access_modifiers(call!(same_name_fields[0].getModifiers() -> int), env);
         print!("Field \"{field_name}\" does not have type {field_ty}: the Field has type {ty}");
         if mods.len() > 0 {

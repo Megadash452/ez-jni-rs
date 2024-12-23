@@ -31,7 +31,8 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
     };
     call.return_type.convert_java_to_rust(quote! { {
         #param_vars
-        env.#jni_method(#callee, #name, #signature, #arguments)
+        let __callee = #callee;
+        env.#jni_method(__callee, #name, #signature, #arguments)
     } })
 }
 
@@ -60,10 +61,9 @@ pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
     quote! { {
         use ::std::borrow::BorrowMut as _;
         use ::std::borrow::Borrow as _;
+        #param_vars
         #[allow(noop_method_call)]
         let __callee = #callee;
-        #param_vars
-        // TODO: call method as function instead... wait, that wont work either AHHHH :(
         env.new_object(__callee, #signature, #arguments)
             #error_handler
     } }
