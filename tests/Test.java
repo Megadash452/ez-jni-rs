@@ -25,6 +25,7 @@ public final class Test {
 
     public static int member1 = 3;
     public static String member2 = "Hello, World!";
+    public static String[] memberWeird = new String[] {"Hello", "World"};
     private static char _member3 = 'a';
     public static char getMember3() { return _member3; }
     public static void setMember3(char val) { _member3 = val; }

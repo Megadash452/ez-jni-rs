@@ -1,5 +1,5 @@
 use jni::{
-    errors::Error as JNIError, objects::{JClass, JObject, JObjectArray, JPrimitiveArray, JString, JValue, JValueOwned}, sys::jsize, JNIEnv
+    errors::{Error as JNIError, Result as JNIResult}, objects::{JClass, JObject, JObjectArray, JPrimitiveArray, JString, JValue, JValueOwned}, sys::jsize, JNIEnv
 };
 use crate::{call, object::FromObjectError, FromException, __throw::{panic_exception, try_catch}};
 use utils::{first_char_uppercase, java_path_to_dot_notation};
@@ -64,6 +64,7 @@ pub fn new_string<'local>(s: &str, env: &mut JNIEnv<'local>) -> JObject<'local> 
         .into()
 }
 
+// TODO: delete this function
 /// Read a **field** from a Java Object, given the **name** of the field and its **ty**pe.
 /// 
 /// If the field does not exists and **getter_fallback** is `true`,
@@ -115,6 +116,7 @@ pub fn get_field<'local>(
             err => panic!("Error occurred while accessing field: {err}")
         })
 }
+// TODO: delete this function
 /// This is used by the derive macros of [`FromObject`][crate::FromObject] and [`FromObject`][crate::FromException].
 /// This might be removed in the future in favor of [`get_obj_field()`].
 #[doc(hidden)]
@@ -151,6 +153,7 @@ pub fn call_getter<'local>(
 }
 
 /// A wrapper for a `Class` value that will be used in a **JNI Call**.
+#[derive(Clone, Copy)]
 pub enum ClassRepr<'a, 'local> {
     /// The class is represented by a **ClassPath** in [`String`][str] form.
     /// An actual *Class Object* will be looked up in the *JNI Call*.
@@ -159,77 +162,177 @@ pub enum ClassRepr<'a, 'local> {
     /// and can be operated on with JNI.
     Object(&'a JClass<'local>),
 }
+impl<'a, 'local> ClassRepr<'a, 'local> {
+    pub fn get_class(self, env: &mut JNIEnv<'local>) -> JNIResult<JClass<'local>> {
+        match self {
+            Self::String(class) => env.find_class(class),
+            Self::Object(class) => env.new_local_ref(class)
+                .map(|obj| JClass::from(obj)),
+        }
+    }
+}
 
-/// Access a **field** of a *Java Object*, given the **name** of the field and its type **signature**.
+/// Generates the **name** and **signature** of the *Getter Method* that is called if a Field was not found.
+fn getter_name_and_sig(field_name: &'static str, ty: &'static str) -> (String, String) { (
+    format!("get{}", first_char_uppercase(field_name)),
+    format!("(){ty}")
+) }
+/// Generates the **name** and **signature** of the *Setter Method* that is called if a Field was not found.
+fn setter_name_and_sig(field_name: &'static str, ty: &'static str) -> (String, String) { (
+    format!("set{}", first_char_uppercase(field_name)),
+    format!("({ty})V")
+) }
+
+/// Access a **field** of a *Java Object*, given the **name** of the field and its **type**.
 /// 
 /// If the field does not exists this will call a *getter method* with `get` prepended to the field's name.
 /// E.g. if the field `java.lang.String message` did not exist,
 /// then `java.lang.String getMessage()` will be called.
 /// 
 /// This function already handles any errors returned by the *JNI Call*.
-pub fn get_obj_field<'local>(object: &JObject<'_>, name: &'static str, sig: &'static str, env: &mut JNIEnv<'local>) -> JValueOwned<'local> {
-    get_field_impl(GetFieldCallee::Object(object), name, sig, env)
+pub fn get_obj_field<'local>(object: &JObject<'_>, name: &'static str, ty: &'static str, env: &mut JNIEnv<'local>) -> JValueOwned<'local> {
+    field_helper(name, ty,
+        |env| env.get_field(object, name, ty),
+        |env| {
+            let (name, sig) = getter_name_and_sig(name, ty);
+            env.call_method(object, name, sig, &[])
+        },
+        |env| env.get_object_class(object),
+    env)
 }
 /// Like [`get_obj_field()`], but gets the value of a `static` field of a **Class**.
-pub fn get_static_field<'local>(class: ClassRepr<'_, '_>, name: &'static str, sig: &'static str, env: &mut JNIEnv<'local>) -> JValueOwned<'local> {
-    let callee = match class {
-        ClassRepr::String(class) => GetFieldCallee::Class(class),
-        ClassRepr::Object(class) => GetFieldCallee::ClassObject(class),
-    };
-    get_field_impl(callee, name, sig, env)
+pub fn get_static_field<'local>(class: ClassRepr<'_, 'local>, name: &'static str, ty: &'static str, env: &mut JNIEnv<'local>) -> JValueOwned<'local> {
+    field_helper(name, ty,
+        |env| match class {
+            ClassRepr::String(class) => env.get_static_field(class, name, ty),
+            ClassRepr::Object(class) => env.get_static_field(class, name, ty),
+        },
+        |env| {
+            let (name, sig) = getter_name_and_sig(name, ty);
+            match class {
+                ClassRepr::String(class) => env.call_static_method(class, name, sig, &[]),
+                ClassRepr::Object(class) => env.call_static_method(class, name, sig, &[]),
+            }
+        },
+        |env| class.get_class(env),
+    env)
 }
 
-pub fn set_obj_field(object: &JObject<'_>, name: &'static str, sig: &'static str, val: JValue<'_, '_>, env: &mut JNIEnv<'_>) {
-    set_field_impl(GetFieldCallee::Object(object), name, sig, val, env);
+/// Sets the value of a **field** of a *Java Object*, given the **name** of the field and its **type**.
+/// 
+/// If the field does not exists this will call a *setter method* with `set` prepended to the field's name.
+/// E.g. if the field `java.lang.String message` did not exist,
+/// then `java.lang.String setMessage(val)` will be called.
+/// 
+/// This function already handles any errors returned by the *JNI Call*.
+pub fn set_obj_field(object: &JObject<'_>, name: &'static str, ty: &'static str, val: JValue<'_, '_>, env: &mut JNIEnv<'_>) {
+    field_helper(name, ty,
+        |env| {
+            env.set_field(object, name, ty, val)?;
+            Ok(JValueOwned::Void)
+        },
+        |env| {
+            let (name, sig) = setter_name_and_sig(name, ty);
+            env.call_method(object, name, sig, &[val])
+        },
+        |env| env.get_object_class(object),
+    env)
+        .v()
+        .unwrap_or_else(|err| crate::__throw::handle_jni_call_error(err, env))
 }
 /// Like [`set_obj_field()`], but sets the value of a `static` field of a **Class**.
-pub fn set_static_field<'local>(class: ClassRepr<'_, '_>, name: &'static str, sig: &'static str, val: JValue<'_, '_>, env: &mut JNIEnv<'local>) {
-    let callee = match class {
-        ClassRepr::String(class) => GetFieldCallee::Class(class),
-        ClassRepr::Object(class) => GetFieldCallee::ClassObject(class),
-    };
-    set_field_impl(callee, name, sig, val, env)
+pub fn set_static_field<'local>(class: ClassRepr<'_, 'local>, name: &'static str, ty: &'static str, val: JValue<'_, '_>, env: &mut JNIEnv<'local>) {
+    field_helper(name, ty,
+        |env| {
+            match class {
+                ClassRepr::String(class) => {
+                    // Lookup the class object, which is necessary for both operation on the Field AND looking up the Field (apparently).
+                    let class = env.find_class(class)
+                        .unwrap_or_else(|err| crate::__throw::handle_jni_call_error(err, env));
+                    env.set_static_field(&class, (&class, name, ty), val)
+                },
+                ClassRepr::Object(class) => env.set_static_field(class, (class, name, ty), val),
+            }?;
+            Ok(JValueOwned::Void)
+        },
+        |env| {
+            let (name, sig) = setter_name_and_sig(name, ty);
+            match class {
+                ClassRepr::String(class) => env.call_static_method(class, name, sig, &[val]),
+                ClassRepr::Object(class) => env.call_static_method(class, name, sig, &[val]),
+            }
+        },
+        |env| class.get_class(env),
+    env)
+        .v()
+        .unwrap_or_else(|err| crate::__throw::handle_jni_call_error(err, env))
 }
 
-enum GetFieldCallee<'a, 'local> {
-    Class(&'static str),
-    ClassObject(&'a JClass<'local>),
-    Object(&'a JObject<'local>),
-}
+/// Performs a *Field operation* (i.e. accessing or setting value).
+/// If the *Field operation* fails,
+/// then this will do a *Method call* that would be equivalent to the *Field operation*.
+/// 
+/// If that also fails, The function will print some hints to the user about why a Field or Method was not found.
+/// However, this only happens when building in DEBUG mode because this involves *A LOT* of Java calls.
+fn field_helper<'local>(
+    name: &'static str,
+    ty: &'static str,
+    field_op: impl FnOnce(&mut JNIEnv<'local>) -> JNIResult<JValueOwned<'local>>,
+    method_op: impl FnOnce(&mut JNIEnv<'local>) -> JNIResult<JValueOwned<'local>>,
+    get_class: impl FnOnce(&mut JNIEnv<'local>) -> JNIResult<JClass<'local>>,
+    env: &mut JNIEnv<'local>
+) -> JValueOwned<'local> {
+    #[derive(FromException)]
+    #[class(java.lang.NoSuchFieldError)]
+    struct FieldNotFound;
 
-#[derive(FromException)]
-#[class(java.lang.NoSuchFieldError)]
-struct FieldNotFound;
+    #[derive(FromException)]
+    #[class(java.lang.NoSuchMethodError)]
+    struct MethodNotFound;
 
-fn get_field_impl<'local>(callee: GetFieldCallee<'_, '_>, name: &'static str, sig: &'static str, env: &mut JNIEnv<'local>) -> JValueOwned<'local> {
-    // If a Java field was not found, will try to call a Getter method.
-    let call_getter = |env: &mut JNIEnv<'local>| {
-        let name = format!("get{}", first_char_uppercase(name));
-        let sig = format!("(){sig}");
-
-        // Call Object/Static method depending on callee
-        match callee {
-            GetFieldCallee::Class(class) => env.call_static_method(class, name, sig, &[]),
-            GetFieldCallee::ClassObject(class) => env.call_static_method(class, name, sig, &[]),
-            GetFieldCallee::Object(object) => env.call_method(object, name, sig, &[]),
-        }
-        // TODO: perhaps check if a field with that name exists with Class.getFields()
+    // This closure is ran if the Field was not found in field_op.
+    // method_op will be called, and if a Method for this field was still not found,
+    // another function will be called to check why a Field or Method was not found (typo, private, etc.).
+    //
+    // This only happens in DEBUG builds.
+    #[cfg(debug_assertions)]
+    let call_method_op = |env: &mut JNIEnv<'local>| {
+        method_op(env)
+            .or_else(|err| match err {
+                JNIError::MethodNotFound { .. } => crate::hints::check_field_existence(get_class(env)?, name, ty, env)
+                    .map(|_| JValueOwned::Void),
+                JNIError::JavaException => {
+                    if let Some(MethodNotFound) = try_catch(env) {
+                        crate::hints::check_field_existence(get_class(env)?, name, ty, env)
+                            .map(|_| JValueOwned::Void)
+                    } else {
+                        // Other unexpected exception
+                        Err(JNIError::JavaException)
+                    }
+                },
+                err => Err(err)
+            })
     };
 
-    // Get Object/Static field depending on callee
-    let call_result = match callee {
-        GetFieldCallee::Class(class) => env.get_static_field(class, name, sig),
-        GetFieldCallee::ClassObject(class) => env.get_static_field(class, name, sig),
-        GetFieldCallee::Object(object) => env.get_field(object, name, sig),
-    };
-
-    call_result
+    field_op(env)
         .or_else(|err| match err {
-            JNIError::FieldNotFound { .. } => call_getter(env),
+            JNIError::FieldNotFound { .. } => { cfg_if::cfg_if! {
+                if #[cfg(debug_assertions)] {
+                    call_method_op(env)
+                } else {
+                    method_op()
+                }
+            } },
             JNIError::JavaException => {
                 if let Some(FieldNotFound) = try_catch(env) {
-                    // Try calling Getter if field not found
-                    call_getter(env)
+                    // Try calling Getter/Setter if Field was not found
+                    cfg_if::cfg_if! {
+                        if #[cfg(debug_assertions)] {
+                            call_method_op(env)
+                        } else {
+                            method_op()
+                        }
+                    }
                 } else {
                     // Other unexpected exception
                     Err(JNIError::JavaException)
@@ -238,49 +341,6 @@ fn get_field_impl<'local>(callee: GetFieldCallee<'_, '_>, name: &'static str, si
             err => Err(err)
         })
         .unwrap_or_else(|err| crate::__throw::handle_jni_call_error(err, env))
-}
-
-fn set_field_impl(callee: GetFieldCallee<'_, '_>, name: &'static str, sig: &'static str, val: JValue<'_, '_>, env: &mut JNIEnv<'_>) {
-    // If a Java field was not found, will try to call a Setter method.
-    let call_setter = |val: JValue, env: &mut JNIEnv| {
-        let name = format!("set{}", first_char_uppercase(name));
-        let sig = format!("({sig})V");
-
-        // Call Object/Static method depending on callee
-        match callee {
-            GetFieldCallee::Class(class) => env.call_static_method(class, name, sig, &[val]),
-            GetFieldCallee::ClassObject(class) => env.call_static_method(class, name, sig, &[val]),
-            GetFieldCallee::Object(object) => env.call_method(object, name, sig, &[val]),
-        }?.v()
-        // TODO: perhaps check if a field with that name exists with Class.getFields()
-    };
-
-    // Set Object/Static field depending on callee
-    let call_result = match callee {
-        GetFieldCallee::Class(class) => {
-            let class = env.find_class(class)
-                .unwrap_or_else(|err| crate::__throw::handle_jni_call_error(err, env));
-            env.set_static_field(&class, (&class, name, sig), val)
-        },
-        GetFieldCallee::ClassObject(class) => env.set_static_field(class, (class, name, sig), val),
-        GetFieldCallee::Object(object) => env.set_field(object, name, sig, val),
-    };
-
-    call_result
-        .or_else(|err| match err {
-            JNIError::FieldNotFound { .. } => call_setter(val, env),
-            JNIError::JavaException => {
-                if let Some(FieldNotFound) = try_catch(env) {
-                    // Try calling Getter if field not found
-                    call_setter(val, env)
-                } else {
-                    // Other unexpected exception
-                    Err(JNIError::JavaException)
-                }
-            },
-            err => Err(err)
-        })
-        .unwrap_or_else(|err| crate::__throw::handle_jni_call_error(err, env));
 }
 
 /// Create a Java **Array** from a Rust [slice](https://doc.rust-lang.org/std/primitive.slice.html),

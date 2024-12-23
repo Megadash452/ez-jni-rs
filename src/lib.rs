@@ -47,6 +47,7 @@ pub mod __throw;
 #[macro_use]
 pub mod utils;
 mod object;
+mod hints;
 extern crate self as ez_jni;
 
 pub use ez_jni_macros::*;

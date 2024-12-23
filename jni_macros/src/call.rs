@@ -63,6 +63,7 @@ pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
         #[allow(noop_method_call)]
         let __callee = #callee;
         #param_vars
+        // TODO: call method as function instead... wait, that wont work either AHHHH :(
         env.new_object(__callee, #signature, #arguments)
             #error_handler
     } }
@@ -80,8 +81,8 @@ pub fn field(call: FieldCall) -> TokenStream {
         CallType::Object(expr) => quote!(&(#expr)),
     };
     let name = call.field_name.to_string();
-    let signature = call.ty.sig_type();
-    let sig_char = call.ty.sig_char();
+    let ty = call.ty.sig_type();
+    let ty_char = call.ty.sig_char();
     let conversion = call.ty.convert_java_to_rust(&quote_spanned!(call.ty.span()=> v))
         .map(|conversion| quote! { .map(|v| #conversion) });
 
@@ -103,7 +104,7 @@ pub fn field(call: FieldCall) -> TokenStream {
             quote! { {
                 use ::std::borrow::BorrowMut as _;
                 #param_var
-                #jni_method(#callee, #name, #signature, #arg, env.borrow_mut())
+                #jni_method(#callee, #name, #ty, #arg, env.borrow_mut())
             } }
         },
         None => {
@@ -115,8 +116,8 @@ pub fn field(call: FieldCall) -> TokenStream {
 
             quote! { {
                 use ::std::borrow::BorrowMut as _;
-                #jni_method(#callee, #name, #signature, env.borrow_mut())
-                    .#sig_char()
+                #jni_method(#callee, #name, #ty, env.borrow_mut())
+                    .#ty_char()
                     #conversion // Might be empty tokens
                     .unwrap_or_else(|err| ::ez_jni::__throw::handle_jni_call_error(err, env.borrow_mut()))
             } }
