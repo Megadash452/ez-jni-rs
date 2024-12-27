@@ -1,11 +1,15 @@
 use jni::{
-    errors::{Error as JNIError, Result as JNIResult}, objects::{JClass, JObject, JObjectArray, JPrimitiveArray, JString, JValue, JValueOwned}, sys::jsize, JNIEnv
+    errors::{Error as JNIError, Result as JNIResult}, objects::{JClass, JObject, JObjectArray, JPrimitiveArray, JString, JThrowable, JValue, JValueOwned}, sys::jsize, JNIEnv
 };
 use crate::{call, object::FromObjectError, FromException, __throw::{panic_exception, try_catch}};
 use utils::{first_char_uppercase, java_path_to_dot_notation};
 
 #[doc(hidden)]
 pub use cfg_if;
+
+/// Error message for when a *JNI call* returns [`Exception`][JNIError::JavaException],
+/// but no Exception was found.
+pub(crate) static JNI_CALL_GHOST_EXCEPTION: &str = "JNI Call returned with Error::JavaException, but no exception was found.";
 
 #[cfg(target_os = "android")]
 pub use android::*;
@@ -64,7 +68,14 @@ pub fn new_string<'local>(s: &str, env: &mut JNIEnv<'local>) -> JObject<'local> 
         .into()
 }
 
-// TODO: delete this function
+#[derive(FromException)]
+#[class(java.lang.NoSuchFieldError)]
+struct FieldNotFound;
+
+#[derive(FromException)]
+#[class(java.lang.NoSuchMethodError)]
+struct MethodNotFound;
+
 /// Read a **field** from a Java Object, given the **name** of the field and its **ty**pe.
 /// 
 /// If the field does not exists and **getter_fallback** is `true`,
@@ -82,10 +93,6 @@ pub fn get_field<'local>(
     getter_fallback: bool,
     env: &mut JNIEnv<'local>,
 ) -> Result<JValueOwned<'local>, FromObjectError> {
-    #[derive(FromException)]
-    #[class(java.lang.NoSuchFieldError)]
-    struct FieldNotFound;
-
     let class = env.get_object_class(object)
         .unwrap_or_else(|err| panic!("Error gettig object's Class: {err}"));
     let class = call!(class.getName() -> String);
@@ -116,7 +123,6 @@ pub fn get_field<'local>(
             err => panic!("Error occurred while accessing field: {err}")
         })
 }
-// TODO: delete this function
 /// This is used by the derive macros of [`FromObject`][crate::FromObject] and [`FromObject`][crate::FromException].
 /// This might be removed in the future in favor of [`get_obj_field()`].
 #[doc(hidden)]
@@ -126,10 +132,6 @@ pub fn call_getter<'local>(
     ty: &str,
     env: &mut JNIEnv<'local>,
 ) -> Result<JValueOwned<'local>, FromObjectError> {
-    #[derive(FromException)]
-    #[class(java.lang.NoSuchMethodError)]
-    struct MethodNotFound;
-
     let class = env.get_object_class(object)
         .unwrap_or_else(|err| panic!("Error gettig object's Class: {err}"));
     let class = call!(class.getName() -> String);
@@ -162,14 +164,87 @@ pub enum ClassRepr<'a, 'local> {
     /// and can be operated on with JNI.
     Object(&'a JClass<'local>),
 }
-impl<'a, 'local> ClassRepr<'a, 'local> {
-    pub fn get_class(self, env: &mut JNIEnv<'local>) -> JNIResult<JClass<'local>> {
+impl ClassRepr<'_, '_> {
+    pub fn get_class<'local>(self, env: &mut JNIEnv<'local>) -> JNIResult<JClass<'local>> {
         match self {
             Self::String(class) => env.find_class(class),
             Self::Object(class) => env.new_local_ref(class)
                 .map(|obj| JClass::from(obj)),
         }
     }
+}
+
+/// Call a Java Object's method (`non-static`), given its **name**, **signature** and **arguments**.
+/// 
+/// The **signature** must be a [*method type signature*](https://docs.oracle.com/javase/8/docs/technotes/guides/jni/spec/types.html#type_signatures) as described in the JNI spec.
+/// The **signature** defines the type of the **arguments** and **return** values.
+/// 
+/// This functions returns the *value returned* by the method, or an [`Exception`][JThrowable] if the method *throws*.
+/// If an error other than an [`Exception`][JThrowable] occurs, the function will `panic!`.
+pub fn call_obj_method<'local>(object: &JObject<'_>, name: &'static str, sig: &'static str, args: &[JValue], env: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, JThrowable<'local>> {
+    call_method_helper(Callee::Object(object), name, sig, args, env)
+}
+/// Same as [`call_obj_method()`] but for `static` methods.
+pub fn call_static_method<'local>(class: ClassRepr<'_, '_>, name: &'static str, sig: &'static str, args: &[JValue], env: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, JThrowable<'local>> {
+    call_method_helper(match class {
+        ClassRepr::String(class) => Callee::ClassPath(class),
+        ClassRepr::Object(class) => Callee::Class(class),
+    }, name, sig, args, env)
+}
+
+enum Callee<'a, 'local> {
+    ClassPath(&'static str),
+    Class(&'a JClass<'local>),
+    Object(&'a JObject<'local>)
+}
+
+/// Call a Java mathod.
+/// 
+/// If an [`Exception`][JThrowable] is thrown, that exception will be returned.
+/// But if an error other than an [`Exception`][JThrowable] occurs, the function will `panic!`.
+fn call_method_helper<'local>(callee: Callee<'_, '_>, name: &'static str, sig: &'static str, args: &[JValue], env: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, JThrowable<'local>> {
+    let get_class = |env: &mut JNIEnv<'local>| match callee {
+        Callee::ClassPath(class) => env.find_class(class),
+        Callee::Class(class) => env.new_local_ref(class).map(|class| JClass::from(class)),
+        Callee::Object(object) => env.get_object_class(object),
+    }.unwrap_or_else(|err| crate::__throw::handle_jni_call_error(err, env));
+
+    let call = match callee {
+        Callee::ClassPath(class) => {
+            let class = env.find_class(class)
+                .unwrap_or_else(|err| crate::__throw::handle_jni_call_error(err, env));
+            env.call_static_method(class, name, sig, args)
+        }
+        Callee::Class(class) => env.call_static_method(class, name, sig, args),
+        Callee::Object(object) => env.call_method(object, name, sig, args),
+    };
+
+    call.map_err(|err| match err {
+        JNIError::MethodNotFound { .. } => {
+            cfg_if::cfg_if! {
+                if #[cfg(debug_assertions)] {
+                    crate::hints::check_method_existence(get_class(env), name, sig, env);
+                }
+            }
+            crate::__throw::handle_jni_call_error(err, env)
+        },
+        JNIError::JavaException => {
+            let exception = env.exception_occurred()
+                .expect(JNI_CALL_GHOST_EXCEPTION);
+
+            cfg_if::cfg_if! {
+                if #[cfg(debug_assertions)] {
+                    // If MethodNotFound, show a hint (only in DEBUG)
+                    if let Ok(MethodNotFound) = MethodNotFound::from_exception(&exception, env) {
+                        crate::hints::check_method_existence(get_class(env), name, sig, env);
+                    }
+                }
+            }
+
+            exception
+        },
+        err => crate::__throw::handle_jni_call_error(err, env)
+    })
 }
 
 /// Generates the **name** and **signature** of the *Getter Method* that is called if a Field was not found.
@@ -185,11 +260,13 @@ fn setter_name_and_sig(field_name: &'static str, ty: &'static str) -> (String, S
 
 /// Access a **field** of a *Java Object*, given the **name** of the field and its **type**.
 /// 
+/// The **type** must be a [*type signature*](https://docs.oracle.com/javase/8/docs/technotes/guides/jni/spec/types.html#type_signatures) as described in the JNI spec. 
+/// 
 /// If the field does not exists this will call a *getter method* with `get` prepended to the field's name.
 /// E.g. if the field `java.lang.String message` did not exist,
 /// then `java.lang.String getMessage()` will be called.
 /// 
-/// This function already handles any errors returned by the *JNI Call*.
+/// This function already handles any errors returned by the *JNI Call* with a `panic!`.
 pub fn get_obj_field<'local>(object: &JObject<'_>, name: &'static str, ty: &'static str, env: &mut JNIEnv<'local>) -> JValueOwned<'local> {
     field_helper(name, ty,
         |env| env.get_field(object, name, ty),
@@ -201,7 +278,7 @@ pub fn get_obj_field<'local>(object: &JObject<'_>, name: &'static str, ty: &'sta
     env)
 }
 /// Like [`get_obj_field()`], but gets the value of a `static` field of a **Class**.
-pub fn get_static_field<'local>(class: ClassRepr<'_, 'local>, name: &'static str, ty: &'static str, env: &mut JNIEnv<'local>) -> JValueOwned<'local> {
+pub fn get_static_field<'local>(class: ClassRepr<'_, '_>, name: &'static str, ty: &'static str, env: &mut JNIEnv<'local>) -> JValueOwned<'local> {
     field_helper(name, ty,
         |env| match class {
             ClassRepr::String(class) => env.get_static_field(class, name, ty),
@@ -220,11 +297,13 @@ pub fn get_static_field<'local>(class: ClassRepr<'_, 'local>, name: &'static str
 
 /// Sets the value of a **field** of a *Java Object*, given the **name** of the field and its **type**.
 /// 
+/// The **type** must be a [*type signature*](https://docs.oracle.com/javase/8/docs/technotes/guides/jni/spec/types.html#type_signatures) as described in the JNI spec. 
+/// 
 /// If the field does not exists this will call a *setter method* with `set` prepended to the field's name.
 /// E.g. if the field `java.lang.String message` did not exist,
 /// then `java.lang.String setMessage(val)` will be called.
 /// 
-/// This function already handles any errors returned by the *JNI Call*.
+/// This function already handles any errors returned by the *JNI Call* with a `panic!`.
 pub fn set_obj_field(object: &JObject<'_>, name: &'static str, ty: &'static str, val: JValue<'_, '_>, env: &mut JNIEnv<'_>) {
     field_helper(name, ty,
         |env| {
@@ -241,7 +320,7 @@ pub fn set_obj_field(object: &JObject<'_>, name: &'static str, ty: &'static str,
         .unwrap_or_else(|err| crate::__throw::handle_jni_call_error(err, env))
 }
 /// Like [`set_obj_field()`], but sets the value of a `static` field of a **Class**.
-pub fn set_static_field<'local>(class: ClassRepr<'_, 'local>, name: &'static str, ty: &'static str, val: JValue<'_, '_>, env: &mut JNIEnv<'local>) {
+pub fn set_static_field<'local>(class: ClassRepr<'_, '_>, name: &'static str, ty: &'static str, val: JValue<'_, '_>, env: &mut JNIEnv<'local>) {
     field_helper(name, ty,
         |env| {
             match class {
@@ -282,14 +361,6 @@ fn field_helper<'local>(
     get_class: impl FnOnce(&mut JNIEnv<'local>) -> JNIResult<JClass<'local>>,
     env: &mut JNIEnv<'local>
 ) -> JValueOwned<'local> {
-    #[derive(FromException)]
-    #[class(java.lang.NoSuchFieldError)]
-    struct FieldNotFound;
-
-    #[derive(FromException)]
-    #[class(java.lang.NoSuchMethodError)]
-    struct MethodNotFound;
-
     // This closure is ran if the Field was not found in field_op.
     // method_op will be called, and if a Method for this field was still not found,
     // another function will be called to check why a Field or Method was not found (typo, private, etc.).

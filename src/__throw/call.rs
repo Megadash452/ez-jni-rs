@@ -1,11 +1,7 @@
 //! These functions are used in [`call!`] and *similar macros*.
 use jni::errors::Error as JNIError;
 use super::*;
-use crate::FromException;
-
-/// Error message for when a *JNI call* returns [`Exception`][JNIError::JavaException],
-/// but no Exception was found.
-static JNI_CALL_GHOST_EXCEPTION: &str = "JNI Call returned with Error::JavaException, but no exception was found.";
+use crate::{FromException, utils::JNI_CALL_GHOST_EXCEPTION};
 
 /// Checks if there is a *pending Exception* that was thrown from a previous JNI call,
 /// and tries to convert it to an `E` and the Exception is caught and cleared.
@@ -60,11 +56,7 @@ pub fn handle_jni_call_error(error: JNIError, env: &mut JNIEnv) -> ! {
 }
 
 /// Handles the error returned by any [*JNI Call*](https://docs.rs/jni/0.21.1/jni/struct.JNIEnv.html#implementations)
-/// by converting the `Exception` to a *Rust Type*.
-/// 
-/// If the **error** was not [`Exception`][JNIError::JavaException],
-/// or if the **Exception** was could not be converted to th eexpceted type `E`,
-/// this function will `panic!` with a message, or the Exception itself.
+/// by [`converting`][convert_exception()] the `Exception` to a *Rust Type*.
 ///
 /// This function is used by [ez_jni_macros::call!].
 pub fn handle_exception_conversion<'local, E: FromException<'local>>(error: JNIError, env: &mut JNIEnv<'local>) -> E {
@@ -81,6 +73,20 @@ pub fn handle_exception_conversion<'local, E: FromException<'local>>(error: JNIE
         },
         error => panic!("{error}")
     }
+}
+
+/// Converts a Java [`Exception`][JThrowable] to a *Rust Type*.
+/// 
+/// If the expected type `E` could not be created from the [`Exception`][JThrowable],
+/// this function will `panic!` with the Exception Object.
+///
+/// This function is used by [ez_jni_macros::call!].
+pub fn convert_exception<'local, E: FromException<'local>>(exception: JThrowable<'_>, env: &mut JNIEnv<'local>) -> E {
+    E::from_exception(&exception, env)
+        .unwrap_or_else(|err| {
+            eprintln!("Attempted to catch an exception, but failed to convert it to a concrete type:\n{err}");
+            panic_exception(exception, env)
+        })
 }
 
 /// Checks if an `Exception` was thrown after calling a Java Method, and returns said `Exception`.

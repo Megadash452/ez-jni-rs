@@ -1,5 +1,4 @@
 use std::fmt::Debug;
-use either::Either;
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
 use syn::{
@@ -14,9 +13,13 @@ use crate::{
 /// Processes input for macro call [super::call!].
 pub fn jni_call(call: MethodCall) -> TokenStream {
     // The class or object that the method is being called on.
-    let callee = match call.call_type.callee() {
-        Either::Left(class) => class.to_jni_class_path().to_token_stream(),
-        Either::Right(expr) => quote!(&(#expr)),
+    let callee = match &call.call_type {
+        CallType::Static(ClassRepr::String(class)) => {
+            let class = class.to_jni_class_path();
+            quote!(::ez_jni::utils::ClassRepr::String(#class))
+        },
+        CallType::Static(ClassRepr::Object(expr)) => quote!(::ez_jni::utils::ClassRepr::Object((#expr).borrow())),
+        CallType::Object(expr) => quote!((#expr).borrow()),
     };
     let name = call.method_name.to_string();
     let signature = gen_signature(call.parameters.iter(), &call.return_type);
@@ -25,14 +28,15 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
 
     // Build the macro function call
     let jni_method = if call.call_type.is_static() {
-        quote!(call_static_method)
+        quote!(::ez_jni::utils::call_static_method)
     } else {
-        quote!(call_method)
+        quote!(::ez_jni::utils::call_obj_method)
     };
     call.return_type.convert_java_to_rust(quote! { {
+        use ::std::borrow::BorrowMut as _;
+        use ::std::borrow::Borrow as _;
         #param_vars
-        let __callee = #callee;
-        env.#jni_method(__callee, #name, #signature, #arguments)
+        #jni_method(#callee, #name, #signature, #arguments, env.borrow_mut())
     } })
 }
 
@@ -232,15 +236,6 @@ impl CallType {
         match self {
             Self::Static(_) => true,
             Self::Object(_) => false,
-        }
-    }
-
-    /// Returns the [`Class`] or **Object expression** that the *method* (static or not) is being called on.
-    pub fn callee(&self) -> Either<&Class, &Expr> {
-        match self {
-            Self::Static(ClassRepr::String(class)) => Either::Left(class),
-            Self::Static(ClassRepr::Object(obj))
-            | Self::Object(obj) => Either::Right(obj),
         }
     }
 
@@ -577,7 +572,10 @@ impl Return {
             Self::Assertive(_) => quote! { {
                 use ::std::borrow::BorrowMut as _;
                 #jni_call
-                    .unwrap_or_else(|err| ::ez_jni::__throw::handle_jni_call_error(err, env.borrow_mut()))
+                    .unwrap_or_else(|exception| {
+                        env.throw(exception).unwrap();
+                        ::ez_jni::__throw::handle_jni_call_error(::jni::errors::Error::JavaException, env.borrow_mut())
+                    })
                     .#sig_char()
                     #conversion // Might be empty tokens
                     .unwrap_or_else(|err| ::ez_jni::__throw::handle_jni_call_error(err, env.borrow_mut()))
@@ -586,7 +584,7 @@ impl Return {
             Self::Result { err_ty, ..} =>  quote! { {
                 use ::std::borrow::BorrowMut as _;
                 #jni_call
-                    .map_err(|err| ::ez_jni::__throw::handle_exception_conversion::<#err_ty>(err, env.borrow_mut()))
+                    .map_err(|exception| ::ez_jni::__throw::convert_exception::<#err_ty>(exception, env.borrow_mut()))
                     .map(|v| v.#sig_char().unwrap_or_else(|err| ::ez_jni::__throw::handle_jni_call_error(err, env.borrow_mut())))
                     #conversion // Might be empty tokens
             } },
