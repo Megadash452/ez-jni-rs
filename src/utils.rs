@@ -203,6 +203,7 @@ enum Callee<'a, 'local> {
 /// If an [`Exception`][JThrowable] is thrown, that exception will be returned.
 /// But if an error other than an [`Exception`][JThrowable] occurs, the function will `panic!`.
 fn call_method_helper<'local>(callee: Callee<'_, '_>, name: &'static str, sig: &'static str, args: &[JValue], env: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, JThrowable<'local>> {
+    #[cfg(debug_assertions)]
     let get_class = |env: &mut JNIEnv<'local>| match callee {
         Callee::ClassPath(class) => env.find_class(class),
         Callee::Class(class) => env.new_local_ref(class).map(|class| JClass::from(class)),
@@ -231,6 +232,7 @@ fn call_method_helper<'local>(callee: Callee<'_, '_>, name: &'static str, sig: &
         JNIError::JavaException => {
             let exception = env.exception_occurred()
                 .expect(JNI_CALL_GHOST_EXCEPTION);
+            env.exception_clear().unwrap();
 
             cfg_if::cfg_if! {
                 if #[cfg(debug_assertions)] {
@@ -361,6 +363,7 @@ fn field_helper<'local>(
     get_class: impl FnOnce(&mut JNIEnv<'local>) -> JNIResult<JClass<'local>>,
     env: &mut JNIEnv<'local>
 ) -> JValueOwned<'local> {
+    #![allow(unused_variables)]
     // This closure is ran if the Field was not found in field_op.
     // method_op will be called, and if a Method for this field was still not found,
     // another function will be called to check why a Field or Method was not found (typo, private, etc.).
@@ -391,7 +394,7 @@ fn field_helper<'local>(
                 if #[cfg(debug_assertions)] {
                     call_method_op(env)
                 } else {
-                    method_op()
+                    method_op(env)
                 }
             } },
             JNIError::JavaException => {
@@ -401,7 +404,7 @@ fn field_helper<'local>(
                         if #[cfg(debug_assertions)] {
                             call_method_op(env)
                         } else {
-                            method_op()
+                            method_op(env)
                         }
                     }
                 } else {
