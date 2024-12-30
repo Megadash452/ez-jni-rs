@@ -10,7 +10,10 @@ use itertools::Itertools as _;
 use crate::call;
 use crate::eprintln as println;
 
-// TODO: implement hint for method calls
+/// Check why method could not be called.
+/// 
+/// This function makes *A LOT* Java calls, so it can be quite slow,
+/// so it only exists in DEBUG builds.
 #[cfg(debug_assertions)]
 pub(crate) fn check_method_existence(class: JClass<'_>, method_name: &'static str, method_sig: &'static str, env: &mut JNIEnv<'_>) {
     // Find all the classes that this Class is a descendant of (including itself)
@@ -55,15 +58,15 @@ pub(crate) fn check_method_existence(class: JClass<'_>, method_name: &'static st
     }
 
     let mut buf = String::new();
-    let sig = display_sig(method_sig);
+    let method_str = display_method(method_name, method_sig);
 
     if !same_name_sig_methods.is_empty() {
         let method = &same_name_sig_methods[0];
         let class = call!(call!(method.getDeclaringClass() -> java.lang.Class).getTypeName() -> String);
         let mods = access_modifiers(call!(method.getModifiers() -> int), env);
-        write!(buf, "Found method {method_name}{sig} in {class}").unwrap();
+        write!(buf, "Found method {method_str} in {class}").unwrap();
         if mods.len() > 0 {
-            writeln!(buf, ": The Method is {}", display_natural_list(&mods)).unwrap();
+            write!(buf, ": The Method is {}", display_natural_list(&mods)).unwrap();
         }
         writeln!(buf, ".").unwrap();
         if same_name_sig_methods.len() > 1 {
@@ -74,7 +77,7 @@ pub(crate) fn check_method_existence(class: JClass<'_>, method_name: &'static st
         let method = &same_name_methods[0];
         let other_sig = display_sig(&get_sig(method, env));
         let mods = access_modifiers(call!(method.getModifiers() -> int), env);
-        write!(buf, "Incorrect signature for method \"{method_name}{sig}\": it has signature {other_sig}").unwrap();
+        write!(buf, "Incorrect signature for method \"{method_str}\": the correct signature is {other_sig}").unwrap();
         if mods.len() > 0 {
             write!(buf, " and is {}", display_natural_list(&mods)).unwrap();
         }
@@ -87,7 +90,7 @@ pub(crate) fn check_method_existence(class: JClass<'_>, method_name: &'static st
         writeln!(buf, "Did not find method with name \"{method_name}\". These methods have the same signature:").unwrap();
         write!(buf, "{}", display_methods(&same_name_methods, env)).unwrap();
     } else {
-        writeln!(buf, "Did not find any Methods that match \"{method_name}{sig}\"").unwrap();
+        writeln!(buf, "Did not find any Methods that match \"{method_str}\"").unwrap();
     }
 
     println!("{buf}");
@@ -208,37 +211,70 @@ pub(crate) fn check_field_existence(class: JClass<'_>, field_name: &'static str,
 /// No Generic types included.
 /// E.g. `int` -> `I`, `java.lang.String[]` -> `[Ljava.lang.String;`
 fn get_jni_type(mut type_name: &str) -> String {
-    fn component_ty(type_name: &str) -> String {
-        match type_name {
-            "byte"    => "B".to_string(),
-            "boolean" => "Z".to_string(),
-            "char"    => "C".to_string(),
-            "short"   => "S".to_string(),
-            "int"     => "I".to_string(),
-            "long"    => "J".to_string(),
-            "float"   => "F".to_string(),
-            "double"  => "D".to_string(),
-            _ => format!("L{};", type_name.replace('.', "/")),
-        }
-    }
-
     // Check if is Array
     let mut array_dimensions = 0;
     while let Some(ty) = type_name.strip_suffix("[]") {
         array_dimensions += 1;
         type_name = ty;
     }
-    if array_dimensions > 0 {
-        return format!("{brackets}{ty}", ty = component_ty(type_name), brackets = "[".repeat(array_dimensions));
-    }
 
-    component_ty(type_name)
+    let ty = match type_name {
+        "byte"    => "B".to_string(),
+        "boolean" => "Z".to_string(),
+        "char"    => "C".to_string(),
+        "short"   => "S".to_string(),
+        "int"     => "I".to_string(),
+        "long"    => "J".to_string(),
+        "float"   => "F".to_string(),
+        "double"  => "D".to_string(),
+        _ => format!("L{};", type_name.replace('.', "/")),
+    };
+
+    format!("{brackets}{ty}", brackets = "[".repeat(array_dimensions))
 }
 
 /// Converts a JNI *type signature* to a regular *Java Type name*.
 /// E.g. `I` -> `int`, `[Ljava.lang.String;` -> `java.lang.String[]`
-fn display_jni_type(jni_type: &str) -> String {
+/// 
+/// The type does not need to encompass the whole string.
+/// The inputted string will be moved to to the point after the parsed section.
+/// 
+/// `panic!s` if the input was malformed.
+fn display_jni_type(jni_type: &mut &str) -> String {
+    // Check if is Array
+    let mut array_dimensions = 0;
+    while let Some(ty) = jni_type.strip_prefix("[") {
+        array_dimensions += 1;
+        *jni_type = ty;
+    }
+
+    let (ty, next) = match jni_type.as_bytes()[0] {
+        b'L' => {
+            jni_type[1..].split_once(';')
+                .map(|(ty, next)| (ty.replace('/', "."), next))
+                .expect("Object types must be terminated with a semicolon (;)")
+        },
+        c => {
+            let next = &jni_type[1..];
+            let ty = match c {
+                b'V' => "void",
+                b'B' => "byte",
+                b'Z' => "boolean",
+                b'C' => "char",
+                b'S' => "short",
+                b'I' => "int",
+                b'J' => "long",
+                b'F' => "float",
+                b'D' => "double",
+                _ if c.is_ascii_lowercase() => panic!("JNI type signatures must have types in UPPERCASE, encountered '{c}'"),
+                _ => panic!("Unexpected character in JNI type signature: '{c}'")
+            };
+            (ty.to_string(), next)
+        },
+    };
+    *jni_type = next;
     
+    format!("{ty}{brackets}", brackets = "[]".repeat(array_dimensions))
 }
 
 // Display an array of items in natural language.
@@ -288,7 +324,7 @@ fn display_fields(fields: &[JObject<'_>], env: &mut JNIEnv<'_>) -> String {
             .map(|m| format!("{m} "))
             .collect::<String>();
 
-        write!(buf, "\t{mods}{class}.{name}: {ty}").unwrap();
+        write!(buf, "\t{mods}{ty} {class}.{name}").unwrap();
     }
 
     buf
@@ -311,7 +347,7 @@ fn display_methods(methods: &[JObject<'_>], env: &mut JNIEnv<'_>) -> String {
             .map(|m| format!("{m} "))
             .collect::<String>();
 
-        writeln!(buf, "\t{mods}{class}.{name}({params}): {return_ty}").unwrap();
+        writeln!(buf, "\t{mods}{return_ty} {class}.{name}({params})").unwrap();
     }
 
     buf
@@ -321,26 +357,47 @@ fn display_methods(methods: &[JObject<'_>], env: &mut JNIEnv<'_>) -> String {
 /// The input signature must have the format of a JNI [*method type signature*](https://docs.oracle.com/javase/8/docs/technotes/guides/jni/spec/types.html#type_signatures).
 /// E.g. `(II)V` -> `void (int, int)`.
 /// 
-/// Returns [`None`] if the input sig was malformed.
-fn display_sig(sig: &str) -> Option<String> {
-    let (params, return_ty) = sig.strip_prefix('(')?
-        .split_once(')')?;
+/// `panic!s` if the input sig was malformed.
+fn display_sig(sig: &str) -> String {
+    let (mut params, mut return_ty) = sig.strip_prefix('(')
+        .unwrap()
+        .split_once(')')
+        .unwrap();
+
+    let mut params_buf = String::new();
+    while !params.is_empty() {
+        params_buf.push_str(&display_jni_type(&mut params));
+    }
+    let return_ty = display_jni_type(&mut return_ty);
+
+    format!("{return_ty} ({params_buf})")
+}
+/// The same as [`display_sig()`] but includes **method name**.
+fn display_method(method_name: &str, sig: &str) -> String {
+    let sig = display_sig(sig);
+    let (return_ty, params) = sig.split_once(' ').unwrap();
+    format!("{return_ty} {method_name}{params}")
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::LazyLock;
     use jni::JavaVM;
     use crate::println;
     use super::*;
 
+    pub static JVM: LazyLock<JavaVM> = LazyLock::new(|| {
+        JavaVM::new(jni::InitArgsBuilder::new()
+            .build()
+            .unwrap()
+        )
+            .unwrap_or_else(|err| panic!("Error starting JavaVM: {err}"))
+    });
+
+    #[macro_export]
     macro_rules! setup_env {
-        ($env:ident) => {
-            let jvm = JavaVM::new(jni::InitArgsBuilder::new()
-                .build()
-                .unwrap()
-            )
-                .unwrap_or_else(|err| panic!("Error starting JavaVM: {err}"));
-            let mut $env = jvm.attach_current_thread_permanently()
+        ($var:ident) => {
+            let mut $var = JVM.attach_current_thread_permanently()
                 .unwrap_or_else(|err| panic!("Error attaching current thread to JavaVM: {err}"));
         };
     }
@@ -376,6 +433,24 @@ mod tests {
         check_method_existence(env.find_class("java/lang/Integer").unwrap(), "myOwnMethod", "(II)I", &mut env);
         println!("--- No matches");
         check_method_existence(env.find_class("java/lang/Integer").unwrap(), "myOwnMethod", "(Lme.my.Class;)V", &mut env);
-        panic!();
+    }
+
+    #[test]
+    fn test_display_jni_type() {
+        let mut ty = "BZCSIJFDLjava/lang/String;V";
+        let mut arrs = "[I[[Ljava/lang/String;";
+
+        assert_eq!(display_jni_type(&mut ty), "byte"); 
+        assert_eq!(display_jni_type(&mut ty), "boolean"); 
+        assert_eq!(display_jni_type(&mut ty), "char"); 
+        assert_eq!(display_jni_type(&mut ty), "short"); 
+        assert_eq!(display_jni_type(&mut ty), "int"); 
+        assert_eq!(display_jni_type(&mut ty), "long"); 
+        assert_eq!(display_jni_type(&mut ty), "float"); 
+        assert_eq!(display_jni_type(&mut ty), "double"); 
+        assert_eq!(display_jni_type(&mut ty), "java.lang.String"); 
+        assert_eq!(display_jni_type(&mut ty), "void"); 
+        assert_eq!(display_jni_type(&mut arrs), "int[]"); 
+        assert_eq!(display_jni_type(&mut arrs), "java.lang.String[][]"); 
     }
 }
