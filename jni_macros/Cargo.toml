@@ -1,6 +1,6 @@
 [package]
 name = "ez_jni_macros"
-version = "0.6.1"
+version = "0.6.2"
 edition = "2021"
 description = "Provides macros for the ez_jni crate"
 repository = "https://github.com/Megadash452/ez-jni-rs"

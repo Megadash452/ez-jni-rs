@@ -113,10 +113,17 @@ fn throw_panic(env: &mut JNIEnv, payload: Box<dyn Any + Send>) {
 
     env.exception_clear().unwrap();
 
-    // FIXME: Docs.rs fails to build crate because this macro involves outputting Java Class files to ./target, but Docs.rs runs it in a READONLY filesystem.
-    let panic_class = env.define_class("me/marti/ezjni/RustPanic", &JObject::null(), compile_java_class!("./src/", "me/marti/ezjni/RustPanic"))
-        .or_else(|_| env.find_class("me/marti/ezjni/RustPanic"))
-        .expect("Failed loading/finding RustPanic class");
+    // Do not try to build Java Class when building documentation for Docs.rs because it does not allow macros to write to the filesystem.
+    ::cfg_if::cfg_if! {
+        if #[cfg(not(docsrs))] {
+            let panic_class = env.find_class("me/marti/ezjni/RustPanic")
+                .or_else(|_| env.define_class("me/marti/ezjni/RustPanic", &JObject::null(), compile_java_class!("./src/", "me/marti/ezjni/RustPanic")))
+                .expect("Failed loading/finding RustPanic class");
+        } else {
+            let panic_class = jni::objects::JClass::from(JObject::null());
+        }
+    }
+        
 
     let exception = new!(panic_class(String(location.file), u32(location.line), u32(location.col), String(panic_msg)));
     // Inject Backtrace to Exception
