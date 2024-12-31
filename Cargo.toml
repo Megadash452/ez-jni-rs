@@ -1,6 +1,6 @@
 [package]
 name = "ez_jni"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2021"
 description = "Macros and functions that make using Java in rust feel natural"
 repository = "https://github.com/Megadash452/ez-jni-rs"
@@ -26,7 +26,7 @@ itertools = "0.13.0"
 cfg-if = "1.0.0"
 either = "1.13.0"
 jni = { version = "0.21", default-features = false }
-ez_jni_macros = { path = "./jni_macros", version = "0.6.0" }
+ez_jni_macros = { path = "./jni_macros", version = "0.6.1" }
 thiserror = "1.0.63"
 utils = { workspace = true }
 itertools = { workspace = true }
