@@ -1,6 +1,6 @@
 [package]
 name = "native_test"
-edition = "2021"
+edition = "2024"
 
 [lib]
 name = "native_test"

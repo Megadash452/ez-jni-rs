@@ -88,7 +88,8 @@ fn prepare_backtrace() -> Result<Box<[BacktraceElement]>, ParseBacktraceError> {
 
 
     // Filter backtrace frames because some are verbose
-    let filtered = IntoIterator::into_iter(parse_backtrace_frames(&backtrace_str)?)
+    let filtered = parse_backtrace_frames(&backtrace_str)?
+        .into_iter()
         .filter(|(symbol, _)| !{
             symbol.starts_with("ez_jni::__throw::")
             || symbol.contains("std::panicking::")
@@ -111,7 +112,7 @@ fn prepare_backtrace() -> Result<Box<[BacktraceElement]>, ParseBacktraceError> {
             "std::sys::pal::unix::thread::Thread::new::thread_start",
         ].contains(symbol));
 
-    let backtrace = Result::<Box<[_]>, _>::from_iter(filtered
+    let backtrace = filtered
         // Frames without file data should be ommited
         .filter_map(|(symbol, file_data)| Some((symbol, file_data?)))
         // Each frame has a symbol (module + function name) and file data (file path + line + column).
@@ -144,7 +145,7 @@ fn prepare_backtrace() -> Result<Box<[BacktraceElement]>, ParseBacktraceError> {
                 }
             }
         })})
-    )?;
+        .collect::<Result<Box<[_]>, _>>()?;
 
     if backtrace.is_empty() {
         return Err(ParseBacktraceError::Empty);
@@ -155,7 +156,7 @@ fn prepare_backtrace() -> Result<Box<[BacktraceElement]>, ParseBacktraceError> {
 /// This is separated for testing purposes
 fn parse_backtrace_frames<'a>(backtrace: &'a str) -> Result<Box<[(&'a str, Option<&'a str>)]>, ParseBacktraceError> {
     let mut lines = backtrace.lines()
-        .collect::<Vec<_>>()
+        .collect::<Box<[_]>>()
         .into_iter()
         .peekable();
     let mut frames = Vec::with_capacity(lines.len() / 2);

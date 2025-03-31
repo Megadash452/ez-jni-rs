@@ -22,12 +22,14 @@ mod android {
     #[doc(hidden)]
     /// Does the printing for [`jni_macros::println!`].
     pub fn __println(s: String, env: &mut JNIEnv) {
+        // TODO: use NDK instead
         call!(static android.util.Log.i(java.lang.String("Rust"), java.lang.String(s)) -> int);
     }
     
     #[doc(hidden)]
     /// Does the printing for [`jni_macros::eprintln!`].
     pub fn __eprintln(s: String, env: &mut JNIEnv) {
+        // TODO: use NDK instead
         call!(static android.util.Log.e(java.lang.String("Rust"), java.lang.String(s)) -> int);
     }
 
@@ -558,7 +560,8 @@ pub fn get_object_array_converted<'local, T>(
     elem_conversion: fn(JObject<'local>, &mut JNIEnv<'local>) -> T,
     env: &mut JNIEnv<'local>
 ) -> Result<Box<[T]>, FromObjectError> {
-    Ok(IntoIterator::into_iter(::ez_jni::utils::get_object_array(obj, array_class, env)?)
+    Ok(::ez_jni::utils::get_object_array(obj, array_class, env)?
+        .into_iter()
         .map(|t| elem_conversion(t, env))
         .collect::<Box<[_]>>()
     )

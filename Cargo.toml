@@ -1,7 +1,7 @@
 [package]
 name = "ez_jni"
 version = "0.6.3"
-edition = "2021"
+edition = "2024"
 description = "Macros and functions that make using Java in rust feel natural"
 repository = "https://github.com/Megadash452/ez-jni-rs"
 license = "MIT"

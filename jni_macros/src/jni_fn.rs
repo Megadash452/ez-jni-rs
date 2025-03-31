@@ -76,7 +76,7 @@ impl JniFn {
         tokens.append_all(&self.attrs);
         tokens.append_all(quote!(#[doc = ""]));
         tokens.append_all(quote!(#[doc = #method_sig]));
-        tokens.append_all(quote!(#[no_mangle]));
+        tokens.append_all(quote!(#[unsafe(no_mangle)]));
         self.pub_token.to_tokens(tokens);
         tokens.append_all(quote!(extern "system"));
         self.fn_token.to_tokens(tokens);

@@ -71,7 +71,7 @@ use utils::item_from_derive_input;
 /// ```
 /// # use jni::{JNIEnv, objects::{JClass, JString}};
 /// /// (Ljava/lang/String;)I
-/// #[no_mangle]
+/// #[unsafe(no_mangle)]
 /// pub extern "system" fn Java_me_author_MyClass_hello_1world<'local>(
 ///     mut env: JNIEnv<'local>, #[allow(unused_variables)] class: JClass<'local>,
 ///     s: JString<'local>,
@@ -82,6 +82,11 @@ use utils::item_from_derive_input;
 ///     })
 /// }
 /// ```
+/// > **Note on `unsafe(no_mangle)`**: Since Rust 2024 edition,
+/// > `no_mangle` (among others) requires being wrapped in `unsafe` to acknowledge that it may cause UB in some cases
+/// > (see [the rfc](https://rust-lang.github.io/rfcs/3325-unsafe-attributes.html)).
+/// > However, this is very unlikely to happen in the case of these functions because they have complicated names.
+/// > Also, ez_jni is not designed for linking Java to native Rust with multiple sources.
 #[proc_macro]
 pub fn jni_fn(input: TokenStream) -> TokenStream {
     match syn::parse::Parser::parse(jni_fn::jni_fn, input) {

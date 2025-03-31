@@ -324,7 +324,8 @@ impl SpecialCaseConversion for ArrayType {
 
             quote_spanned! {value.span()=> {
                 use ::std::borrow::BorrowMut as _;
-                IntoIterator::into_iter(::ez_jni::utils::get_java_prim_array(&(#value), ::jni::JNIEnv::#filler, env.borrow_mut()))
+                ::ez_jni::utils::get_java_prim_array(&(#value), ::jni::JNIEnv::#filler, env.borrow_mut())
+                    .into_iter()
                     .map(|v| #conversion)
                     .collect::<::std::boxed::Box<[_]>>()
             } }
