@@ -38,3 +38,4 @@ quote = { workspace = true }
 syn = { workspace = true }
 utils = { workspace = true }
 trybuild = "1.0.99"
+indoc = "2.0.6"

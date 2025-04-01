@@ -12,7 +12,7 @@ use crate::compile_java_class;
 /// DO NOT try to operate on the return value because you will have no indication wether **f** panicked and returned *zeroed*.
 /// 
 /// This function is used by [ez_jni_macros::jni_fn].
-pub fn catch_throw<'local, R>(
+pub fn catch_throw<'local, R: Sized>(
     env: &mut JNIEnv<'local>,
     f: impl FnOnce(&mut JNIEnv<'local>) -> R,
 ) -> R {
@@ -21,7 +21,7 @@ pub fn catch_throw<'local, R>(
     )
 }
 /// Same as [`catch_throw()`], but maps the returned `R` to a Java value `J`.
-pub fn catch_throw_map<'local, R, J>(
+pub fn catch_throw_map<'local, R, J: Sized>(
     env: &mut JNIEnv<'local>,
     f: impl FnOnce(&mut JNIEnv<'local>) -> R,
     // map function should not capture variables
@@ -36,7 +36,7 @@ pub fn catch_throw_map<'local, R, J>(
 /// 
 /// This function exists to avoid repeating code in [`catch_throw()`] and [`catch_throw_map()`].
 #[allow(unused_must_use)]
-fn catch_throw_main<'local, R>(env: &mut JNIEnv<'local>, catch: impl FnOnce(&mut JNIEnv<'local>) -> std::thread::Result<R>) -> R {
+fn catch_throw_main<'local, R: Sized>(env: &mut JNIEnv<'local>, catch: impl FnOnce(&mut JNIEnv<'local>) -> std::thread::Result<R>) -> R {
     // Set panic hook to grab [`PANIC_LOCATION`] data.
     std::panic::set_hook(Box::new(|info| {
         PANIC_LOCATION.set(Some(info.location().unwrap().into()));
