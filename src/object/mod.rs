@@ -108,7 +108,7 @@ where Self: Sized {
 }
 
 /// Does the required checks to ensure that a Java Object is valid.
-fn object_check_boilerplate(object: &JObject, path: &'static str, env: &mut JNIEnv) -> Result<(), FromObjectError> {
+pub fn object_check_boilerplate(object: &JObject, path: &'static str, env: &mut JNIEnv) -> Result<(), FromObjectError> {
     if object.is_null() {
         return Err(FromObjectError::Null)
     }
