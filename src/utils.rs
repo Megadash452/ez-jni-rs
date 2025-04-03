@@ -1,7 +1,7 @@
 use jni::{
     errors::{Error as JNIError, Result as JNIResult}, objects::{JClass, JObject, JObjectArray, JPrimitiveArray, JString, JThrowable, JValue, JValueOwned}, sys::jsize, JNIEnv
 };
-use crate::{call, object::FromObjectError, FromException, __throw::{panic_exception, try_catch}};
+use crate::{call, object::FromObjectError, FromException, __throw::{panic_exception, try_catch}, LOCAL_JNIENV_STACK};
 use utils::{first_char_uppercase, java_path_to_dot_notation};
 
 #[doc(hidden)]
@@ -68,6 +68,18 @@ pub fn new_string<'local>(s: &str, env: &mut JNIEnv<'local>) -> JObject<'local> 
     env.new_string(s)
         .unwrap_or_else(|err| panic!("Error creating Java String: {err}"))
         .into()
+}
+
+// TODO: doc
+// TODO: ensure the returned JNIEnv can't escape the function it was called from
+pub fn get_env<'a, 'local>() -> &'a mut JNIEnv<'local> {
+    LOCAL_JNIENV_STACK.with_borrow_mut(|stack| {
+        let env = stack.back_mut().expect("There are no JNIEnvs in the stack, meaning you are not in a JNI enviroment.");
+        /* Safety: the reference will remain valid as long as the current Java stack frame lives,
+          which is essentially until the root Rust function (that called this one) returns.
+          Thus, the return value cannot exit that root function. */
+        unsafe { std::mem::transmute::<&'_ mut JNIEnv<'static>, &'a mut JNIEnv<'local>>(env) }
+    })
 }
 
 #[derive(FromException)]

@@ -31,6 +31,14 @@ jni_fn! { me.test.Native =>
 
     pub fn native_test_void<'local>() { }
 
+    pub fn native_test_recursion<'local>(i: byte) {
+        if i == 7 {
+            return;
+        }
+        i += 1;
+        call!(me.test.Native.native_test_recursion(byte(i)) -> void);
+    }
+
     pub fn native_test_static<'local>(s: java.lang.String) -> int {
         let s: String = s;
         assert_eq!(s, "Hello, World!");

@@ -144,6 +144,7 @@ public final class Native {
     // public native u64[] native_test_ulong_array(u64[]);
 
     public native void native_test_void();
+    public native void native_test_recursion(byte);
     public static native int native_test_static(String t);
     public native String native_test_str(String t);
     public native Object native_test_obj(Object l);

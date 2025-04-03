@@ -50,7 +50,7 @@ mod object;
 mod hints;
 extern crate self as ez_jni;
 
-use std::{cell::RefCell, collections::VecDeque};
+use std::{cell::RefCell, collections::LinkedList};
 
 pub use ez_jni_macros::*;
 use jni::JNIEnv;
@@ -58,18 +58,28 @@ pub use object::*;
 
 thread_local! {
     /// Holds a stack of [`JNIEnv`] that was aquired from native function call (a.k.a jni_fn).
-    /// The [`JNIEnv`]s are unique to each thread, so we don't need to worry about mutable access.
+    /// The [`JNIEnv`]s are unique to each thread, so we don't need to worry about mutable access with race conditions.
     /// 
     /// Every time a jni_fn is called, the first instruction is to push the [`JNIEnv`] to this stack,
     /// and the last instruction is to pop the stack.
-    /// 
     /// This should be safe in theory, but in case there is any Undefined Behavior I didn't think of,
     /// the jni_fn checks that the pointer of the [`JNIEnv`] it is about to pop to make sure it is the same that it pushed.
     /// 
     /// ## Lifetime
     /// 
     /// The [`JNIEnv`]s stored here have *'static* lifetime, but this is a lie because the object will be dropped when the jni_fn that pushed it pops it.
-    /// As long as the a [`JNIEnv`] isnt't passed as an argument or put in a global var then this should be perfectly safe.
-    #[doc(hidden)]
-    pub static __LOCAL_JNIENV_STACK: RefCell<VecDeque<JNIEnv<'static>>> = const { RefCell::new(VecDeque::new()) };
+    /// 
+    /// ## Why Linked List?
+    /// 
+    /// If this stack were implemented using a [`Vec`] (or similar structs) the [`JNIEnv`] values would moved when the list allocates more space.
+    /// This would not happen using a Linked List; all the values will remain in the same memory until the value is removed.
+    /// 
+    /// This is necessary because the macros unsefely borrow the top [`JNIEnv`] in the stack,
+    /// assuming the value will remain valid until they release it.
+    /// However, if a [`JNIEnv`] is borrowed from the [`Vec`], and a Java function is called, and that function then calls a Rust function in the same thread,
+    /// the new [`JNIEnv`] will be pushed to the [`Vec`] and it may have to allocate and move the values, making the first borrow become **invalid**.
+    /// 
+    /// This *global variable* may only be directly used by [`__throw::jni_fn::catch_throw_main`].
+    /// Instead, use [`get_env()`][crate::utils::get_env()].
+    static LOCAL_JNIENV_STACK: RefCell<LinkedList<JNIEnv<'static>>> = const { RefCell::new(LinkedList::new()) };
 }

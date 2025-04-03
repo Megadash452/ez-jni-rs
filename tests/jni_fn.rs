@@ -41,7 +41,7 @@ fn throw_panic() {
     // FIXME: It seems that in Rust 2024, the ! (never) type can be used for inferred types, making the closure below have ! as the return type,
     // but in Rust 2021 it was () (unit) since it would never (pun intended) try to infer the ! type.
     // This use case is rare, but I guess it's no longer supported.
-    ez_jni::__throw::catch_throw::<()>(&mut env, |_| panic!("Release me!"));
+    ez_jni::__throw::run_with_jnienv::<()>(&mut env, |_| panic!("Release me!"));
     let exception = ez_jni::__throw::try_catch::<String>(&mut env).unwrap();
     assert_eq!(exception, "me.marti.ezjni.RustPanic: Release me!");
 }
