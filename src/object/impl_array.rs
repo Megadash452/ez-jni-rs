@@ -13,7 +13,7 @@ where T: FromObject<'local> {
 }
 
 fn create_object_array_from_t<'local, T>(slice: &[T], elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local>
-where T: ToObject<'local> {
+where T: ToObject {
     let obj_slice = slice.iter()
         .map(|t| t.to_object(env))
         .collect::<Box<_>>();
@@ -41,8 +41,8 @@ impl<'local> FromObject<'local> for Box<[JObject<'local>]> {
     }
 }
 /// Implementation for an Object slice paired with the element Class
-impl<'local> ToObject<'local> for (&str, [JObject<'_>]) {
-    fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+impl ToObject for (&str, [JObject<'_>]) {
+    fn to_object<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         create_object_array(
             &self.1.iter()
                 .collect::<Box<_>>(),
@@ -50,8 +50,8 @@ impl<'local> ToObject<'local> for (&str, [JObject<'_>]) {
         env)
     }
 }
-impl<'local> ToObject<'local> for (&str, [&JObject<'_>]) {
-    fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+impl ToObject for (&str, [&JObject<'_>]) {
+    fn to_object<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         create_object_array(&self.1, self.0, env)
     }
 }
@@ -63,13 +63,13 @@ impl FromObject<'_> for Box<[String]> {
         get_t_array_from_object(object, "[Ljava/lang/String;", env)
     }
 }
-impl<'local> ToObject<'local> for [String] {
-    fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+impl ToObject for [String] {
+    fn to_object<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         create_object_array_from_t(self, "java/lang/String", env)
     }
 }
-impl<'local> ToObject<'local> for [&str] {
-    fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+impl ToObject for [&str] {
+    fn to_object<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         create_object_array_from_t(self, "java/lang/String", env)
     }
 }
@@ -86,16 +86,16 @@ impl<'local> ToObject<'local> for [&str] {
 //             )
 //     }
 // }
-// impl<'local> ToObject<'local> for [Option<JObject<'_>>] {
-//     fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+// impl ToObject for [Option<JObject<'_>>] {
+//     fn to_object<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
 //         self.iter()
 //             .map(|opt| opt.as_ref())
 //             .collect::<Vec<_>>()
 //             .to_object(env)
 //     }
 // }
-// impl<'local> ToObject<'local> for [Option<&JObject<'_>>] {
-//     fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+// impl ToObject for [Option<&JObject<'_>>] {
+//     fn to_object<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
 //         create_object_array(
 //             &self.iter()
 //                 .map(|opt| opt.as_ref()
@@ -114,13 +114,13 @@ impl FromObject<'_> for Box<[Option<String>]> {
         get_t_array_from_object(object, "[Ljava/lang/String;", env)
     }
 }
-impl<'local> ToObject<'local> for [Option<String>] {
-    fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+impl ToObject for [Option<String>] {
+    fn to_object<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         create_object_array_from_t(self, "java/lang/String", env)
     }
 }
-impl<'local> ToObject<'local> for [Option<&str>] {
-    fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+impl ToObject for [Option<&str>] {
+    fn to_object<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         create_object_array_from_t(self, "java/lang/String", env)
     }
 }
@@ -132,8 +132,8 @@ impl FromObject<'_> for Box<[i8]> {
         Ok(get_java_prim_array(object, JNIEnv::get_byte_array_region, env))
     }
 }
-impl<'local> ToObject<'local> for [i8] {
-    fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+impl ToObject for [i8] {
+    fn to_object<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         create_java_prim_array(self,
             JNIEnv::new_byte_array,
             JNIEnv::set_byte_array_region,
@@ -146,8 +146,8 @@ impl FromObject<'_> for Box<[i16]> {
         Ok(get_java_prim_array(object, JNIEnv::get_short_array_region, env))
     }
 }
-impl<'local> ToObject<'local> for [i16] {
-    fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+impl ToObject for [i16] {
+    fn to_object<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         create_java_prim_array(self,
             JNIEnv::new_short_array,
             JNIEnv::set_short_array_region,
@@ -160,8 +160,8 @@ impl FromObject<'_> for Box<[i32]> {
         Ok(get_java_prim_array(object, JNIEnv::get_int_array_region, env))
     }
 }
-impl<'local> ToObject<'local> for [i32] {
-    fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+impl ToObject for [i32] {
+    fn to_object<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         create_java_prim_array(self,
             JNIEnv::new_int_array,
             JNIEnv::set_int_array_region,
@@ -174,8 +174,8 @@ impl FromObject<'_> for Box<[i64]> {
         Ok(get_java_prim_array(object, JNIEnv::get_long_array_region, env))
     }
 }
-impl<'local> ToObject<'local> for [i64] {
-    fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+impl ToObject for [i64] {
+    fn to_object<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         create_java_prim_array(self,
             JNIEnv::new_long_array,
             JNIEnv::set_long_array_region,
@@ -188,8 +188,8 @@ impl FromObject<'_> for Box<[f32]> {
         Ok(get_java_prim_array(object, JNIEnv::get_float_array_region, env))
     }
 }
-impl<'local> ToObject<'local> for [f32] {
-    fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+impl ToObject for [f32] {
+    fn to_object<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         create_java_prim_array(self,
             JNIEnv::new_float_array,
             JNIEnv::set_float_array_region,
@@ -202,8 +202,8 @@ impl FromObject<'_> for Box<[f64]> {
         Ok(get_java_prim_array(object, JNIEnv::get_double_array_region, env))
     }
 }
-impl<'local> ToObject<'local> for [f64] {
-    fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+impl ToObject for [f64] {
+    fn to_object<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         create_java_prim_array(self,
             JNIEnv::new_double_array,
             JNIEnv::set_double_array_region,
@@ -222,8 +222,8 @@ impl FromObject<'_> for Box<[u8]> {
         )
     }
 }
-impl<'local> ToObject<'local> for [u8] {
-    fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+impl ToObject for [u8] {
+    fn to_object<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         create_java_prim_array(
             self.iter()
                 .map(|&t| unsafe { std::mem::transmute(t) })
@@ -244,8 +244,8 @@ impl FromObject<'_> for Box<[u16]> {
         )
     }
 }
-impl<'local> ToObject<'local> for [u16] {
-    fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+impl ToObject for [u16] {
+    fn to_object<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         create_java_prim_array(
             self.iter()
                 .map(|&t| unsafe { std::mem::transmute(t) })
@@ -266,8 +266,8 @@ impl FromObject<'_> for Box<[u32]> {
         )
     }
 }
-impl<'local> ToObject<'local> for [u32] {
-    fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+impl ToObject for [u32] {
+    fn to_object<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         create_java_prim_array(
             self.iter()
                 .map(|&t| unsafe { std::mem::transmute(t) })
@@ -288,8 +288,8 @@ impl FromObject<'_> for Box<[u64]> {
         )
     }
 }
-impl<'local> ToObject<'local> for [u64] {
-    fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+impl ToObject for [u64] {
+    fn to_object<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         create_java_prim_array(
             self.iter()
                 .map(|&t| unsafe { std::mem::transmute(t) })
@@ -312,8 +312,8 @@ impl FromObject<'_> for Box<[bool]> {
         )
     }
 }
-impl<'local> ToObject<'local> for [bool] {
-    fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+impl ToObject for [bool] {
+    fn to_object<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         create_java_prim_array(
             self.iter()
                 .map(|&t| unsafe { std::mem::transmute(t) })
@@ -337,8 +337,8 @@ impl FromObject<'_> for Box<[char]> {
         )
     }
 }
-impl<'local> ToObject<'local> for [char] {
-    fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+impl ToObject for [char] {
+    fn to_object<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         create_java_prim_array(
             self.iter()
                 .map(|&t| t.encode_utf16(&mut [0;1])[0])

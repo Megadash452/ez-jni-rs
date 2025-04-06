@@ -68,10 +68,10 @@ where Self: Sized {
     fn from_object(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError>;
 }
 
-pub trait ToObject<'local> {
+pub trait ToObject {
     /// Create an instance of a Class by constructing an object from data in a *Rust struct*.
     /// Will [`panic!`] if any of the underlying JNI calls fail.
-    fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local>;
+    fn to_object<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local>;
 }
 
 

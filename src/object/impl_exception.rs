@@ -79,8 +79,8 @@ impl FromObject<'_> for std::io::Error {
         Ok(Self::other(format!("{class_str}: {msg}")))
     }
 }
-impl<'local> ToObject<'local> for std::io::Error {
-    fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+impl ToObject for std::io::Error {
+    fn to_object<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         static MAP: &[(io::ErrorKind, &str)] = &[
             (io::ErrorKind::NotFound, "java/io/FileNotFoundException"),
             (io::ErrorKind::NotFound, "java/nio/file/NoSuchFileException"),
@@ -126,8 +126,8 @@ impl FromObject<'_> for Box<dyn std::error::Error> {
         <Self as FromException>::from_exception(<&JThrowable>::from(object), env)
     }
 }
-impl<'local> ToObject<'local> for dyn std::error::Error {
-    fn to_object(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+impl ToObject for dyn std::error::Error {
+    fn to_object<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         new!(java.lang.Exception(String(self.to_string())))
     }
 }
