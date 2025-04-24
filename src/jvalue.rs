@@ -45,10 +45,9 @@ pub trait ToJValue {
     fn to_jvalue_env<'local>(&self, env: &mut JNIEnv<'local>) -> JValueOwned<'local>;
 }
 
+/// Error returned by [`FromJValue::from_jvalue()`].
 #[derive(Debug, Error)]
 pub enum FromJValueError {
-    #[error("Found 'void' type; can't use this type")]
-    Void,
     #[error("Expected java type '{expected}', found java type '{actual}'")]
     IncorrectType {
         actual: &'static str,
@@ -85,33 +84,42 @@ fn jvalue_to_str(val: JValue<'_, '_>) -> &'static str {
     }
 }
 
-/// Creates a [`FromJValueError`] from the [`JValue`] passed in.
-/// 
-/// This doesn't check whether the type of the value is incorrect, only builds the error.
-fn from_jvalue_err(val: JValue<'_, '_>, expected: &'static str) -> FromJValueError {
-    match val {
-        JValueGen::Void => FromJValueError::Void,
-        val => FromJValueError::IncorrectType {
-            actual: jvalue_to_str(val),
-            expected,
-        }
-    }
-}
-
 // ---- IMPLEMENTATIONS ----
 
 // -- Primitives
+
+impl FromJValue<'_, '_> for () {
+    fn from_jvalue_env(val: JValue<'_, '_>, _: &mut JNIEnv<'_>) -> Result<Self, FromJValueError> {
+        match val {
+            JValueGen::Void => Ok(()),
+            val => Err(FromJValueError::IncorrectType {
+                actual: jvalue_to_str(val),
+                expected: JTYPE_VOID,
+            })
+        }
+    }
+}
+impl ToJValue for () {
+    #[inline]
+    fn to_jvalue_env<'local>(&self, _: &mut JNIEnv<'local>) -> JValueOwned<'local> {
+        JValueGen::Void
+    }
+}
 
 impl FromJValue<'_, '_> for bool {
     fn from_jvalue_env(val: JValue<'_, '_>, env: &mut JNIEnv<'_>) -> Result<Self, FromJValueError> {
         match val {
             JValueGen::Bool(val) => Ok(val != 0),
             JValueGen::Object(object) => Ok(Self::from_object(object, env)?),
-            val => Err(from_jvalue_err(val, JTYPE_BOOL))
+            val => Err(FromJValueError::IncorrectType {
+                actual: jvalue_to_str(val),
+                expected: JTYPE_BOOL,
+            })
         }
     }
 }
 impl ToJValue for bool {
+    #[inline]
     fn to_jvalue_env<'local>(&self, _: &mut JNIEnv<'local>) -> JValueOwned<'local> {
         JValueGen::Bool(*self as jni::sys::jboolean)
     }
@@ -127,7 +135,10 @@ impl FromJValue<'_, '_> for char {
                     .unwrap_or(char::REPLACEMENT_CHARACTER)
             ),
             JValueGen::Object(object) => Ok(Self::from_object(object, env)?),
-            val => Err(from_jvalue_err(val, JTYPE_CHAR))
+            val => Err(FromJValueError::IncorrectType {
+                actual: jvalue_to_str(val),
+                expected: JTYPE_CHAR,
+            })
         }
     }
 }
@@ -146,11 +157,15 @@ macro_rules! map_primitive_impl {
                 match val {
                     ::jni::objects::JValueGen::$jvariant(val) => Ok(val as Self),
                     ::jni::objects::JValueGen::Object(object) => Ok(Self::from_object(object, env)?),
-                    val => Err(from_jvalue_err(val, $expected))
+                    val => Err(FromJValueError::IncorrectType {
+                        actual: jvalue_to_str(val),
+                        expected: $expected,
+                    })
                 }
             }
         }
         impl ToJValue for $ty {
+            #[inline]
             fn to_jvalue_env<'local>(&self, _: &mut JNIEnv<'local>) -> JValueOwned<'local> {
                 ::jni::objects::JValueGen::$jvariant(*self as ::jni::sys::$jty)
             }
@@ -186,7 +201,10 @@ macro_rules! map_to_object_impl {
             fn from_jvalue_env(val: ::jni::objects::JValue<'_, 'a>, env: &mut ::jni::JNIEnv<'local>) -> Result<Self, FromJValueError> {
                 match val {
                     ::jni::objects::JValueGen::Object(object) => Ok(Self::from_object(object, env)?),
-                    val => Err(from_jvalue_err(val, JTYPE_OBJECT))
+                    val => Err(FromJValueError::IncorrectType {
+                        actual: jvalue_to_str(val),
+                        expected: JTYPE_OBJECT,
+                    })
                 }
             }
         }
@@ -200,26 +218,19 @@ macro_rules! map_to_object_impl {
     };
 }
 
-impl<'a, 'local> FromJValue<'a, 'local> for JObject<'local>  {
-    fn from_jvalue_env(val: JValue<'_, 'a>, env: &mut JNIEnv<'local>) -> Result<Self, FromJValueError> {
-        match val {
-            JValueGen::Object(object) => Ok(Self::from_object(object, env)?),
-            val => Err(from_jvalue_err(val, JTYPE_OBJECT))
-        }
-    }
-}
-impl ToJValue for JObject<'_> {
-    fn to_jvalue_env<'local>(&self, env: &mut JNIEnv<'local>) -> JValueOwned<'local> {
-        JValueGen::Object(self.to_object(env))
-    }
-}
+// FIXME: Increases memory by allocating a new local frame, but that shouldn't be necessary
+map_to_object_impl!(FromJValue for JObject<'local>);
+map_to_object_impl!(ToJValue for JObject<'_>);
 
 impl<'a, 'local, T> FromJValue<'a, 'local> for Option<T>
 where T: FromObject<'local> {
     fn from_jvalue_env(val: JValue<'_, 'a>, env: &mut JNIEnv<'local>) -> Result<Self, FromJValueError> {
         match val {
             JValueGen::Object(object) => Ok(Self::from_object(object, env)?),
-            val => Err(from_jvalue_err(val, JTYPE_OBJECT))
+            val => Err(FromJValueError::IncorrectType {
+                actual: jvalue_to_str(val),
+                expected: JTYPE_OBJECT,
+            })
         }
     }
 }
@@ -241,25 +252,29 @@ where Box<[T]>: FromObject<'local> {
     fn from_jvalue_env<'a>(val: JValue<'_, 'a>, env: &mut JNIEnv<'local>) -> Result<Self, FromJValueError> {
         match val {
             JValueGen::Object(object) => Ok(Self::from_object(object, env)?),
-            val => Err(from_jvalue_err(val, JTYPE_OBJECT))
+            val => Err(FromJValueError::IncorrectType {
+                actual: jvalue_to_str(val),
+                expected: JTYPE_OBJECT,
+            })
         }
     }
 }
 
-// map_to_object_impl!(for Box<[JObject<'local>]>);
-map_to_object_impl!(for [String]);
-map_to_object_impl!(ToJValue for [&str]);
-map_to_object_impl!(for [Option<String>]);
-map_to_object_impl!(ToJValue for [Option<&str>]);
-map_to_object_impl!(for [bool]);
-map_to_object_impl!(for [char]);
-map_to_object_impl!(for [i8]);
-map_to_object_impl!(for [i16]);
-map_to_object_impl!(for [i32]);
-map_to_object_impl!(for [i64]);
-map_to_object_impl!(for [f32]);
-map_to_object_impl!(for [f64]);
-map_to_object_impl!(for [u8]);
-map_to_object_impl!(for [u16]);
-map_to_object_impl!(for [u32]);
-map_to_object_impl!(for [u64]);
+impl<'a, 'local, T> FromJValue<'a, 'local> for Box<[T]>
+where Box<[T]>: FromObject<'local> {
+    fn from_jvalue_env(val: ::jni::objects::JValue<'_, 'a>, env: &mut ::jni::JNIEnv<'local>) -> Result<Self, FromJValueError> {
+        match val {
+            ::jni::objects::JValueGen::Object(object) => Ok(Self::from_object(object, env)?),
+            val => Err(FromJValueError::IncorrectType {
+                actual: jvalue_to_str(val),
+                expected: JTYPE_OBJECT,
+            })
+        }
+    }
+}
+impl<T> ToJValue for [T]
+where [T]: ToObject {
+    fn to_jvalue_env<'local>(&self, env: &mut JNIEnv<'local>) -> JValueOwned<'local> {
+        ::jni::objects::JValueGen::Object(self.to_object(env))
+    }
+}

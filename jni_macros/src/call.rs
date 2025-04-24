@@ -1,12 +1,11 @@
 use std::fmt::Debug;
 use proc_macro2::{Span, TokenStream};
-use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
+use quote::{quote, quote_spanned, ToTokens};
 use syn::{
     parenthesized, parse::{discouraged::Speculative, Parse, ParseStream, Parser}, punctuated::Punctuated, Expr, Ident, LitStr, Token
 };
-use utils::first_char_uppercase;
 use crate::{
-    types::{ArrayType, Class, InnerType, JavaPrimitive, RustPrimitive, SigType, SpecialCaseConversion, Type, NULL_KEYWORD},
+    types::{ArrayType, Class, InnerType, SigType, SpecialCaseConversion, Type, NULL_KEYWORD},
     utils::{gen_signature, join_spans, Spanned, StepResult, TokenTreeExt as _}
 };
 
@@ -18,13 +17,40 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
             let class = class.to_jni_class_path();
             quote!(::ez_jni::utils::ClassRepr::String(#class))
         },
-        CallType::Static(ClassRepr::Object(expr)) => quote!(::ez_jni::utils::ClassRepr::Object((#expr).borrow())),
-        CallType::Object(expr) => quote!((#expr).borrow()),
+        CallType::Static(ClassRepr::Object(expr)) => quote!{ ::ez_jni::utils::ClassRepr::Object((#expr).borrow()) },
+        CallType::Object(expr) => quote!{ (#expr).borrow() },
     };
     let name = call.method_name.to_string();
     let signature = gen_signature(call.parameters.iter(), &call.return_type);
     let param_vars = gen_arg_vars_defs(call.parameters.iter());
     let arguments = gen_arguments(call.parameters.iter());
+
+    // Convert from the returned Java value to Rust value
+    let return_conversion = match &call.return_type {
+        // Normal conversion
+        Return::Assertive(ReturnableType::Type(ty))
+        | Return::Result { ty: ReturnableType::Type(ty), .. } => ty.convert_jvalue_to_rvalue(&quote_spanned! {ty.span()=> v }),
+        // Void conversion
+        Return::Assertive(ReturnableType::Void(ident))
+        | Return::Result { ty: ReturnableType::Void(ident), .. } => {
+            quote_spanned! {ident.span()=> <() as ::ez_jni::FromJValue>::from_jvalue_env(v.borrow(), env).unwrap()}
+        }
+    };
+
+    // Handle call result depending on whether it is expected to throw or not
+    let error_handler = match &call.return_type {
+        // For return types that are not Result
+        Return::Assertive(_) => quote! {
+            .unwrap_or_else(|exception| {
+                env.throw(exception).unwrap();
+                ::ez_jni::__throw::handle_jni_call_error(::jni::errors::Error::JavaException, env)
+            })
+        },
+        // Move the result of the method call to a Result if the caller expects that the method could throw.
+        Return::Result { err_ty, ..} =>  quote! {
+            .map_err(|exception| ::ez_jni::__throw::convert_exception::<#err_ty>(exception, env))
+        },
+    };
 
     // Build the macro function call
     let jni_method = if call.call_type.is_static() {
@@ -32,12 +58,14 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
     } else {
         quote!(::ez_jni::utils::call_obj_method)
     };
-    call.return_type.convert_java_to_rust(quote! { {
-        use ::std::borrow::BorrowMut as _;
-        use ::std::borrow::Borrow as _;
+    quote! { {
+        use ::std::borrow::Borrow;
+        let env = ::ez_jni::utils::get_env();
         #param_vars
-        #jni_method(#callee, #name, #signature, #arguments, env.borrow_mut())
-    } })
+        #jni_method(#callee, #name, #signature, #arguments, env)
+            .map(|v| #return_conversion)
+            #error_handler
+    } }
 }
 
 /// Processes input for macro call [super::new!].
@@ -45,7 +73,7 @@ pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
     // The Class/ClassObject that the constructor was called for
     let callee = match &call.class {
         ClassRepr::String(class) => class.to_jni_class_path().to_token_stream(),
-        ClassRepr::Object(expr) => quote_spanned!(expr.span()=> (#expr).borrow()),
+        ClassRepr::Object(expr) => quote_spanned!{expr.span()=> (#expr).borrow() },
     };
     let signature = gen_signature(call.parameters.iter(), &Return::new_void(Span::call_site()));
     let param_vars = gen_arg_vars_defs(call.parameters.iter());
@@ -54,21 +82,19 @@ pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
     let error_handler = match call.err_type {
         // Move the result of the method call to a Result if the caller expects that the method could throw.
         Some(err_ty) => quote! {
-            .map_err(|err| ::ez_jni::__throw::handle_exception_conversion::<#err_ty>(err, env.borrow_mut()))
+            .map_err(|err| ::ez_jni::__throw::handle_exception_conversion::<#err_ty>(err, env))
         },
         // For return types that are not Result
         None => quote! {
-            .unwrap_or_else(|err| ::ez_jni::__throw::handle_jni_call_error(err, env.borrow_mut()))
+            .unwrap_or_else(|err| ::ez_jni::__throw::handle_jni_call_error(err, env))
         },
     };
 
     quote! { {
-        use ::std::borrow::BorrowMut as _;
-        use ::std::borrow::Borrow as _;
+        use ::std::borrow::Borrow;
+        let env = ::ez_jni::utils::get_env();
         #param_vars
-        #[allow(noop_method_call)]
-        let __callee = #callee;
-        env.new_object(__callee, #signature, #arguments)
+        env.new_object(#callee, #signature, #arguments)
             #error_handler
     } }
 }
@@ -81,49 +107,37 @@ pub fn field(call: FieldCall) -> TokenStream {
             let class = class.to_jni_class_path();
             quote!(::ez_jni::utils::ClassRepr::String(#class))
         },
-        CallType::Static(ClassRepr::Object(class)) => quote!(::ez_jni::utils::ClassRepr::Object(&(#class))),
-        CallType::Object(expr) => quote!(&(#expr)),
+        CallType::Static(ClassRepr::Object(class)) => quote!{ ::ez_jni::utils::ClassRepr::Object((#class).borrow()) },
+        CallType::Object(expr) => quote!{ (#expr).borrow() },
     };
     let name = call.field_name.to_string();
-    let ty = call.ty.sig_type();
-    let ty_char = call.ty.sig_char();
-    let conversion = call.ty.convert_java_to_rust(&quote_spanned!(call.ty.span()=> v))
-        .map(|conversion| quote! { .map(|v| #conversion) });
+    let ty_sig = call.ty.sig_type();
+
+    let jni_method = if call.call_type.is_static() {
+        quote!(::ez_jni::utils::set_static_field)
+    } else {
+        quote!(::ez_jni::utils::set_obj_field)
+    };
 
     // Build the macro function call
     match call.set_val {
         Some(val) => {
-            let jni_method = if call.call_type.is_static() {
-                quote!(::ez_jni::utils::set_static_field)
-            } else {
-                quote!(::ez_jni::utils::set_obj_field)
-            };
-            let arg = jvalue_variant(&call.ty, quote_spanned!(val.span()=> __param_0));
-            // The value being set is given to the JNI call as an argument. It must also be stored in a local var.
-            let param_var = gen_arg_vars_defs(std::iter::once(&Parameter {
-                ty: call.ty,
-                value: ParamValue::Value(val.into_token_stream())
-            }));
-
+            // If the value is already a JObject, do not convert
+            let val = call.ty.convert_rust_to_java(&val.to_token_stream());
             quote! { {
-                use ::std::borrow::BorrowMut as _;
-                #param_var
-                #jni_method(#callee, #name, #ty, #arg, env.borrow_mut())
+                use ::std::borrow::Borrow;
+                let env = ::ez_jni::utils::get_env();
+                #jni_method(#callee, #name, #ty_sig, #val, env)
             } }
         },
         None => {
-            let jni_method = if call.call_type.is_static() {
-                quote!(::ez_jni::utils::get_static_field)
-            } else {
-                quote!(::ez_jni::utils::get_obj_field)
-            };
-
+            let conversion = call.ty.convert_java_to_rust(&quote_spanned! {call.ty.span()=> v });
             quote! { {
-                use ::std::borrow::BorrowMut as _;
-                #jni_method(#callee, #name, #ty, env.borrow_mut())
-                    .#ty_char()
-                    #conversion // Might be empty tokens
-                    .unwrap_or_else(|err| ::ez_jni::__throw::handle_jni_call_error(err, env.borrow_mut()))
+                use ::std::borrow::Borrow;
+                let env = ::ez_jni::utils::get_env();
+                #jni_method(#callee, #name, #ty_sig, env.borrow_mut())
+                    .map(|v| #conversion)
+                    .unwrap_or_else(|err| ::ez_jni::__throw::handle_jni_call_error(err, env))
             } }
         }
     }
@@ -133,9 +147,9 @@ pub fn field(call: FieldCall) -> TokenStream {
 pub fn get_class(class: Class) -> TokenStream {
     let class = class.to_jni_class_path();
     quote! { {
-        use ::std::borrow::BorrowMut as _;
+        let env = ::ez_jni::utils::get_env();
         env.find_class(#class)
-            .unwrap_or_else(|err| ::ez_jni::__throw::handle_jni_call_error(err, env.borrow_mut()))
+            .unwrap_or_else(|err| ::ez_jni::__throw::handle_jni_call_error(err, env))
     } }
 }
 
@@ -389,6 +403,11 @@ pub struct Parameter {
     ty: Type,
     value: ParamValue,
 }
+impl Spanned for Parameter {
+    fn span(&self) -> Span {
+        join_spans([self.ty.span(), self.value.span()])
+    }
+}
 impl SigType for Parameter {
     fn sig_char(&self) -> Ident {
         self.ty.sig_char()
@@ -451,19 +470,6 @@ impl Parse for Parameter {
         }
 
         Ok(Self { ty, value })
-    }
-}
-impl ToTokens for Parameter {
-    /// Returns the expression that will be put inside the `JValue::Variant(expr)` in the parameter list, a.k.a the *parameter's value*.
-    /// 
-    /// The parsed value is converted to a valid Rust expression (with [`SpecialCaseConversion::convert_rust_to_java`]),
-    /// which is then converted to a `JObject` or `jprimitive`.
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        tokens.append_all(match &self.value {
-            ParamValue::Null(null) => quote_spanned!(null.span()=> ::jni::objects::JObject::null()),
-            ParamValue::Value(value) => self.ty.convert_rust_to_java(&value)
-                .unwrap_or_else(|| value.clone())
-        })
     }
 }
 
@@ -538,57 +544,6 @@ impl Return {
     /// Create a new [`Return`] Type that is **Void**.
     pub fn new_void(span: Span) -> Self {
         Self::Assertive(ReturnableType::Void(Ident::new("void", span)))
-    }
-    /// Converts to value of the JNI Call to a *Rust value*.
-    /// 
-    /// Also checks if the Call resulted in an *exception*.
-    /// `panic!s` if there was an exception and the return type was not [`Result`].
-    /// Otherwise, wraps the value in a [`Result`].
-    /// 
-    /// See also [SpecialCaseConversion::convert_java_to_rust()] for API doc.
-    pub fn convert_java_to_rust(&self, jni_call: TokenStream) -> TokenStream {
-        // Apply special case conversion
-        let conversion = match self {
-            // Ignore bool conversion because JValue.z() returns Rust bool, not jboolean.
-            Self::Assertive(ReturnableType::Type(Type::Assertive(InnerType::RustPrimitive { ty: RustPrimitive::Bool, .. })))
-            | Self::Assertive(ReturnableType::Type(Type::Assertive(InnerType::JavaPrimitive { ty: JavaPrimitive::Boolean, .. })))
-            | Self::Result { ty: ReturnableType::Type(Type::Assertive(InnerType::RustPrimitive { ty: RustPrimitive::Bool, .. })), .. }
-            | Self::Result { ty: ReturnableType::Type(Type::Assertive(InnerType::JavaPrimitive { ty: JavaPrimitive::Boolean, .. })), .. }
-                => None,
-            // Void has no conversion
-            Self::Assertive(ReturnableType::Void(_))
-            | Self::Result { ty: ReturnableType::Void(_), .. } => None,
-            // Normal conversion
-            Self::Assertive(ReturnableType::Type(ty))
-            | Self::Result { ty: ReturnableType::Type(ty), .. } => ty.convert_java_to_rust(&quote_spanned!(ty.span()=> v))
-                .map(|conversion| quote! { .map(|v| #conversion) }),
-        };
-
-        let sig_char = self.sig_char();
-
-        // Handle call result depending on whether it is expected to throw or not
-        match self {
-            // For return types that are not Result
-            Self::Assertive(_) => quote! { {
-                use ::std::borrow::BorrowMut as _;
-                #jni_call
-                    .unwrap_or_else(|exception| {
-                        env.throw(exception).unwrap();
-                        ::ez_jni::__throw::handle_jni_call_error(::jni::errors::Error::JavaException, env.borrow_mut())
-                    })
-                    .#sig_char()
-                    #conversion // Might be empty tokens
-                    .unwrap_or_else(|err| ::ez_jni::__throw::handle_jni_call_error(err, env.borrow_mut()))
-            } },
-            // Move the result of the method call to a Result if the caller expects that the method could throw.
-            Self::Result { err_ty, ..} =>  quote! { {
-                use ::std::borrow::BorrowMut as _;
-                #jni_call
-                    .map_err(|exception| ::ez_jni::__throw::convert_exception::<#err_ty>(exception, env.borrow_mut()))
-                    .map(|v| v.#sig_char().unwrap_or_else(|err| ::ez_jni::__throw::handle_jni_call_error(err, env.borrow_mut())))
-                    #conversion // Might be empty tokens
-            } },
-        }
     }
 }
 impl SigType for Return {
@@ -697,7 +652,10 @@ fn gen_arg_vars_defs<'a>(params: impl Iterator<Item = &'a Parameter>) -> TokenSt
     params
         .enumerate()
         .map(|(i, param)| {
-            let value = param.to_token_stream();
+            let value = match &param.value {
+                ParamValue::Null(null) => quote_spanned!(null.span()=> ::jni::objects::JObject::null()),
+                ParamValue::Value(value) => param.ty.convert_rvalue_to_jvalue(value),
+            };
             let var_name = Ident::new(&format!("__param_{i}"), value.span());
             // Parameters of type object must always be passed by reference.
             if param.ty.is_primitive() {
@@ -714,36 +672,8 @@ fn gen_arguments<'a>(params: impl Iterator<Item = &'a Parameter>) -> TokenStream
     let params = params
         .enumerate()
         .map(|(i, param)| {
-            jvalue_variant(&param.ty, Ident::new(&format!("__param_{i}"), param.span()).into_token_stream())
+            let var = Ident::new(&format!("__param_{i}"), param.span());
+            quote_spanned! {param.span()=> ::jni::objects::JValueGen::borrow(&(#var)) }
         });
     quote! { &[ #( #params ),* ] }
-}
-
-/// Conver the parameter to a `Jvalue` enum variant that will be used in the JNI call parameter list.
-/// The variant will have one of the parameter variables as the inner value.
-pub fn jvalue_variant(ty: &Type, val: TokenStream) -> TokenStream {
-    fn primitive_variant(ty: JavaPrimitive, span: Span) -> TokenStream {
-        Ident::new(
-            &if ty == JavaPrimitive::Boolean {
-                "Bool".to_string()
-            } else {
-                first_char_uppercase(&ty.to_string())
-            },
-        span)
-            .to_token_stream()
-    }
-    
-    let (ty_span, ty_variant) = match ty {
-        Type::Assertive(ty) => match ty {
-            InnerType::JavaPrimitive { ident, ty } => (ident.span(), primitive_variant(*ty, ident.span())),
-            InnerType::RustPrimitive { ident, ty } => (ident.span(), primitive_variant(JavaPrimitive::from(*ty), ident.span())),
-            InnerType::Object(class) => (class.span(), quote!(Object)),
-        },
-        Type::Array(array) => (array.span(), quote!(Object)),
-        Type::Option { .. } => panic!("Unreachable code; Already checked that Option is not used in arguments")
-    };
-    let mut tt = quote! {};
-    tt.append_all(quote_spanned! {ty_span=> ::jni::objects::JValue::#ty_variant });
-    tt.append_all(quote_spanned! {val.span()=> (#val) });
-    tt
 }

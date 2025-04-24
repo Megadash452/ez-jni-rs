@@ -1,7 +1,7 @@
 //! These functions are used in [`call!`] and *similar macros*.
 use jni::errors::Error as JNIError;
 use super::*;
-use crate::{FromException, utils::JNI_CALL_GHOST_EXCEPTION};
+use crate::{utils::JNI_CALL_GHOST_EXCEPTION, FromException};
 
 /// Checks if there is a *pending Exception* that was thrown from a previous JNI call,
 /// and tries to convert it to an `E` and the Exception is caught and cleared.

@@ -6,7 +6,7 @@ use syn::{parse::{Parse, ParseStream, Parser}, punctuated::Punctuated, AngleBrac
 use itertools::Itertools as _;
 use std::{cell::RefCell, collections::{HashMap, HashSet}};
 use crate::{
-    types::{Class, SigType, SpecialCaseConversion, InnerType},
+    types::{Class, SigType, InnerType},
     utils::{merge_errors, take_class_attribute, take_class_attribute_required, Spanned}
 };
 
@@ -388,8 +388,9 @@ fn struct_constructor(fields: &Fields) -> syn::Result<TokenStream> {
                         } }
                     }
                 };
-                ty.convert_java_to_rust(&value)
-                    .unwrap_or(value)
+                // ty.convert_java_to_rust(&value)
+                    // .unwrap_or(value)
+                todo!("Handle converion in FromObject fn struct_constructor()")
             };
             let get_field = |name: String, getter_fallback: bool| {
                 let sig_ty = ty.sig_type();

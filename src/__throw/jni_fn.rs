@@ -3,7 +3,6 @@ use std::{any::Any, panic::UnwindSafe};
 use jni::objects::{GlobalRef, JObject};
 use crate::{compile_java_class, LOCAL_JNIENV_STACK};
 
-/// TODO: modify doc
 /// Runs a Rust function and returns its value, catching any `panics!` and throwing them as *Java Exceptions*.
 /// Specifically, this will throw a `me.marti.ezjni.RustPanic` exception.
 /// This funciton also sets up the [`JNIEnv`] to be used for the duration of the current *Java stack frame*.
@@ -34,8 +33,7 @@ pub fn run_with_jnienv_map<'local, R: UnwindSafe, J: Sized>(
             .and_then(|r| std::panic::catch_unwind(|| map(r)))
     )
 }
-/// TODO: modify doc
-/// Handles the setting up the *panic hook* and throwing the *panic payload*.
+/// Handles setting up the *panic hook* and throwing the *panic payload*.
 /// 
 /// This function exists to avoid repeating code in [`catch_throw()`] and [`catch_throw_map()`].
 /// 
@@ -60,7 +58,7 @@ fn run_with_jnienv_main<'local, R: Sized>(mut env: JNIEnv<'local>, f: impl FnOnc
     // Set panic hook to grab [`PANIC_LOCATION`] data.
     std::panic::set_hook(Box::new(|info| {
         PANIC_LOCATION.set(Some(info.location().unwrap().into()));
-        // Get full Backtrace`] as a String and store it to process it in `throw_panic()`.
+        // Get full Backtrace as a String and store it to process it in `throw_panic()`.
         PANIC_BACKTRACE.set(Some(Backtrace::force_capture()));
     }));
     PANIC_HOOK_SET.set(true);

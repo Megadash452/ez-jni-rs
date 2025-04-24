@@ -3,6 +3,9 @@ use super::*;
 
 impl<'local> FromObject<'local> for JObject<'local> {
     fn from_object(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+        if object.is_null() {
+            return Err(FromObjectError::Null);
+        }
         Ok(env.new_local_ref(object).unwrap())
     }
 }
