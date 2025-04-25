@@ -9,8 +9,7 @@ use either::Either;
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::{quote, ToTokens};
-use syn::{parse::Parser, Token, LitByteStr, LitStr};
-use types::Class;
+use syn::{parse::Parser, LitByteStr, LitStr, Token};
 use std::io;
 use utils::item_from_derive_input;
 
@@ -131,6 +130,15 @@ pub fn jni_fn(input: TokenStream) -> TokenStream {
 /// call!(static class.methodName() -> void);
 /// ```
 /// 
+/// ## Explicit `JNIEnv`
+/// 
+/// The macro implicitly gets the [`JNIEnv`][jni::JNIEnv] from a thread-local stack.
+/// If a different value is preffered, it can be specified at the beginning:
+/// ```ignore
+/// call!(env=> ...)
+/// ```
+/// where `env` can be any expression that resolves to a [`&mut JNIEnv`][jni::JNIEnv].
+/// 
 /// ## Types
 /// 
 /// The function call has *argument* and *return* **types**.
@@ -223,6 +231,8 @@ pub fn call(input: TokenStream) -> TokenStream {
 /// new!(me.author.ClassName(int(arg1), java.lang.String(arg2)))
 /// ```
 /// 
+/// Can also take a custom [`JNIEnv`][jni::JNIEnv], like in [`call!`](call!#explicit-jnienv).
+/// 
 /// ### Exceptions
 /// 
 /// The constructor can be followed by **`throws`** with a Rust type that *implements [`FromException`](https://docs.rs/ez_jni/latest/ez_jni/trait.FromException.html)*.
@@ -248,18 +258,20 @@ pub fn new(input: TokenStream) -> TokenStream {
 /// # Syntax
 /// 
 /// ```text
-/// call!(static me.author.ClassName.fieldName: String)
-///    Callee -->\_________________/            \____/
-///    Field type ---------------------------------^
+/// field!(static me.author.ClassName.fieldName: String)
+///     Callee -->\_________________/            \____/
+///     Field type ---------------------------------^
 /// ```
 /// 
 /// Use `static` if the field is a static field of a *Class*,
 /// or ommit it if the field is of an *Object*.
 /// 
 /// The **callee** could be *Class Path* or *Object*,
-/// following the same syntax as in [`call!`](call!#types).
+/// following the same syntax as in [`call!`](call!#method-types).
 /// 
 /// The **type** follows the same syntax as in [`call!`](call!#types).
+/// 
+/// Can also take a custom [`JNIEnv`][jni::JNIEnv], like in [`call!`](call!#explicit-jnienv).
 #[proc_macro]
 pub fn field(input: TokenStream) -> TokenStream {
     let call = syn::parse_macro_input!(input as FieldCall);
@@ -276,26 +288,39 @@ pub fn field(input: TokenStream) -> TokenStream {
 /// let class: JClass = class!(me.author.Class);
 /// ```
 /// 
+/// Can also take a custom [`JNIEnv`][jni::JNIEnv], like in [`call!`](call!#explicit-jnienv).
+/// 
 /// This is essentially just a shortcut to [`JNIEnv::find_class()`][jni::JNIEnv::find_class()].
 #[proc_macro]
 pub fn class(input: TokenStream) -> TokenStream {
-    let class = syn::parse_macro_input!(input as Class);
-    call::get_class(class).into()
+    match parse(input, |input| { Ok((
+        input.parse()?, input.parse()?
+    )) }) {
+        Ok((env, class)) => call::get_class(env, class),
+        Err(error) => error.into_compile_error()
+    }.into()
 }
 
 /// Get the *instance Object* of a **Singleton Class** by calling the `getInstance()` *static method* on the Class.
 /// 
 /// Takes the *fully-qualified* **Class** as input.
 /// 
+/// Can also take a custom [`JNIEnv`][jni::JNIEnv], like in [`call!`](call!#explicit-jnienv).
+/// 
 /// ```ignore
 /// singleton!(me.author.Singleton);
+/// singleton!(env=> me.author.Singleton);
 /// ```
 /// 
 /// This is essentially just a shortcut to [`call!`] `Class.getInstance() -> Class`.
 #[proc_macro]
 pub fn singleton(input: TokenStream) -> TokenStream {
-    let class = syn::parse_macro_input!(input as Class);
-    call::singleton_instance(class).into()
+    match parse(input, |input| { Ok((
+        input.parse()?, input.parse()?
+    )) }) {
+        Ok((env, class)) => call::singleton_instance(env, class),
+        Err(error) => error.into_compile_error()
+    }.into()
 }
 
 /// See [`ez_jni::FromObject`](https://docs.rs/ez_jni/latest/ez_jni/trait.FromObject.html).
@@ -384,6 +409,11 @@ pub fn eprintln(input: TokenStream) -> TokenStream {
             ::std::eprintln!(#string)
         }
     } }.into()
+}
+
+/// Parse anything :/
+fn parse<T>(input: proc_macro::TokenStream, parser: impl FnOnce(syn::parse::ParseStream) -> syn::Result<T>) -> syn::Result<T> {
+    Parser::parse(parser, input)
 }
 
 /// Compile a `Java File` into a binary `Class file`.

@@ -25,11 +25,11 @@ pub(crate) fn check_method_existence(class: JClass<'_>, method_name: &'static st
     }
 
     fn get_sig(method: &JObject<'_>, env: &mut JNIEnv<'_>) -> String {
-        let params = call!(method.getParameterTypes() -> [java.lang.Class])
+        let params = call!(env=> method.getParameterTypes() -> [java.lang.Class])
             .iter()
-            .map(|ty| get_jni_type(&call!(ty.getTypeName() -> String)))
+            .map(|ty| get_jni_type(&call!(env=> ty.getTypeName() -> String)))
             .collect::<String>();
-        let rtrn = get_jni_type(&call!(call!(
+        let rtrn = get_jni_type(&call!(env=> call!(env=>
             method.getReturnType() -> java.lang.Class)
                 .getTypeName() -> String)
         );
@@ -42,8 +42,8 @@ pub(crate) fn check_method_existence(class: JClass<'_>, method_name: &'static st
     let mut same_sig_methods = Vec::new();
 
     for class in classes {
-        for method in call!(class.getDeclaredMethods() -> [java.lang.reflect.Method]) {
-            let name = call!(method.getName() -> String);
+        for method in call!(env=> class.getDeclaredMethods() -> [java.lang.reflect.Method]) {
+            let name = call!(env=> method.getName() -> String);
             // Build the method's signature as a JNI type signature
             let sig = get_sig(&method, env);
 
@@ -62,8 +62,8 @@ pub(crate) fn check_method_existence(class: JClass<'_>, method_name: &'static st
 
     if !same_name_sig_methods.is_empty() {
         let method = &same_name_sig_methods[0];
-        let class = call!(call!(method.getDeclaringClass() -> java.lang.Class).getTypeName() -> String);
-        let mods = access_modifiers(call!(method.getModifiers() -> int), env);
+        let class = call!(env=> call!(env=> method.getDeclaringClass() -> java.lang.Class).getTypeName() -> String);
+        let mods = access_modifiers(call!(env=> method.getModifiers() -> int), env);
         write!(buf, "Found method {method_str} in {class}").unwrap();
         if mods.len() > 0 {
             write!(buf, ": The Method is {}", display_natural_list(&mods)).unwrap();
@@ -76,7 +76,7 @@ pub(crate) fn check_method_existence(class: JClass<'_>, method_name: &'static st
     } else if !same_name_methods.is_empty() {
         let method = &same_name_methods[0];
         let other_sig = display_sig(&get_sig(method, env));
-        let mods = access_modifiers(call!(method.getModifiers() -> int), env);
+        let mods = access_modifiers(call!(env=> method.getModifiers() -> int), env);
         write!(buf, "Incorrect signature for method \"{method_str}\": the correct signature is {other_sig}").unwrap();
         if mods.len() > 0 {
             write!(buf, " and is {}", display_natural_list(&mods)).unwrap();
@@ -119,12 +119,12 @@ pub(crate) fn check_field_existence(class: JClass<'_>, field_name: &'static str,
 
     // Get all the Fields and Methods of the Class (and its ancestors) and separate them into categories.
     for class in classes {
-        let fields = call!(class.getDeclaredFields() -> [java.lang.reflect.Field]);
-        let methods = call!(class.getDeclaredMethods() -> [java.lang.reflect.Method]);
+        let fields = call!(env=> class.getDeclaredFields() -> [java.lang.reflect.Field]);
+        let methods = call!(env=> class.getDeclaredMethods() -> [java.lang.reflect.Method]);
 
         for field in fields {
-            let name = call!(field.getName() -> String);
-            let ty = get_jni_type(&call!(call!(field.getType() -> java.lang.Class).getTypeName() -> String));
+            let name = call!(env=> field.getName() -> String);
+            let ty = get_jni_type(&call!(env=> call!(env=> field.getType() -> java.lang.Class).getTypeName() -> String));
 
             if name == field_name && ty == field_ty {
                 same_name_type_fields.push(field);
@@ -136,7 +136,7 @@ pub(crate) fn check_field_existence(class: JClass<'_>, field_name: &'static str,
         }
 
         for method in methods {
-            let name = call!(method.getName() -> String);
+            let name = call!(env=> method.getName() -> String);
             // Checks similarities in name by making it all lowercase and removing possible underscores (_).
             let similar_name = name
                 .to_lowercase()
@@ -144,10 +144,10 @@ pub(crate) fn check_field_existence(class: JClass<'_>, field_name: &'static str,
                 .contains(&field_name.to_lowercase().replace('_', ""));
             // The method is considered to have the "same type" as the field if it has only one argument with the same type OR the return type is the same type.
             let same_type = {
-                let params = call!(method.getParameterTypes() -> [java.lang.Class]);
-                let return_type = get_jni_type(&call!(call!(method.getReturnType() -> java.lang.Class).getTypeName() -> String));
+                let params = call!(env=> method.getParameterTypes() -> [java.lang.Class]);
+                let return_type = get_jni_type(&call!(env=> call!(env=> method.getReturnType() -> java.lang.Class).getTypeName() -> String));
 
-                (params.len() == 1 && return_type == "V" && get_jni_type(&call!(params[0].getTypeName() -> String)) == field_ty)
+                (params.len() == 1 && return_type == "V" && get_jni_type(&call!(env=> params[0].getTypeName() -> String)) == field_ty)
                 || (params.len() == 0 && return_type == field_ty)
             };// one argumetn void return, or no arguments one return
 
@@ -166,8 +166,8 @@ pub(crate) fn check_field_existence(class: JClass<'_>, field_name: &'static str,
     // Messy ahh print statements
     if !same_name_type_fields.is_empty() {
         let field = &same_name_type_fields[0]; 
-        let class = call!(call!(field.getDeclaringClass() -> java.lang.Class).getTypeName() -> String);
-        let mods = access_modifiers(call!(field.getModifiers() -> int), env);
+        let class = call!(env=> call!(env=> field.getDeclaringClass() -> java.lang.Class).getTypeName() -> String);
+        let mods = access_modifiers(call!(env=> field.getModifiers() -> int), env);
         write!(buf, "Found field \"{field_name}\" with type {field_ty} in {class}").unwrap();
         if mods.len() > 0 {
             writeln!(buf, ": The Field is {}", display_natural_list(&mods)).unwrap();
@@ -178,8 +178,8 @@ pub(crate) fn check_field_existence(class: JClass<'_>, field_name: &'static str,
             write!(buf, "{}", display_fields(&same_name_type_fields[1..], env)).unwrap();
         }
     } else if !same_name_fields.is_empty() {
-        let ty = get_jni_type(&call!(call!(same_name_fields[0].getType() -> java.lang.Class).getTypeName() -> String));
-        let mods = access_modifiers(call!(same_name_fields[0].getModifiers() -> int), env);
+        let ty = get_jni_type(&call!(env=> call!(env=> same_name_fields[0].getType() -> java.lang.Class).getTypeName() -> String));
+        let mods = access_modifiers(call!(env=> same_name_fields[0].getModifiers() -> int), env);
         write!(buf, "Field \"{field_name}\" does not have type {field_ty}: the Field has type {ty}").unwrap();
         if mods.len() > 0 {
             write!(buf, " and is {}", display_natural_list(&mods)).unwrap();
@@ -298,12 +298,12 @@ fn display_natural_list<T: Display>(slice: &[T]) -> String {
 fn access_modifiers(modifier: i32, env: &mut JNIEnv<'_>) -> Box<[&'static str]> {
     let mut mods = Vec::new();
     
-    if call!(static java.lang.reflect.Modifier.isPrivate(int(modifier)) -> bool) {
+    if call!(env=> static java.lang.reflect.Modifier.isPrivate(int(modifier)) -> bool) {
         mods.push("private")
-    } else if call!(static java.lang.reflect.Modifier.isProtected(int(modifier)) -> bool) {
+    } else if call!(env=> static java.lang.reflect.Modifier.isProtected(int(modifier)) -> bool) {
         mods.push("protected")
     }
-    if call!(static java.lang.reflect.Modifier.isStatic(int(modifier)) -> bool) {
+    if call!(env=> static java.lang.reflect.Modifier.isStatic(int(modifier)) -> bool) {
         mods.push("static")
     } else {
         mods.push("non-static")
@@ -316,10 +316,10 @@ fn display_fields(fields: &[JObject<'_>], env: &mut JNIEnv<'_>) -> String {
     let mut buf = String::new();
 
     for field in fields {
-        let class = call!(call!(field.getDeclaringClass() -> java.lang.Class).getTypeName() -> String);
-        let name = call!(field.getName() -> String);
-        let ty = call!(call!(field.getType() -> java.lang.Class).getTypeName() -> String);
-        let mods = access_modifiers(call!(field.getModifiers() -> int), env)
+        let class = call!(env=> call!(env=> field.getDeclaringClass() -> java.lang.Class).getTypeName() -> String);
+        let name = call!(env=> field.getName() -> String);
+        let ty = call!(env=> call!(env=> field.getType() -> java.lang.Class).getTypeName() -> String);
+        let mods = access_modifiers(call!(env=> field.getModifiers() -> int), env)
             .iter()
             .map(|m| format!("{m} "))
             .collect::<String>();
@@ -334,15 +334,15 @@ fn display_methods(methods: &[JObject<'_>], env: &mut JNIEnv<'_>) -> String {
     let mut buf = String::new();
 
     for method in methods {
-        let class = call!(call!(method.getDeclaringClass() -> java.lang.Class).getTypeName() -> String);
-        let name = call!(method.getName() -> String);
-        let params = call!(method.getParameterTypes() -> [java.lang.Class])
+        let class = call!(env=> call!(env=> method.getDeclaringClass() -> java.lang.Class).getTypeName() -> String);
+        let name = call!(env=> method.getName() -> String);
+        let params = call!(env=> method.getParameterTypes() -> [java.lang.Class])
             .iter()
-            .map(|ty| call!(ty.getTypeName() -> String))
+            .map(|ty| call!(env=> ty.getTypeName() -> String))
             .intersperse(", ".to_string())
             .collect::<String>();
-        let return_ty = call!(call!(method.getReturnType() -> java.lang.Class).getTypeName() -> String);
-        let mods = access_modifiers(call!(method.getModifiers() -> int), env)
+        let return_ty = call!(env=> call!(env=> method.getReturnType() -> java.lang.Class).getTypeName() -> String);
+        let mods = access_modifiers(call!(env=> method.getModifiers() -> int), env)
             .iter()
             .map(|m| format!("{m} "))
             .collect::<String>();

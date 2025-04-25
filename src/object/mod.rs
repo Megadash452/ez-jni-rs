@@ -66,12 +66,26 @@ where Self: Sized {
     /// Construct a [`Self`] by reading data from a *Java Object*.
     /// Will [`panic!`] if any of the underlying JNI calls fail.
     fn from_object(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError>;
+    // TODO: 
+    //     Self::from_object_env(object, get_env::<'_, 'local>())
+    // }
+    // /// Same as [`from_object`][FromObject::from_object], but does not capture the [`JNIEnv`] automatically; the caller must provide it themselves.
+    // /// 
+    // /// This is the *only* function that must be *implemented* for the trait.
+    // fn from_object_env(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError>;
 }
 
 pub trait ToObject {
     /// Create an instance of a Class by constructing an object from data in a *Rust struct*.
     /// Will [`panic!`] if any of the underlying JNI calls fail.
     fn to_object<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local>;
+    // TODO:
+    //     self.to_object_env(get_env::<'_, 'local>())
+    // }
+    // /// Same as [`to_object`][ToObject::to_object], but does not capture the [`JNIEnv`] automatically; the caller must provide it themselves.
+    // /// 
+    // /// This is the *only* function that must be *implemented* for the trait.
+    // fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local>;
 }
 
 

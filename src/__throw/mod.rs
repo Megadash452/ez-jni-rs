@@ -215,10 +215,10 @@ fn parse_backtrace_frames<'a>(backtrace: &'a str) -> Result<Box<[(&'a str, Optio
 /// Some verbose Rust stack frames are also ommited to make it simpler for an user to interpret the data.
 fn inject_backtrace(exception: &JThrowable, backtrace: &[BacktraceElement], env: &mut JNIEnv) {
     // Find the Native Method StackTraceElement 
-    let mut java_trace = call!(exception.getStackTrace() -> [java.lang.StackTraceElement]).into_vec();
+    let mut java_trace = call!(env=> exception.getStackTrace() -> [java.lang.StackTraceElement]).into_vec();
     let index = match java_trace.iter()
         .enumerate()
-        .find(|(_, frame)| call!(frame.isNativeMethod() -> bool))
+        .find(|(_, frame)| call!(env=> frame.isNativeMethod() -> bool))
     {
         Some((i, _)) => i,
         None => return,
@@ -234,8 +234,8 @@ fn inject_backtrace(exception: &JThrowable, backtrace: &[BacktraceElement], env:
             .unwrap_or(bottom.symbol.as_str());
 
         let entry_name = ::utils::java_method_to_symbol(
-            &call!(entry_frame.getClassName() -> String),
-            &call!(entry_frame.getMethodName() -> String),
+            &call!(env=> entry_frame.getClassName() -> String),
+            &call!(env=> entry_frame.getMethodName() -> String),
         );
 
         if entry_name != bottom_name {
@@ -249,7 +249,7 @@ fn inject_backtrace(exception: &JThrowable, backtrace: &[BacktraceElement], env:
             let (class, method) = frame.symbol.rsplit_once("::")
                 .unwrap_or(("Rust", &frame.symbol));
 
-            new!(java.lang.StackTraceElement(
+            new!(env=> java.lang.StackTraceElement(
                 String(class),
                 String(method),
                 String(frame.location.file),
@@ -262,7 +262,7 @@ fn inject_backtrace(exception: &JThrowable, backtrace: &[BacktraceElement], env:
     java_trace.splice(index..index, rust_trace);
 
     // Set Exception's StackTrace
-    call!(exception.setStackTrace([java.lang.StackTraceElement](java_trace)) -> void);
+    call!(env=> exception.setStackTrace([java.lang.StackTraceElement](java_trace)) -> void);
 }
 
 #[cfg(test)]

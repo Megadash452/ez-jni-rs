@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 use proc_macro2::{Span, TokenStream};
-use quote::{quote, quote_spanned, ToTokens};
+use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
 use syn::{
     parenthesized, parse::{discouraged::Speculative, Parse, ParseStream, Parser}, punctuated::Punctuated, Expr, Ident, LitStr, Token
 };
@@ -11,6 +11,7 @@ use crate::{
 
 /// Processes input for macro call [super::call!].
 pub fn jni_call(call: MethodCall) -> TokenStream {
+    let env = &call.env;
     // The class or object that the method is being called on.
     let callee = match &call.call_type {
         CallType::Static(ClassRepr::String(class)) => {
@@ -60,7 +61,7 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
     };
     quote! { {
         use ::std::borrow::Borrow;
-        let env = ::ez_jni::utils::get_env();
+        let env: &mut ::jni::JNIEnv = #env;
         #param_vars
         #jni_method(#callee, #name, #signature, #arguments, env)
             .map(|v| #return_conversion)
@@ -70,6 +71,7 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
 
 /// Processes input for macro call [super::new!].
 pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
+    let env = &call.env;
     // The Class/ClassObject that the constructor was called for
     let callee = match &call.class {
         ClassRepr::String(class) => class.to_jni_class_path().to_token_stream(),
@@ -92,7 +94,7 @@ pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
 
     quote! { {
         use ::std::borrow::Borrow;
-        let env = ::ez_jni::utils::get_env();
+        let env: &mut ::jni::JNIEnv = #env;
         #param_vars
         env.new_object(#callee, #signature, #arguments)
             #error_handler
@@ -101,6 +103,7 @@ pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
 
 /// Processes input for macro call [super::field!].
 pub fn field(call: FieldCall) -> TokenStream {
+    let env = &call.env;
     // The class or object that the method is being called on.
     let callee = match &call.call_type {
         CallType::Static(ClassRepr::String(class)) => {
@@ -126,7 +129,7 @@ pub fn field(call: FieldCall) -> TokenStream {
             let val = call.ty.convert_rust_to_java(&val.to_token_stream());
             quote! { {
                 use ::std::borrow::Borrow;
-                let env = ::ez_jni::utils::get_env();
+                let env: &mut ::jni::JNIEnv = #env;
                 #jni_method(#callee, #name, #ty_sig, #val, env)
             } }
         },
@@ -134,7 +137,7 @@ pub fn field(call: FieldCall) -> TokenStream {
             let conversion = call.ty.convert_java_to_rust(&quote_spanned! {call.ty.span()=> v });
             quote! { {
                 use ::std::borrow::Borrow;
-                let env = ::ez_jni::utils::get_env();
+                let env: &mut ::jni::JNIEnv = #env;
                 #jni_method(#callee, #name, #ty_sig, env.borrow_mut())
                     .map(|v| #conversion)
                     .unwrap_or_else(|err| ::ez_jni::__throw::handle_jni_call_error(err, env))
@@ -144,18 +147,19 @@ pub fn field(call: FieldCall) -> TokenStream {
 }
 
 /// Processes input for macro call [super::class!].
-pub fn get_class(class: Class) -> TokenStream {
+pub fn get_class(env: Env, class: Class) -> TokenStream {
     let class = class.to_jni_class_path();
     quote! { {
-        let env = ::ez_jni::utils::get_env();
+        let env: &mut ::jni::JNIEnv = #env;
         env.find_class(#class)
             .unwrap_or_else(|err| ::ez_jni::__throw::handle_jni_call_error(err, env))
     } }
 }
 
 /// Processes input for macro call [super::singleton!].
-pub fn singleton_instance(class: Class) -> TokenStream {
+pub fn singleton_instance(env: Env, class: Class) -> TokenStream {
     jni_call(MethodCall {
+        env, 
         call_type: CallType::Static(ClassRepr::String(class.clone())),
         method_name: Ident::new("getInstance", Span::call_site()),
         parameters: Punctuated::new(),
@@ -167,6 +171,7 @@ pub fn singleton_instance(class: Class) -> TokenStream {
 ///
 /// See [`crate::call`] for an example.
 pub struct MethodCall {
+    pub env: Env,
     pub call_type: CallType,
     pub method_name: Ident,
     pub parameters: Punctuated<Parameter, Token![,]>,
@@ -176,6 +181,8 @@ impl Parse for MethodCall {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         // This parse implementation is complicated to allow parsing arbitrary Expressions as the callee.
         use proc_macro2::{TokenTree, Delimiter, Spacing};
+
+        let env = input.parse()?;
 
         let is_static = input.parse::<Token![static]>().is_ok();
 
@@ -213,6 +220,7 @@ impl Parse for MethodCall {
             })?;
 
         Ok(Self {
+            env,
             call_type: CallType::parse_callee(callee_tokens.into_iter().collect(), is_static)?,
             method_name,
             parameters: Parser::parse2(Punctuated::parse_terminated, param_group.stream())?,
@@ -295,8 +303,9 @@ impl CallType {
     }
 }
 
-/// A JNI call to *access* or *set* the value fo a **field**.
+/// A JNI call to *access* or *set* the value of a **field**.
 pub struct FieldCall {
+    pub env: Env,
     pub call_type: CallType,
     pub field_name: Ident,
     pub ty: Type,
@@ -306,6 +315,8 @@ pub struct FieldCall {
 impl Parse for FieldCall {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         use proc_macro2::{TokenTree, Spacing};
+
+        let env = input.parse()?;
 
         let is_static = input.parse::<Token![static]>().is_ok();
         
@@ -318,6 +329,7 @@ impl Parse for FieldCall {
         .map_err(|err| syn::Error::new(err.span(), format!("{err}; Expected pattern `.#Ident :`")))?;
 
         Ok(Self {
+            env,
             call_type: CallType::parse_callee(pre_tokens.into_iter().collect(), is_static)?,
             field_name: pattern_tokens.remove(1).ident()?,
             ty: input.parse()?,
@@ -337,6 +349,7 @@ impl Parse for FieldCall {
 /// 
 /// See [`crate::new`] for an example.
 pub struct ConstructorCall {
+    pub env: Env,
     pub class: ClassRepr,
     pub parameters: Punctuated<Parameter, Token![,]>,
     pub err_type: Option<syn::Path>
@@ -345,6 +358,8 @@ impl Parse for ConstructorCall {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         // This is similar to MethodCall::parse() in that it will collect tokens to parse as the class until it finds a certain pattern.
         use proc_macro2::{TokenTree, Delimiter};
+
+        let env = input.parse()?;
 
         // Search for pattern `(...)` | `(...) throws`
         let StepResult { pre_tokens, pattern_tokens } = crate::utils::step_until(input, |first, next| {
@@ -387,6 +402,7 @@ impl Parse for ConstructorCall {
         }, pre_tokens.into_iter().collect())?;
 
         Ok(Self {
+            env,
             class,
             parameters: Parser::parse2(Punctuated::parse_terminated, param_tokens)?,
             err_type: (!input.is_empty())
@@ -638,6 +654,47 @@ impl Debug for Return {
     }
 }
 
+/// An *explicit declaration* of the [`JNIEnv`][jni::JNIEnv] value passed into one of the macros.
+/// 
+/// # Parsing
+/// Parses the starting tokens to find the *explicit declaration* of the [`JNIEnv`][jni::JNIEnv].
+/// 
+/// Takes all tokens until it finds the symbol `=>`.
+/// All tokens before that symbol are the expression that resolves to the [`JNIEnv`][jni::JNIEnv].
+/// 
+/// Returns `None` if the pattern was not found.
+/// Returns `Err` if the tokens can't be parsed into an [`Expression`][syn::Expr].
+/// 
+/// ## Example
+/// ```ignore
+/// call!(env=> myfn() -> void)
+/// ```
+pub struct Env(Option<Expr>);
+impl Parse for Env {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        use proc_macro2::{TokenTree, Spacing};
+
+        crate::utils::step_until_each(input, [
+            |token| matches!(token, TokenTree::Punct(punct) if punct.as_char() == '=' && punct.spacing() == Spacing::Joint),
+            |token| matches!(token, TokenTree::Punct(punct) if punct.as_char() == '>' && punct.spacing() == Spacing::Alone),
+        ])
+            .map(|result| result.pre_tokens.into_iter().collect::<TokenStream>())
+            .ok()
+            .map(|tokens| syn::parse2(tokens))
+            .transpose()
+            .map(|r| Self(r))
+    }
+}
+impl ToTokens for Env {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        tokens.append_all(
+            match &self.0 {
+                Some(expr) => expr.to_token_stream(),
+                None => quote!(::ez_jni::utils::get_env()),
+            }
+        );
+    }
+}
 
 /// Generate *variable definitions* for the arguments that will be passed to the JNI call.
 /// 
