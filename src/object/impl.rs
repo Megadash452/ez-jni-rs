@@ -1,7 +1,7 @@
 use ez_jni_macros::new;
 use super::*;
 
-impl<'local> FromObject<'local> for JObject<'local> {
+impl<'local> FromObjectImpl<'local> for JObject<'local> {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
         if object.is_null() {
             return Err(FromObjectError::Null);
@@ -9,14 +9,14 @@ impl<'local> FromObject<'local> for JObject<'local> {
         Ok(env.new_local_ref(object).unwrap())
     }
 }
-impl ToObject for JObject<'_> {
+impl ToObjectImpl for JObject<'_> {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         env.new_local_ref(self).unwrap()
     }
 }
 
-impl<'local, T> FromObject<'local> for Option<T>
-where T: FromObject<'local> {
+impl<'local, T> FromObjectImpl<'local> for Option<T>
+where T: FromObjectImpl<'local> {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
         if object.is_null() {
             Ok(None)
@@ -26,8 +26,8 @@ where T: FromObject<'local> {
         }
     }
 }
-impl<T> ToObject for Option<T>
-where T: ToObject {
+impl<T> ToObjectImpl for Option<T>
+where T: ToObjectImpl {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         match self {
             Some(t) => t.to_object_env(env),
@@ -38,7 +38,7 @@ where T: ToObject {
 
 // Implementation for String types
 
-impl FromObject<'_> for String {
+impl FromObjectImpl<'_> for String {
     /// Get a [`String`] from some random Object.
     /// 
     /// Don't use this function, it only exist for compatibility.
@@ -53,19 +53,19 @@ impl FromObject<'_> for String {
         })
     }
 }
-impl ToObject for String {
+impl ToObjectImpl for String {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         self.as_str().to_object_env(env)
     }
 }
-impl ToObject for str {
+impl ToObjectImpl for str {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         env.new_string(self)
             .unwrap_or_else(|err| panic!("Error converting Rust string to Java String: {err}"))
             .into()
     }
 }
-impl ToObject for &str {
+impl ToObjectImpl for &str {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         (**self).to_object_env(env)
     }
@@ -73,114 +73,114 @@ impl ToObject for &str {
 
 // Implementation for number types
 
-impl FromObject<'_> for i8 {
+impl FromObjectImpl<'_> for i8 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         object_check_boilerplate(object, "java/lang/Byte", env)?;
         Ok(call!(env=> object.byteValue() -> byte))
     }
 }
-impl ToObject for i8 {
+impl ToObjectImpl for i8 {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         new!(env=> java.lang.Byte(byte(*self)))
     }
 }
-impl FromObject<'_> for i16 {
+impl FromObjectImpl<'_> for i16 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         object_check_boilerplate(object, "java/lang/Short", env)?;
         Ok(call!(env=> object.shortValue() -> short))
     }
 }
-impl ToObject for i16 {
+impl ToObjectImpl for i16 {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         new!(env=> java.lang.Short(short(*self)))
     }
 }
-impl FromObject<'_> for i32 {
+impl FromObjectImpl<'_> for i32 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         object_check_boilerplate(object, "java/lang/Integer", env)?;
         Ok(call!(env=> object.intValue() -> int))
     }
 }
-impl ToObject for i32 {
+impl ToObjectImpl for i32 {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         new!(env=> java.lang.Integer(int(*self)))
     }
 }
-impl FromObject<'_> for i64 {
+impl FromObjectImpl<'_> for i64 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         object_check_boilerplate(object, "java/lang/Long", env)?;
         Ok(call!(env=> object.longValue() -> long))
     }
 }
-impl ToObject for i64 {
+impl ToObjectImpl for i64 {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         new!(env=> java.lang.Long(long(*self)))
     }
 }
-impl FromObject<'_> for f32 {
+impl FromObjectImpl<'_> for f32 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         object_check_boilerplate(object, "java/lang/Float", env)?;
         Ok(call!(env=> object.floatValue() -> float))
     }
 }
-impl ToObject for f32 {
+impl ToObjectImpl for f32 {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         new!(env=> java.lang.Float(float(*self)))
     }
 }
-impl FromObject<'_> for f64 {
+impl FromObjectImpl<'_> for f64 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         object_check_boilerplate(object, "java/lang/Double", env)?;
         Ok(call!(env=> object.doubleValue() -> double))
     }
 }
-impl ToObject for f64 {
+impl ToObjectImpl for f64 {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         new!(env=> java.lang.Double(double(*self)))
     }
 }
 
 // Implementation for unsigned number types
-impl FromObject<'_> for u8 {
+impl FromObjectImpl<'_> for u8 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         object_check_boilerplate(object, "java/lang/Byte", env)?;
         Ok(call!(env=> object.byteValue() -> u8))
     }
 }
-impl ToObject for u8 {
+impl ToObjectImpl for u8 {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         new!(env=> java.lang.Byte(u8(*self)))
     }
 }
-impl FromObject<'_> for u16 {
+impl FromObjectImpl<'_> for u16 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         object_check_boilerplate(object, "java/lang/Short", env)?;
         Ok(call!(env=> object.shortValue() -> u16))
     }
 }
-impl ToObject for u16 {
+impl ToObjectImpl for u16 {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         new!(env=> java.lang.Short(u16(*self)))
     }
 }
-impl FromObject<'_> for u32 {
+impl FromObjectImpl<'_> for u32 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         object_check_boilerplate(object, "java/lang/Integer", env)?;
         Ok(call!(env=> object.intValue() -> u32))
     }
 }
-impl ToObject for u32 {
+impl ToObjectImpl for u32 {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         new!(env=> java.lang.Integer(u32(*self)))
     }
 }
-impl FromObject<'_> for u64 {
+impl FromObjectImpl<'_> for u64 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         object_check_boilerplate(object, "java/lang/Long", env)?;
         Ok(call!(env=> object.longValue() -> u64))
     }
 }
-impl ToObject for u64 {
+impl ToObjectImpl for u64 {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         new!(env=> java.lang.Long(u64(*self)))
     }
@@ -188,25 +188,25 @@ impl ToObject for u64 {
 
 // Implementations for other primitives
 
-impl FromObject<'_> for bool {
+impl FromObjectImpl<'_> for bool {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         object_check_boilerplate(object, "java/lang/Boolean", env)?;
         Ok(call!(env=> object.booleanValue() -> boolean))
     }
 }
-impl ToObject for bool {
+impl ToObjectImpl for bool {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         new!(env=> java.lang.Boolean(boolean(*self)))
     }
 }
 
-impl FromObject<'_> for char {
+impl FromObjectImpl<'_> for char {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         object_check_boilerplate(object, "java/lang/Character", env)?;
         Ok(call!(env=> object.charValue() -> char))
     }
 }
-impl ToObject for char {
+impl ToObjectImpl for char {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         new!(env=> java.lang.Character(char(*self)))
     }

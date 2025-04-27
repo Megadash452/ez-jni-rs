@@ -19,10 +19,10 @@ static IO_ERROR_BASE_PATH: &str = "java/io/IOException";
 
 impl FromException<'_> for std::io::Error {
     fn from_exception(exception: &JThrowable, env: &mut JNIEnv) -> Result<Self, FromObjectError> {
-        <Self as FromObject>::from_object_env(exception, env)
+        <Self as FromObjectImpl>::from_object_env(exception, env)
     }
 }
-impl FromObject<'_> for std::io::Error {
+impl FromObjectImpl<'_> for std::io::Error {
     fn from_object_env(object: &JObject, env: &mut JNIEnv) -> Result<Self, FromObjectError> {
         static MAP: &[(&str, io::ErrorKind)] = &[
             ("java/io/FileNotFoundException", io::ErrorKind::NotFound),
@@ -79,7 +79,7 @@ impl FromObject<'_> for std::io::Error {
         Ok(Self::other(format!("{class_str}: {msg}")))
     }
 }
-impl ToObject for std::io::Error {
+impl ToObjectImpl for std::io::Error {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         static MAP: &[(io::ErrorKind, &str)] = &[
             (io::ErrorKind::NotFound, "java/io/FileNotFoundException"),
@@ -121,12 +121,12 @@ impl FromException<'_> for Box<dyn std::error::Error> {
         Ok(<String as FromException>::from_exception(exception, env)?.into())
     }
 }
-impl FromObject<'_> for Box<dyn std::error::Error> {
+impl FromObjectImpl<'_> for Box<dyn std::error::Error> {
     fn from_object_env(object: &JObject, env: &mut JNIEnv) -> Result<Self, FromObjectError> {
         <Self as FromException>::from_exception(<&JThrowable>::from(object), env)
     }
 }
-impl ToObject for dyn std::error::Error {
+impl ToObjectImpl for dyn std::error::Error {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         new!(env=> java.lang.Exception(String(self.to_string())))
     }

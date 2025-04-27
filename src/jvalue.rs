@@ -1,14 +1,16 @@
 use jni::{objects::{JObject, JValue, JValueGen, JValueOwned}, JNIEnv};
 use thiserror::Error;
-use crate::{utils::get_env, FromObject, FromObjectError, ToObject};
+use crate::{utils::get_env, FromObject, FromObjectError, ToObject, FromObjectImpl, ToObjectImpl};
 
 /// Get a **Rust** value from a **Java** value.
 /// 
-/// *Users* of this trait should only use [`from_jvalue()`][FromJValue::from_jvalue()],
-/// but *implementors* of this trait should only implement [`from_jvalue_env()`][FromJValue::from_jvalue_env()].
+/// ## Implementation
+/// 
+/// This trait cannot be implemented directly.
+/// Types must instead implement [`FromJValueImpl`], which allows a caller to pass in their own [`JNIEnv`].
 /// 
 /// > This trait is directly used by the [`macros`][ez_jni_macros].
-pub trait FromJValue<'a, 'local>
+pub trait FromJValue<'a, 'local>: FromJValueImpl<'a, 'local>
 where Self: Sized {
     /// Get a **Rust** value from a **Java** value.
     /// 
@@ -19,11 +21,20 @@ where Self: Sized {
     fn from_jvalue(val: JValue<'_, 'a>) -> Result<Self, FromJValueError> {
         Self::from_jvalue_env(val, get_env::<'_, 'local>())
     }
+    
+}
+/// This is the implementation trait for [`FromJValue`].
+/// Any type that wants to implement [`FromJValue`] must implement this trait instead so that callers have the option to pass their own [`JNIEnv`].
+/// 
+/// The implementation should also only methods that allow passing a [`JNIEnv`] so that the same [`JNIEnv`] can be used all throughout the call.
+/// For example, use [`FromJValueImpl::from_jvalue_env`] instead of [`FromJValue::from_jvalue`].
+/// For jni macros, the env can be specified with this syntax: `macro!(env=> ...)`.
+pub trait FromJValueImpl<'a, 'local>
+where Self: Sized {
     /// Same as [`from_jvalue`][FromJValue::from_jvalue], but does not capture the [`JNIEnv`] automatically; the caller must provide it themselves.
-    /// 
-    /// This is the *only* function that must be *implemented* for the trait.
     fn from_jvalue_env(val: JValue<'_, 'a>, env: &mut JNIEnv<'local>) -> Result<Self, FromJValueError>;
 }
+impl<'a, 'local, T: FromJValueImpl<'a, 'local>> FromJValue<'a, 'local> for T { }
 
 /// Convert a **Rust** value to a **Java** value.
 /// 
@@ -31,7 +42,7 @@ where Self: Sized {
 /// but *implementors* of this trait should only implement [`to_jvalue_env()`][ToJValue::to_jvalue_env()].
 /// 
 /// > This trait is directly used by the [`macros`][ez_jni_macros].
-pub trait ToJValue {
+pub trait ToJValue: ToJValueImpl {
     /// Convert a **Rust** value to a **Java** value.
     /// 
     /// Automatically captures the [`JNIEnv`] from the local stack.
@@ -39,11 +50,20 @@ pub trait ToJValue {
     fn to_jvalue<'local>(&self) -> JValueOwned<'local> {
         self.to_jvalue_env(get_env::<'_, 'local>())
     }
+}
+/// This is the implementation trait for [`ToJValue`].
+/// Any type that wants to implement [`ToJValue`] must implement this trait instead so that callers have the option to pass their own [`JNIEnv`].
+/// 
+/// The implementation should also only methods that allow passing a [`JNIEnv`] so that the same [`JNIEnv`] can be used all throughout the call.
+/// For example, use [`ToJValueImpl::to_jvalue_env`] instead of [`ToJValue::to_jvalue`].
+/// For jni macros, the env can be specified with this syntax: `macro!(env=> ...)`.
+pub trait ToJValueImpl {
     /// Same as [`to_jvalue`][ToJValue::to_jvalue], but does not capture the [`JNIEnv`] automatically; the caller must provide it themselves.
     ///
     /// This is the *only* function that must be *implemented* for the trait.
     fn to_jvalue_env<'local>(&self, env: &mut JNIEnv<'local>) -> JValueOwned<'local>;
 }
+impl<T: ToJValueImpl> ToJValue for T { }
 
 /// Error returned by [`FromJValue::from_jvalue()`].
 #[derive(Debug, Error)]
@@ -88,7 +108,7 @@ fn jvalue_to_str(val: JValue<'_, '_>) -> &'static str {
 
 // -- Primitives
 
-impl FromJValue<'_, '_> for () {
+impl FromJValueImpl<'_, '_> for () {
     fn from_jvalue_env(val: JValue<'_, '_>, _: &mut JNIEnv<'_>) -> Result<Self, FromJValueError> {
         match val {
             JValueGen::Void => Ok(()),
@@ -99,14 +119,14 @@ impl FromJValue<'_, '_> for () {
         }
     }
 }
-impl ToJValue for () {
+impl ToJValueImpl for () {
     #[inline]
     fn to_jvalue_env<'local>(&self, _: &mut JNIEnv<'local>) -> JValueOwned<'local> {
         JValueGen::Void
     }
 }
 
-impl FromJValue<'_, '_> for bool {
+impl FromJValueImpl<'_, '_> for bool {
     fn from_jvalue_env(val: JValue<'_, '_>, env: &mut JNIEnv<'_>) -> Result<Self, FromJValueError> {
         match val {
             JValueGen::Bool(val) => Ok(val != 0),
@@ -118,14 +138,14 @@ impl FromJValue<'_, '_> for bool {
         }
     }
 }
-impl ToJValue for bool {
+impl ToJValueImpl for bool {
     #[inline]
     fn to_jvalue_env<'local>(&self, _: &mut JNIEnv<'local>) -> JValueOwned<'local> {
         JValueGen::Bool(*self as jni::sys::jboolean)
     }
 }
 
-impl FromJValue<'_, '_> for char {
+impl FromJValueImpl<'_, '_> for char {
     fn from_jvalue_env<'a, 'local>(val: JValue<'_, '_>, env: &mut JNIEnv<'local>) -> Result<Self, FromJValueError> {
         match val {
             // Decode UTF-16
@@ -142,7 +162,7 @@ impl FromJValue<'_, '_> for char {
         }
     }
 }
-impl ToJValue for char {
+impl ToJValueImpl for char {
     fn to_jvalue_env<'local>(&self, _: &mut JNIEnv<'local>) -> JValueOwned<'local> {
         JValueGen::Char(self.encode_utf16(&mut [0;1])[0])
     }
@@ -152,7 +172,7 @@ impl ToJValue for char {
 /// If value was [`JObject`] in [`FromJValue`], this calls the [`FromObject`] implementation.
 macro_rules! map_primitive_impl {
     (for $ty:ty, $jvariant:ident, $jty:ident, expected $expected:ident) => {
-        impl FromJValue<'_, '_> for $ty {
+        impl FromJValueImpl<'_, '_> for $ty {
             fn from_jvalue_env(val: ::jni::objects::JValue<'_, '_>, env: &mut ::jni::JNIEnv<'_>) -> Result<Self, FromJValueError> {
                 match val {
                     ::jni::objects::JValueGen::$jvariant(val) => Ok(val as Self),
@@ -164,7 +184,7 @@ macro_rules! map_primitive_impl {
                 }
             }
         }
-        impl ToJValue for $ty {
+        impl ToJValueImpl for $ty {
             #[inline]
             fn to_jvalue_env<'local>(&self, _: &mut JNIEnv<'local>) -> JValueOwned<'local> {
                 ::jni::objects::JValueGen::$jvariant(*self as ::jni::sys::$jty)
@@ -197,7 +217,7 @@ macro_rules! map_to_object_impl {
         map_to_object_impl!(ToJValue for $ty);
     };
     (FromJValue for $ty:ty) => {
-        impl<'a, 'local> FromJValue<'a, 'local> for $ty {
+        impl<'a, 'local> FromJValueImpl<'a, 'local> for $ty {
             fn from_jvalue_env(val: ::jni::objects::JValue<'_, 'a>, env: &mut ::jni::JNIEnv<'local>) -> Result<Self, FromJValueError> {
                 match val {
                     ::jni::objects::JValueGen::Object(object) => Ok(Self::from_object_env(object, env)?),
@@ -210,7 +230,7 @@ macro_rules! map_to_object_impl {
         }
     };
     (ToJValue for $ty:ty) => {
-        impl ToJValue for $ty {
+        impl ToJValueImpl for $ty {
             fn to_jvalue_env<'local>(&self, env: &mut JNIEnv<'local>) -> JValueOwned<'local> {
                 ::jni::objects::JValueGen::Object(self.to_object_env(env))
             }
@@ -222,7 +242,7 @@ macro_rules! map_to_object_impl {
 map_to_object_impl!(FromJValue for JObject<'local>);
 map_to_object_impl!(ToJValue for JObject<'_>);
 
-impl<'a, 'local, T> FromJValue<'a, 'local> for Option<T>
+impl<'a, 'local, T> FromJValueImpl<'a, 'local> for Option<T>
 where T: FromObject<'local> {
     fn from_jvalue_env(val: JValue<'_, 'a>, env: &mut JNIEnv<'local>) -> Result<Self, FromJValueError> {
         match val {
@@ -234,7 +254,7 @@ where T: FromObject<'local> {
         }
     }
 }
-impl<T> ToJValue for Option<T>
+impl<T> ToJValueImpl for Option<T>
 where T: ToObject {
     fn to_jvalue_env<'local>(&self, env: &mut JNIEnv<'local>) -> JValueOwned<'local> {
         JValueGen::Object(self.to_object_env(env))
@@ -247,7 +267,7 @@ map_to_object_impl!(ToJValue for &str);
 
 // -- Arrays
 
-impl<'local, T> FromJValue<'_, 'local> for Vec<T>
+impl<'local, T> FromJValueImpl<'_, 'local> for Vec<T>
 where Box<[T]>: FromObject<'local> {
     fn from_jvalue_env<'a>(val: JValue<'_, 'a>, env: &mut JNIEnv<'local>) -> Result<Self, FromJValueError> {
         match val {
@@ -260,7 +280,7 @@ where Box<[T]>: FromObject<'local> {
     }
 }
 
-impl<'a, 'local, T> FromJValue<'a, 'local> for Box<[T]>
+impl<'a, 'local, T> FromJValueImpl<'a, 'local> for Box<[T]>
 where Box<[T]>: FromObject<'local> {
     fn from_jvalue_env(val: ::jni::objects::JValue<'_, 'a>, env: &mut ::jni::JNIEnv<'local>) -> Result<Self, FromJValueError> {
         match val {
@@ -272,7 +292,7 @@ where Box<[T]>: FromObject<'local> {
         }
     }
 }
-impl<T> ToJValue for [T]
+impl<T> ToJValueImpl for [T]
 where [T]: ToObject {
     fn to_jvalue_env<'local>(&self, env: &mut JNIEnv<'local>) -> JValueOwned<'local> {
         ::jni::objects::JValueGen::Object(self.to_object_env(env))
