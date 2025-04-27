@@ -21,14 +21,14 @@ mod android {
     
     #[doc(hidden)]
     /// Does the printing for [`jni_macros::println!`].
-    pub fn __println(s: String, env: &mut JNIEnv) {
+    pub fn __println(s: String) {
         // TODO: use NDK instead
         call!(static android.util.Log.i(java.lang.String("Rust"), java.lang.String(s)) -> int);
     }
     
     #[doc(hidden)]
     /// Does the printing for [`jni_macros::eprintln!`].
-    pub fn __eprintln(s: String, env: &mut JNIEnv) {
+    pub fn __eprintln(s: String) {
         // TODO: use NDK instead
         call!(static android.util.Log.e(java.lang.String("Rust"), java.lang.String(s)) -> int);
     }
@@ -39,7 +39,7 @@ mod android {
     // However, it will be built with Android compiler by github workflows,
     // so it is able to test if the macro outputs correct tokens.
     #[doc(hidden)]
-    fn print(env: &mut JNIEnv) {
+    fn print() {
         use ez_jni::{println, eprintln};
         println!("Hello, World!");
         eprintln!("Hello, World!");
@@ -109,7 +109,7 @@ pub fn get_field<'local>(
 ) -> Result<JValueOwned<'local>, FromObjectError> {
     let class = env.get_object_class(object)
         .unwrap_or_else(|err| panic!("Error gettig object's Class: {err}"));
-    let class = call!(class.getName() -> String);
+    let class = call!(env=> class.getName() -> String);
 
     // What to do if FieldNotFound
     let handle_not_found = |env: &mut JNIEnv<'local>| {
@@ -148,7 +148,7 @@ pub fn call_getter<'local>(
 ) -> Result<JValueOwned<'local>, FromObjectError> {
     let class = env.get_object_class(object)
         .unwrap_or_else(|err| panic!("Error gettig object's Class: {err}"));
-    let class = call!(class.getName() -> String);
+    let class = call!(env=> class.getName() -> String);
 
     let error = FromObjectError::FieldNotFound {
         name: format!("{mathod_name}()"),
@@ -510,7 +510,7 @@ pub fn get_java_prim_array<'local, 'other, 'a, T>(
     // Check object's type
     // let class = env.get_object_class(obj)
     //     .unwrap_or_else(|err| panic!("Failed to get Object's class: {err}"));
-    // let ty = call!(class.getName() -> String);
+    // let ty = call!(env=> class.getName() -> String);
     // if ty != T::PATH {
     //     panic!("Expected object's type to be \"{}\", but is actually \"{ty}\"", T::PATH)
     // }
@@ -544,7 +544,7 @@ pub fn get_object_array<'local>(obj: &JObject<'_>, array_class: Option<&'static 
         let class = java_path_to_dot_notation(class);
         let obj_class = env.get_object_class(obj)
             .unwrap_or_else(|err| panic!("Failed to get Object's class: {err}"));
-        let obj_class = call!(obj_class.getName() -> String);
+        let obj_class = call!(env=> obj_class.getName() -> String);
         if obj_class != class {
             return Err(FromObjectError::ClassMismatch { obj_class, target_class: Some(class) })
         }

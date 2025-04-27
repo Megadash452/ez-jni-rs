@@ -171,7 +171,7 @@ fn throw_panic(env: &mut JNIEnv, payload: Box<dyn Any + Send>) {
     }
         
 
-    let exception = new!(panic_class(String(location.file), u32(location.line), u32(location.col), String(panic_msg)));
+    let exception = new!(env=> panic_class(String(location.file), u32(location.line), u32(location.col), String(panic_msg)));
     // Inject Backtrace to Exception
     let _ = prepare_backtrace().map(|backtrace| {
         inject_backtrace(<&JThrowable>::from(&exception), &backtrace, env);

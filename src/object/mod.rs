@@ -6,6 +6,8 @@ use jni::{JNIEnv, objects::{JObject, JThrowable}};
 use thiserror::Error;
 use ez_jni_macros::call;
 
+use crate::utils::get_env;
+
 
 #[derive(Debug, Error)]
 pub enum FromObjectError {
@@ -23,6 +25,8 @@ pub enum FromObjectError {
 }
 
 /// Allows converting a *Java Object* to a Rust type by reading the Object's data.
+/// 
+/// ## TODO: doc from_object from_object_env + implementors must use _env versions in code
 /// 
 /// ### Derive
 /// This trait has a **derive macro** available from [`ez_jni_macros`].
@@ -65,31 +69,29 @@ pub trait FromObject<'local>
 where Self: Sized {
     /// Construct a [`Self`] by reading data from a *Java Object*.
     /// Will [`panic!`] if any of the underlying JNI calls fail.
-    fn from_object(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError>;
-    // TODO: 
-    //     Self::from_object_env(object, get_env::<'_, 'local>())
-    // }
-    // /// Same as [`from_object`][FromObject::from_object], but does not capture the [`JNIEnv`] automatically; the caller must provide it themselves.
-    // /// 
-    // /// This is the *only* function that must be *implemented* for the trait.
-    // fn from_object_env(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError>;
+    fn from_object(object: &JObject) -> Result<Self, FromObjectError> {
+        Self::from_object_env(object, get_env::<'_, 'local>())
+    }
+    /// Same as [`from_object`][FromObject::from_object], but does not capture the [`JNIEnv`] automatically; the caller must provide it themselves.
+    /// 
+    /// This is the *only* function that must be *implemented* for the trait.
+    fn from_object_env(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError>;
 }
 
 pub trait ToObject {
     /// Create an instance of a Class by constructing an object from data in a *Rust struct*.
     /// Will [`panic!`] if any of the underlying JNI calls fail.
-    fn to_object<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local>;
-    // TODO:
-    //     self.to_object_env(get_env::<'_, 'local>())
-    // }
-    // /// Same as [`to_object`][ToObject::to_object], but does not capture the [`JNIEnv`] automatically; the caller must provide it themselves.
-    // /// 
-    // /// This is the *only* function that must be *implemented* for the trait.
-    // fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local>;
+    fn to_object<'local>(&self) -> JObject<'local> {
+        self.to_object_env(get_env::<'_, 'local>())
+    }
+    /// Same as [`to_object`][ToObject::to_object], but does not capture the [`JNIEnv`] automatically; the caller must provide it themselves.
+    /// 
+    /// This is the *only* function that must be *implemented* for the trait.
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local>;
 }
 
 
-
+// TODO: get rid of this trait, use Java classes for error types instead
 /// Allows converting *Java Exceptions* to Rust types that allow for better error handling.
 /// 
 /// # Derive
@@ -122,7 +124,7 @@ where Self: Sized {
 }
 
 /// Does the required checks to ensure that a Java Object is valid.
-pub fn object_check_boilerplate(object: &JObject, path: &'static str, env: &mut JNIEnv) -> Result<(), FromObjectError> {
+fn object_check_boilerplate(object: &JObject, path: &'static str, env: &mut JNIEnv) -> Result<(), FromObjectError> {
     if object.is_null() {
         return Err(FromObjectError::Null)
     }
@@ -132,7 +134,7 @@ pub fn object_check_boilerplate(object: &JObject, path: &'static str, env: &mut 
     
     if !env.is_instance_of(object, path).unwrap() {
         return Err(FromObjectError::ClassMismatch {
-            obj_class: call!(obj_class.getName() -> String),
+            obj_class: call!(env=> obj_class.getName() -> String),
             target_class: Some(path.to_string())
         })
     }

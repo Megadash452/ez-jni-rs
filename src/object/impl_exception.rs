@@ -19,11 +19,11 @@ static IO_ERROR_BASE_PATH: &str = "java/io/IOException";
 
 impl FromException<'_> for std::io::Error {
     fn from_exception(exception: &JThrowable, env: &mut JNIEnv) -> Result<Self, FromObjectError> {
-        <Self as FromObject>::from_object(exception, env)
+        <Self as FromObject>::from_object_env(exception, env)
     }
 }
 impl FromObject<'_> for std::io::Error {
-    fn from_object(object: &JObject, env: &mut JNIEnv) -> Result<Self, FromObjectError> {
+    fn from_object_env(object: &JObject, env: &mut JNIEnv) -> Result<Self, FromObjectError> {
         static MAP: &[(&str, io::ErrorKind)] = &[
             ("java/io/FileNotFoundException", io::ErrorKind::NotFound),
             ("java/nio/file/NoSuchFileException", io::ErrorKind::NotFound),
@@ -59,9 +59,9 @@ impl FromObject<'_> for std::io::Error {
         
         let class = env.get_object_class(&object)
             .expect("Failed to get Object's class");
-        let class_str = call!(class.getName() -> String);
+        let class_str = call!(env=> class.getName() -> String);
 
-        let msg = call!(object.getMessage() -> Option<String>).unwrap_or_default();
+        let msg = call!(env=> object.getMessage() -> Option<String>).unwrap_or_default();
 
         // All classes in map extend java.io.IOException.
         // Check this before the classes in map to avoid a bunch of pointless JNI calls
@@ -80,7 +80,7 @@ impl FromObject<'_> for std::io::Error {
     }
 }
 impl ToObject for std::io::Error {
-    fn to_object<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         static MAP: &[(io::ErrorKind, &str)] = &[
             (io::ErrorKind::NotFound, "java/io/FileNotFoundException"),
             (io::ErrorKind::NotFound, "java/nio/file/NoSuchFileException"),
@@ -112,7 +112,7 @@ impl ToObject for std::io::Error {
         let class = env.find_class(class)
             .expect(&format!("Error getting class \"{class}\""));
 
-        new!(class(String(self.to_string())))
+        new!(env=> class(String(self.to_string())))
     }
 }
 
@@ -122,12 +122,12 @@ impl FromException<'_> for Box<dyn std::error::Error> {
     }
 }
 impl FromObject<'_> for Box<dyn std::error::Error> {
-    fn from_object(object: &JObject, env: &mut JNIEnv) -> Result<Self, FromObjectError> {
+    fn from_object_env(object: &JObject, env: &mut JNIEnv) -> Result<Self, FromObjectError> {
         <Self as FromException>::from_exception(<&JThrowable>::from(object), env)
     }
 }
 impl ToObject for dyn std::error::Error {
-    fn to_object<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        new!(java.lang.Exception(String(self.to_string())))
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        new!(env=> java.lang.Exception(String(self.to_string())))
     }
 }

@@ -88,6 +88,7 @@ use utils::item_from_derive_input;
 /// > Also, ez_jni is not designed for linking Java to native Rust with multiple sources.
 #[proc_macro]
 pub fn jni_fn(input: TokenStream) -> TokenStream {
+    // TODO: Don't include the JNIEnv as an implicit parameter so that the user has to call get_env
     match syn::parse::Parser::parse(jni_fn::jni_fn, input) {
         Ok(output) => output
             .into_iter()
@@ -376,7 +377,7 @@ pub fn println(input: TokenStream) -> TokenStream {
     
     quote!{ ::ez_jni::utils::cfg_if::cfg_if! {
         if #[cfg(target_os = "android")] {
-            ::ez_jni::utils::__println(format!(#input), env)
+            ::ez_jni::utils::__println(format!(#input))
         } else {
             ::std::println!(#string)
         }
@@ -404,7 +405,7 @@ pub fn eprintln(input: TokenStream) -> TokenStream {
     
     quote!{ ::ez_jni::utils::cfg_if::cfg_if! {
         if #[cfg(target_os = "android")] {
-            ::ez_jni::utils::__eprintln(format!(#input), env)
+            ::ez_jni::utils::__eprintln(format!(#input))
         } else {
             ::std::eprintln!(#string)
         }

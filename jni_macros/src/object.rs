@@ -6,7 +6,7 @@ use syn::{parse::{Parse, ParseStream, Parser}, punctuated::Punctuated, AngleBrac
 use itertools::Itertools as _;
 use std::{cell::RefCell, collections::{HashMap, HashSet}};
 use crate::{
-    types::{Class, SigType, InnerType},
+    types::{Class, InnerType, SigType, Type},
     utils::{merge_errors, take_class_attribute, take_class_attribute_required, Spanned}
 };
 
@@ -36,7 +36,7 @@ pub fn derive_struct(mut st: ItemStruct,trait_: syn::Path, method: Ident, obj_ty
                 
                 if !env.is_instance_of(object, __CLASS).unwrap() {
                     return Err(::ez_jni::FromObjectError::ClassMismatch {
-                        obj_class: ::ez_jni::call!(__class.getName() -> String),
+                        obj_class: ::ez_jni::call!(env=> __class.getName() -> String),
                         target_class: Some(__CLASS.to_string())
                     })
                 }
@@ -66,7 +66,7 @@ pub fn derive_enum(mut enm: ItemEnum, trait_: syn::Path, method: Ident, obj_ty: 
         static __BASE_CLASS: &str = #class;
         if !env.is_instance_of(object, __BASE_CLASS).unwrap() {
             return Err(::ez_jni::FromObjectError::ClassMismatch {
-                obj_class: ::ez_jni::call!(__class.getName() -> String),
+                obj_class: ::ez_jni::call!(env=> __class.getName() -> String),
                 target_class: Some(__BASE_CLASS.to_string())
             })
         }
@@ -96,7 +96,7 @@ pub fn derive_enum(mut enm: ItemEnum, trait_: syn::Path, method: Ident, obj_ty: 
 
                 #(#class_checks)* else {
                     Err(::ez_jni::FromObjectError::ClassMismatch {
-                        obj_class: ::ez_jni::call!(__class.getName() -> String),
+                        obj_class: ::ez_jni::call!(env=> __class.getName() -> String),
                         target_class: None
                     })
                 }
@@ -340,11 +340,11 @@ impl FieldAttr {
     }
 }
 
-fn get_type_from_field(field: &Field, class: Option<Class>) -> syn::Result<InnerType> {
+fn get_type_from_field(field: &Field, class: Option<Class>) -> syn::Result<Type> {
     match class {
         // Use the FromObject impl even if it is primitive when a class is provided
-        Some(class) => Ok(InnerType::Object(class)),
-        None => syn::parse2::<InnerType>(field.ty.to_token_stream())
+        Some(class) => Ok(Type::Assertive(InnerType::Object(class))),
+        None => syn::parse2::<Type>(field.ty.to_token_stream())
             .map_err(|_| syn::Error::new(field.span(), "Field must have \"class\" property if it is not a primitive or String."))
     }
 }
@@ -371,26 +371,8 @@ fn struct_constructor(fields: &Fields) -> syn::Result<TokenStream> {
 
             // Use FromObject to convert the returned value to the specified Rust Type.
             let convert = |call: TokenStream| -> TokenStream {
-                let sig_char = ty.sig_char();
-
-                let value = quote_spanned! {field.span()=>
-                    #call.#sig_char()
-                        .unwrap_or_else(|err| panic!("The method call did not return the expected type: {err}"))
-                };
-                let value = match &ty {
-                    InnerType::RustPrimitive { .. } | InnerType::JavaPrimitive { .. } => value,
-                    InnerType::Object(class) if class.to_jni_class_path() == "java/lang/String" => value,
-                    _ => {
-                        let field_ty = &field.ty;
-                        quote_spanned! {field_ty.span()=> {
-                            use ::std::borrow::BorrowMut as _;
-                            <#field_ty as ::ez_jni::FromObject>::from_object(&(#value), env.borrow_mut())?
-                        } }
-                    }
-                };
-                // ty.convert_java_to_rust(&value)
-                    // .unwrap_or(value)
-                todo!("Handle converion in FromObject fn struct_constructor()")
+                let converted = ty.convert_jvalue_to_rvalue(&call);
+                quote_spanned! {converted.span()=> #converted.unwrap_or_else(|err| panic!("The method call did not return the expected type: {err}")) }
             };
             let get_field = |name: String, getter_fallback: bool| {
                 let sig_ty = ty.sig_type();

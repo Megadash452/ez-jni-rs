@@ -51,12 +51,12 @@ mod jvalue;
 mod hints;
 extern crate self as ez_jni;
 
-use std::{cell::RefCell, collections::LinkedList};
-
 pub use ez_jni_macros::*;
-use jni::JNIEnv;
 pub use object::*;
 pub use jvalue::*;
+
+use std::{cell::RefCell, collections::LinkedList};
+use jni::JNIEnv;
 
 thread_local! {
     /// Holds a stack of [`JNIEnv`] that was aquired from native function call (a.k.a jni_fn).
