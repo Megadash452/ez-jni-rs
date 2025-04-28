@@ -15,6 +15,8 @@ public final class Test {
         }
     }
 
+    public String[] arrayField = new String[] { "Hello", "World" };
+
     public int memberField;
     public Integer memberObject() {
         return new Integer(this.memberField);

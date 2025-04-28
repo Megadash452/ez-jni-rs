@@ -1,138 +1,156 @@
 mod common;
 
+use common::setup_jvm;
 use ez_jni::{call, new, FromException, FromObject, ToObject};
 use jni::objects::JObject;
 
 /// Tests the implementations of FromObject, etc. for *standard library* types.
 #[test]
 fn implementations() {
-    setup_env!(env);
+    setup_jvm();
     static S: &str = "Hello, World!";
     static N: i8 = -3;
     static UN: i8 = 3;
     static F: f32 = -3.3;
 
     // Test String
-    let mut obj = S.to_object(&mut env);
-    let s = String::from_object(&obj, &mut env).unwrap();
+    let mut obj = S.to_object();
+    let s = String::from_object(&obj).unwrap();
     assert_eq!(s, S);
 
     // Testing Option
-    obj = Some(S).to_object(&mut env);
-    let s = Option::<String>::from_object(&obj, &mut env).unwrap();
+    obj = Some(S).to_object();
+    let s = Option::<String>::from_object(&obj).unwrap();
     assert_eq!(s.unwrap(), S);
 
     assert_eq!(
-        Option::<String>::from_object(&JObject::null(), &mut env).unwrap(),
+        Option::<String>::from_object(&JObject::null()).unwrap(),
         None
     );
 
     // Testing IO Error
     obj = new!(java.io.FileNotFoundException(java.lang.String(S)));
-    let err = std::io::Error::from_object(&obj, &mut env).unwrap();
+    let err = std::io::Error::from_object(&obj).unwrap();
     assert_eq!(err.to_string(), S);
 
     // Testing Number types
-    obj = (N as i8).to_object(&mut env);
-    assert_eq!(N as i8, i8::from_object(&obj, &mut env).unwrap());
-    obj = (N as i16).to_object(&mut env);
-    assert_eq!(N as i16, i16::from_object(&obj, &mut env).unwrap());
-    obj = (N as i32).to_object(&mut env);
-    assert_eq!(N as i32, i32::from_object(&obj, &mut env).unwrap());
-    obj = (N as i64).to_object(&mut env);
-    assert_eq!(N as i64, i64::from_object(&obj, &mut env).unwrap());
-    obj = (F as f32).to_object(&mut env);
-    assert_eq!(F as f32, f32::from_object(&obj, &mut env).unwrap());
-    obj = (F as f64).to_object(&mut env);
-    assert_eq!(F as f64, f64::from_object(&obj, &mut env).unwrap());
-    obj = (UN as u8).to_object(&mut env);
-    assert_eq!(UN as u8, u8::from_object(&obj, &mut env).unwrap());
-    obj = (UN as u16).to_object(&mut env);
-    assert_eq!(UN as u16, u16::from_object(&obj, &mut env).unwrap());
-    obj = (UN as u32).to_object(&mut env);
-    assert_eq!(UN as u32, u32::from_object(&obj, &mut env).unwrap());
-    obj = (UN as u64).to_object(&mut env);
-    assert_eq!(UN as u64, u64::from_object(&obj, &mut env).unwrap());
-    obj = true.to_object(&mut env);
-    assert_eq!(true, bool::from_object(&obj, &mut env).unwrap());
-    obj = 'a'.to_object(&mut env);
-    assert_eq!('a', char::from_object(&obj, &mut env).unwrap());
+    obj = (N as i8).to_object();
+    assert_eq!(N as i8, i8::from_object(&obj).unwrap());
+    obj = (N as i16).to_object();
+    assert_eq!(N as i16, i16::from_object(&obj).unwrap());
+    obj = (N as i32).to_object();
+    assert_eq!(N as i32, i32::from_object(&obj).unwrap());
+    obj = (N as i64).to_object();
+    assert_eq!(N as i64, i64::from_object(&obj).unwrap());
+    obj = (F as f32).to_object();
+    assert_eq!(F as f32, f32::from_object(&obj).unwrap());
+    obj = (F as f64).to_object();
+    assert_eq!(F as f64, f64::from_object(&obj).unwrap());
+    obj = (UN as u8).to_object();
+    assert_eq!(UN as u8, u8::from_object(&obj).unwrap());
+    obj = (UN as u16).to_object();
+    assert_eq!(UN as u16, u16::from_object(&obj).unwrap());
+    obj = (UN as u32).to_object();
+    assert_eq!(UN as u32, u32::from_object(&obj).unwrap());
+    obj = (UN as u64).to_object();
+    assert_eq!(UN as u64, u64::from_object(&obj).unwrap());
+    obj = true.to_object();
+    assert_eq!(true, bool::from_object(&obj).unwrap());
+    obj = 'a'.to_object();
+    assert_eq!('a', char::from_object(&obj).unwrap());
     // Testing Array types
     // String Array
-    obj = ["Hello", "World"].to_object(&mut env);
+    obj = ["Hello", "World"].to_object();
     assert_eq!(
         ["Hello", "World"],
-        Box::<[String]>::from_object(&obj, &mut env)
+        Box::<[String]>::from_object(&obj)
             .unwrap()
             .as_ref()
     );
-    obj = [Some("Hello"), None].to_object(&mut env);
+    obj = [Some("Hello"), None].to_object();
     assert_eq!(
         [Some("Hello".to_string()), None],
-        Box::<[Option<String>]>::from_object(&obj, &mut env)
+        Box::<[Option<String>]>::from_object(&obj)
             .unwrap()
             .as_ref()
     );
+    // Object Array
+    obj = ("java/lang/String", ["Hello".to_object(), "World".to_object()]).to_object();
+    assert_eq!(
+        ["Hello", "World"],
+        Box::<[String]>::from_object(&obj)
+            .unwrap()
+            .as_ref()
+    );
+    let _ = Box::<[JObject]>::from_object(&obj).unwrap();
+    obj = ("java/lang/String", ["Hello".to_object(), JObject::null()]).to_object();
+    assert_eq!(
+        [Some("Hello".to_string()), None],
+        Box::<[Option<String>]>::from_object(&obj)
+            .unwrap()
+            .as_ref()
+    );
+    let _ = Box::<[Option<JObject>]>::from_object(&obj).unwrap();
     // Primitives Arrays
-    obj = [1i8, 2, 3].to_object(&mut env);
+    obj = [1i8, 2, 3].to_object();
     assert_eq!(
         [1, 2, 3],
-        Box::<[i8]>::from_object(&obj, &mut env).unwrap().as_ref()
+        Box::<[i8]>::from_object(&obj).unwrap().as_ref()
     );
-    obj = [1i16, 2, 3].to_object(&mut env);
+    obj = [1i16, 2, 3].to_object();
     assert_eq!(
         [1, 2, 3],
-        Box::<[i16]>::from_object(&obj, &mut env).unwrap().as_ref()
+        Box::<[i16]>::from_object(&obj).unwrap().as_ref()
     );
-    obj = [1i32, 2, 3].to_object(&mut env);
+    obj = [1i32, 2, 3].to_object();
     assert_eq!(
         [1, 2, 3],
-        Box::<[i32]>::from_object(&obj, &mut env).unwrap().as_ref()
+        Box::<[i32]>::from_object(&obj).unwrap().as_ref()
     );
-    obj = [1i64, 2, 3].to_object(&mut env);
+    obj = [1i64, 2, 3].to_object();
     assert_eq!(
         [1, 2, 3],
-        Box::<[i64]>::from_object(&obj, &mut env).unwrap().as_ref()
+        Box::<[i64]>::from_object(&obj).unwrap().as_ref()
     );
-    obj = [1.1f32, 2.2, 3.3].to_object(&mut env);
+    obj = [1.1f32, 2.2, 3.3].to_object();
     assert_eq!(
         [1.1f32, 2.2, 3.3],
-        Box::<[f32]>::from_object(&obj, &mut env).unwrap().as_ref()
+        Box::<[f32]>::from_object(&obj).unwrap().as_ref()
     );
-    obj = [1.1f64, 2.2, 3.3].to_object(&mut env);
+    obj = [1.1f64, 2.2, 3.3].to_object();
     assert_eq!(
         [1.1f64, 2.2, 3.3],
-        Box::<[f64]>::from_object(&obj, &mut env).unwrap().as_ref()
+        Box::<[f64]>::from_object(&obj).unwrap().as_ref()
     );
-    obj = [1u8, 2, 3].to_object(&mut env);
+    obj = [1u8, 2, 3].to_object();
     assert_eq!(
         [1, 2, 3],
-        Box::<[u8]>::from_object(&obj, &mut env).unwrap().as_ref()
+        Box::<[u8]>::from_object(&obj).unwrap().as_ref()
     );
-    obj = [1u16, 2, 3].to_object(&mut env);
+    obj = [1u16, 2, 3].to_object();
     assert_eq!(
         [1, 2, 3],
-        Box::<[u16]>::from_object(&obj, &mut env).unwrap().as_ref()
+        Box::<[u16]>::from_object(&obj).unwrap().as_ref()
     );
-    obj = [1u32, 2, 3].to_object(&mut env);
+    obj = [1u32, 2, 3].to_object();
     assert_eq!(
         [1, 2, 3],
-        Box::<[u32]>::from_object(&obj, &mut env).unwrap().as_ref()
+        Box::<[u32]>::from_object(&obj).unwrap().as_ref()
     );
-    obj = [1u64, 2, 3].to_object(&mut env);
+    obj = [1u64, 2, 3].to_object();
     assert_eq!(
         [1, 2, 3],
-        Box::<[u64]>::from_object(&obj, &mut env).unwrap().as_ref()
+        Box::<[u64]>::from_object(&obj).unwrap().as_ref()
     );
-    obj = [true, false].to_object(&mut env);
+    obj = [true, false].to_object();
     assert_eq!(
         [true, false],
-        Box::<[bool]>::from_object(&obj, &mut env).unwrap().as_ref()
+        Box::<[bool]>::from_object(&obj).unwrap().as_ref()
     );
-    obj = ['a', 'b', 'c'].to_object(&mut env);
+    obj = ['a', 'b', 'c'].to_object();
     assert_eq!(
         ['a', 'b', 'c'],
-        Box::<[char]>::from_object(&obj, &mut env).unwrap().as_ref()
+        Box::<[char]>::from_object(&obj).unwrap().as_ref()
     );
 }
 
@@ -147,6 +165,7 @@ struct MyClass {
 struct MyClass1 {
     #[field(call = memberGetter)]
     member: i32,
+    array_field: Box<[String]>,
 }
 
 #[derive(FromObject)]
@@ -154,6 +173,7 @@ struct MyClass1 {
 struct MyClass2<'local> {
     #[field(call = memberObject, class = java.lang.Integer)]
     member: JObject<'local>,
+    array_field: Box<[Option<String>]>,
 }
 
 #[derive(FromObject)]
@@ -184,26 +204,26 @@ enum MyEnumClass2 {
 
 #[test]
 fn from_object() {
-    setup_env!(env);
+    setup_jvm();
     const VAL: i32 = 3;
     let mut object = new!(me.test.Test(int(VAL)));
 
     assert_eq!(
-        MyClass::from_object(&object, &mut env)
+        MyClass::from_object(&object)
             .unwrap()
             .member_field,
         VAL
     );
     assert_eq!(
-        MyClass1::from_object(&object, &mut env)
+        MyClass1::from_object(&object)
             .unwrap()
             .member,
         VAL
     );
-    let int = MyClass2::from_object(&object, &mut env).unwrap().member;
+    let int = MyClass2::from_object(&object).unwrap().member;
     assert_eq!(call!(int.intValue() -> int), VAL);
     assert_eq!(
-        MyClass3::from_object(&object, &mut env)
+        MyClass3::from_object(&object)
             .unwrap()
             .member,
         VAL
@@ -211,14 +231,14 @@ fn from_object() {
 
     object = new!(me.test.Test$SumClass$SumClass1(int(VAL)));
     assert_eq!(
-        MyEnumClass::from_object(&object, &mut env).unwrap(),
+        MyEnumClass::from_object(&object).unwrap(),
         MyEnumClass::Variant1 { number: VAL }
     );
 
     const S: &str = "Hello, World!";
     object = new!(me.test.Test$SumClass$SumClass2(java.lang.String(S)));
     assert_eq!(
-        MyEnumClass::from_object(&object, &mut env).unwrap(),
+        MyEnumClass::from_object(&object).unwrap(),
         MyEnumClass::Variant2 { str: S.to_string() }
     );
 }
@@ -248,7 +268,7 @@ impl Exception {
 
 #[test]
 fn from_exception() {
-    setup_env!(env);
+    setup_jvm();
     assert_eq!(
         call!(static me.test.Test.throwObj() -> Result<java.lang.Object, MyErr1>)
             .unwrap_err()

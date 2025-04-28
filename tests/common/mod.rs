@@ -25,6 +25,10 @@ macro_rules! setup_env {
     };
 }
 
+pub fn setup_jvm() {
+    todo!()
+}
+
 fn compile_java() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(CLASS_DIR)?;
     let output = Command::new("javac")

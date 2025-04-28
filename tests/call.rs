@@ -2,12 +2,13 @@ mod common;
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
+use common::setup_jvm;
 use ez_jni::{call, class, eprintln, field, new, println, singleton};
 use jni::objects::{JClass, JObject};
 
 #[test]
 fn return_primitives() {
-    setup_env!(env);
+    setup_jvm();
     // Java primitive return types
     let _: () = call!(static me.test.Test.getVoid() -> void);
     let _: bool = call!(static me.test.Test.getBoolean() -> boolean);
@@ -47,7 +48,7 @@ fn return_primitives() {
 
 #[test]
 fn return_other() {
-    setup_env!(env);
+    setup_jvm();
     // Object
     let _: JObject = call!(static me.test.Test.getObject() -> java.lang.Object);
     let _: String = call!(static me.test.Test.getString() -> java.lang.String);
@@ -80,7 +81,7 @@ fn return_other() {
 
 #[test]
 fn return_arrays() {
-    setup_env!(env);
+    setup_jvm();
     // Java primitives
     let _: Box<[bool]> = call!(static me.test.Test.getBooleanArray() -> [boolean]);
     let _: Box<[char]> = call!(static me.test.Test.getCharArray() -> [char]);
@@ -123,7 +124,7 @@ fn return_arrays() {
 
 #[test]
 fn return_arrays_other() {
-    setup_env!(env);
+    setup_jvm();
     // Object
     let _: Box<[JObject]> = call!(static me.test.Test.getObjectArray() -> [java.lang.Object]);
     let _: Box<[String]> = call!(static me.test.Test.getStringArray() -> [java.lang.String]);
@@ -201,7 +202,7 @@ fn return_arrays_other() {
 
 #[test]
 fn return_fail() {
-    setup_env!(env);
+    setup_jvm();
     catch_unwind(AssertUnwindSafe(
         || call!(static me.test.Test.nullable() -> java.lang.Object),
     ))
@@ -222,7 +223,7 @@ fn return_fail() {
 
 #[test]
 fn arguments() {
-    setup_env!(env);
+    setup_jvm();
     // -- Non-Array Arguments
     call!(static me.test.Test.primArgs(boolean(true), char('a'), byte(1i8), short(1i16), int(1i32), long(1i64), float(1f32), double(1f64)) -> void);
     call!(static me.test.Test.objArgs(java.lang.Object(new!(java.lang.Object())), java.lang.String("hi")) -> void);
@@ -306,7 +307,7 @@ fn arguments() {
 
 #[test]
 fn constructor() {
-    setup_env!(env);
+    setup_jvm();
 
     new!(me.test.Test());
     new!(me.test.Test(int(3)));
@@ -314,7 +315,7 @@ fn constructor() {
     new!(me.test.Test(String("Hello, World!")) throws String).unwrap();
     new!(me.test.Test(String(null)) throws String).unwrap_err();
 
-    let class = env.find_class("me/test/Test").unwrap();
+    let class = class!(me.test.Test);
     new!(class());
     new!((class)(int(3)));
     new!({ &class }(String("Hello, World!")));
@@ -337,7 +338,7 @@ fn constructor_fail() {
 
 #[test]
 fn obj_method() {
-    setup_env!(env);
+    setup_jvm();
 
     let obj: JObject<'_> = new!(me.test.Test$Instanced());
     call!(obj.getBoolean() -> boolean);
@@ -351,13 +352,14 @@ fn obj_method() {
     call!(Some(Some(&obj)).unwrap().unwrap().getBoolean() -> boolean);
 
     // Test method on class Object
-    let class = env.get_object_class(&obj).unwrap();
+    // FIXME: add JClass as a Rust Type in the macros
+    let class = JClass::from(call!(obj.getClass() -> java.lang.Class));
     assert_eq!(call!(class.getName() -> String), "me.test.Test$Instanced");
 }
 
 #[test]
 fn field() {
-    setup_env!(env);
+    setup_jvm();
 
     assert_eq!(field!(static me.test.Test.member1: u32), 3);
     assert_eq!(field!(static me.test.Test.member2: String), "Hello, World!");
@@ -383,7 +385,7 @@ fn field() {
 
 #[test]
 fn class() {
-    setup_env!(env);
+    setup_jvm();
     let mut class: JClass<'_>;
 
     class = class!(me.test.Test);
