@@ -169,7 +169,6 @@ fn throw_panic(env: &mut JNIEnv, payload: Box<dyn Any + Send>) {
             let panic_class = jni::objects::JClass::from(JObject::null());
         }
     }
-        
 
     let exception = new!(env=> panic_class(String(location.file), u32(location.line), u32(location.col), String(panic_msg)));
     // Inject Backtrace to Exception
