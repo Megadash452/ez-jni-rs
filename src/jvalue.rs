@@ -4,44 +4,54 @@ use crate::{utils::get_env, FromObject, FromObjectError, ToObject};
 
 /// Get a **Rust** value from a **Java** value.
 /// 
-/// *Users* of this trait should only use [`from_jvalue()`][FromJValue::from_jvalue()],
-/// but *implementors* of this trait should only implement [`from_jvalue_env()`][FromJValue::from_jvalue_env()].
+/// ## Implementation
 /// 
-/// > This trait is directly used by the [`macros`][ez_jni_macros].
+/// This trait contains 2 methods that essentially do the same thing.
+/// [`from_jvalue`][FromJValue::from_jvalue] exists for ease of use when a [`JNIEnv`] is not in scope and gets it from a global stack.
+/// This method should **not** be re-implemented.
+/// [`from_jvalue_env`][FromJValue::from_jvalue_env] is the method that has the actual implementation and can take any [`JNIEnv`].
+/// All calls in the code of [`from_jvalue_env`][FromJValue::from_jvalue_env] should only use the `_env` counterparts so that the same [`JNIEnv`] is guaranteed to be used throughout the call.
 pub trait FromJValue<'a, 'local>
 where Self: Sized {
     /// Get a **Rust** value from a **Java** value.
     /// 
-    /// Automatically captures the [`JNIEnv`] from the local stack.
-    ///
     /// Returns an [`Error`][FromJValueError] if the *value* was not the correct type.
-    // TODO: check lifetime for get_env()
+    /// 
+    /// Automatically captures the [`JNIEnv`] from the local stack.
     fn from_jvalue(val: JValue<'_, 'a>) -> Result<Self, FromJValueError> {
         Self::from_jvalue_env(val, get_env::<'_, 'local>())
     }
     /// Same as [`from_jvalue`][FromJValue::from_jvalue], but does not capture the [`JNIEnv`] automatically; the caller must provide it themselves.
     /// 
-    /// This is the *only* function that must be *implemented* for the trait.
+    /// The implementation should also only methods that allow passing a [`JNIEnv`] so that the same [`JNIEnv`] is guaranteed to be used all throughout the call.
+    /// For example, use [`from_jvalue_env`][FromJValue::from_jvalue_env] instead of [`from_jvalue`][FromJValue::from_jvalue].
+    /// For jni macros, the env can be specified with this syntax: `macro!(env=> ...)`.
+    /// 
+    /// Only implement *this* method for the trait.
     fn from_jvalue_env(val: JValue<'_, 'a>, env: &mut JNIEnv<'local>) -> Result<Self, FromJValueError>;
 }
 
 /// Convert a **Rust** value to a **Java** value.
 /// 
-/// *Users* of this trait should only use [`to_jvalue()`][ToJValue::to_jvalue()],
-/// but *implementors* of this trait should only implement [`to_jvalue_env()`][ToJValue::to_jvalue_env()].
+/// ## Implementation
 /// 
-/// > This trait is directly used by the [`macros`][ez_jni_macros].
+/// Just like [`FromJValue`][FromJValue#implementation], this trait has 2 methods that do the same thing:
+/// [`to_jvalue`][ToJValue::to_jvalue] automatically gets the [`JNIEnv`],
+/// and [`to_jvalue_env`][ToJValue::to_jvalue_env] is the method that has the implementation.
 pub trait ToJValue {
     /// Convert a **Rust** value to a **Java** value.
     /// 
     /// Automatically captures the [`JNIEnv`] from the local stack.
-    // TODO: check lifetime for get_env()
     fn to_jvalue<'local>(&self) -> JValueOwned<'local> {
         self.to_jvalue_env(get_env::<'_, 'local>())
     }
     /// Same as [`to_jvalue`][ToJValue::to_jvalue], but does not capture the [`JNIEnv`] automatically; the caller must provide it themselves.
     ///
-    /// This is the *only* function that must be *implemented* for the trait.
+    /// The implementation should also only methods that allow passing a [`JNIEnv`] so that the same [`JNIEnv`] is guaranteed to be used all throughout the call.
+    /// For example, use [`to_jvalue_env`][ToJValue::to_jvalue_env] instead of [`to_jvalue`][ToJValue::to_jvalue].
+    /// For jni macros, the env can be specified with this syntax: `macro!(env=> ...)`.
+    /// 
+    /// Only implement *this* method for the trait.
     fn to_jvalue_env<'local>(&self, env: &mut JNIEnv<'local>) -> JValueOwned<'local>;
 }
 

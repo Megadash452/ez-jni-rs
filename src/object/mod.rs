@@ -26,9 +26,16 @@ pub enum FromObjectError {
 
 /// Allows converting a *Java Object* to a Rust type by reading the Object's data.
 /// 
-/// ## TODO: doc from_object from_object_env + implementors must use _env versions in code
+/// ## Implementation
 /// 
-/// ### Derive
+/// This trait contains 2 methods that essentially do the same thing.
+/// [`from_object`][FromObject::from_object] exists for ease of use when a [`JNIEnv`] is not in scope and gets it from a global stack.
+/// This method should **not** be re-implemented.
+/// [`from_object_env`][FromObject::from_object_env] is the method that has the actual implementation and can take any [`JNIEnv`].
+/// All calls in the code of [`from_object_env`][FromObject::from_object_env] should only use the `_env` counterparts so that the same [`JNIEnv`] is guaranteed to be used throughout the call.
+/// 
+/// ## Derive
+/// 
 /// This trait has a **derive macro** available from [`ez_jni_macros`].
 /// Use it on *structs* to indicate that only 1 specific Class is expected.
 /// Use it on *enums* to expect different Classes (one for each variant).
@@ -69,24 +76,43 @@ pub trait FromObject<'local>
 where Self: Sized {
     /// Construct a [`Self`] by reading data from a *Java Object*.
     /// Will [`panic!`] if any of the underlying JNI calls fail.
+    /// 
+    /// Automatically captures the [`JNIEnv`] from the local stack.
     fn from_object(object: &JObject) -> Result<Self, FromObjectError> {
         Self::from_object_env(object, get_env::<'_, 'local>())
     }
     /// Same as [`from_object`][FromObject::from_object], but does not capture the [`JNIEnv`] automatically; the caller must provide it themselves.
     /// 
-    /// This is the *only* function that must be *implemented* for the trait.
+    /// The implementation should also only methods that allow passing a [`JNIEnv`] so that the same [`JNIEnv`] is guaranteed to be used all throughout the call.
+    /// For example, use [`from_object_env`][FromObject::from_object_env] instead of [`from_object`][FromObject::from_object].
+    /// For jni macros, the env can be specified with this syntax: `macro!(env=> ...)`.
+    /// 
+    /// Only implement *this* method for the trait.
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError>;
 }
 
+/// Allows converting a *Rust type* to a *Java Object*.
+/// 
+/// ## Implementation
+/// 
+/// Just like [`FromObject`][FromObject#implementation], this trait has 2 methods that do the same thing:
+/// [`to_object`][ToObject::to_object] automatically gets the [`JNIEnv`],
+/// and [`to_object_env`][ToObject::to_object_env] is the method that has the implementation.
 pub trait ToObject {
     /// Create an instance of a Class by constructing an object from data in a *Rust struct*.
     /// Will [`panic!`] if any of the underlying JNI calls fail.
+    /// 
+    /// Automatically captures the [`JNIEnv`] from the local stack.
     fn to_object<'local>(&self) -> JObject<'local> {
         self.to_object_env(get_env::<'_, 'local>())
     }
     /// Same as [`to_object`][ToObject::to_object], but does not capture the [`JNIEnv`] automatically; the caller must provide it themselves.
     /// 
-    /// This is the *only* function that must be *implemented* for the trait.
+    /// The implementation should also only methods that allow passing a [`JNIEnv`] so that the same [`JNIEnv`] is guaranteed to be used all throughout the call.
+    /// For example, use [`to_object_env`][ToObject::to_object_env] instead of [`to_object`][ToObject::to_object].
+    /// For jni macros, the env can be specified with this syntax: `macro!(env=> ...)`.
+    /// 
+    /// Only implement *this* method for the trait.
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local>;
 }
 
