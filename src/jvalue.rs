@@ -8,16 +8,15 @@ use crate::{utils::get_env, FromObject, FromObjectError, ToObject, FromObjectImp
 /// 
 /// This trait cannot be implemented directly.
 /// Types must instead implement [`FromJValueImpl`], which allows a caller to pass in their own [`JNIEnv`].
-/// 
-/// > This trait is directly used by the [`macros`][ez_jni_macros].
 pub trait FromJValue<'a, 'local>: FromJValueImpl<'a, 'local>
 where Self: Sized {
     /// Get a **Rust** value from a **Java** value.
     /// 
-    /// Automatically captures the [`JNIEnv`] from the local stack.
-    ///
     /// Returns an [`Error`][FromJValueError] if the *value* was not the correct type.
-    // TODO: check lifetime for get_env()
+    /// Will [`panic!`] if any of the underlying JNI calls fail.
+    /// 
+    /// Automatically captures the [`JNIEnv`] from the thread-local stack.
+    /// To pass in your own [`JNIEnv`], see [`FromJValueImpl::from_jvalue_env`].
     fn from_jvalue(val: JValue<'_, 'a>) -> Result<Self, FromJValueError> {
         Self::from_jvalue_env(val, get_env::<'_, 'local>())
     }
@@ -32,21 +31,25 @@ where Self: Sized {
 pub trait FromJValueImpl<'a, 'local>
 where Self: Sized {
     /// Same as [`from_jvalue`][FromJValue::from_jvalue], but does not capture the [`JNIEnv`] automatically; the caller must provide it themselves.
+    /// 
+    /// See [`FromJValueImpl`] for implementation details.
     fn from_jvalue_env(val: JValue<'_, 'a>, env: &mut JNIEnv<'local>) -> Result<Self, FromJValueError>;
 }
 impl<'a, 'local, T: FromJValueImpl<'a, 'local>> FromJValue<'a, 'local> for T { }
 
 /// Convert a **Rust** value to a **Java** value.
 /// 
-/// *Users* of this trait should only use [`to_jvalue()`][ToJValue::to_jvalue()],
-/// but *implementors* of this trait should only implement [`to_jvalue_env()`][ToJValue::to_jvalue_env()].
+/// ## Implementation
 /// 
-/// > This trait is directly used by the [`macros`][ez_jni_macros].
+/// This trait cannot be implemented directly.
+/// Types must instead implement [`ToJValueImpl`], which allows a caller to pass in their own [`JNIEnv`].
 pub trait ToJValue: ToJValueImpl {
     /// Convert a **Rust** value to a **Java** value.
     /// 
-    /// Automatically captures the [`JNIEnv`] from the local stack.
-    // TODO: check lifetime for get_env()
+    /// Will [`panic!`] if any of the underlying JNI calls fail.
+    /// 
+    /// Automatically captures the [`JNIEnv`] from the thread-local stack.
+    /// To pass in your own [`JNIEnv`], see [`ToJValueImpl::to_jvalue_env`].
     fn to_jvalue<'local>(&self) -> JValueOwned<'local> {
         self.to_jvalue_env(get_env::<'_, 'local>())
     }
@@ -60,7 +63,7 @@ pub trait ToJValue: ToJValueImpl {
 pub trait ToJValueImpl {
     /// Same as [`to_jvalue`][ToJValue::to_jvalue], but does not capture the [`JNIEnv`] automatically; the caller must provide it themselves.
     ///
-    /// This is the *only* function that must be *implemented* for the trait.
+    /// See [`ToJValueImpl`] for implementation details.
     fn to_jvalue_env<'local>(&self, env: &mut JNIEnv<'local>) -> JValueOwned<'local>;
 }
 impl<T: ToJValueImpl> ToJValue for T { }

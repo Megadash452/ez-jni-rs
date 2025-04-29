@@ -100,6 +100,7 @@ impl Type {
     /// General function to convert a **Rust value** to a [`JValue`][jni::objects::JValueGen].
     /// 
     /// Used to generate the conversion for the *argument values* of a JNI call.
+    // FIXME: Compiler emmits a `noop_method_call` warning when the argument's Rust type is `&str`.
     pub fn convert_rvalue_to_jvalue(&self, value: &TokenStream) -> TokenStream {
         // Get a concrete Rust type to tell ToJValue to use
         let ty = match self {
@@ -112,20 +113,16 @@ impl Type {
                 if class.is_jobject() => {
                     // Use one of the util functions instead of the ToJValue implementation
                     let elem_class = class.to_jni_class_path();
-                    return quote_spanned! {value.span()=> {
-                        use ::std::borrow::Borrow;
+                    return quote_spanned! {value.span()=>
                         ::jni::objects::JValueOwned::Object(::ez_jni::utils::create_object_array((#value).borrow(), #elem_class, env))
-                    } }
+                    }
                 },
                 _ => self.ty_tokens(true),
             },
             _ => self.ty_tokens(true),
         };
         // use the ToJValue implementation
-        quote_spanned! {value.span()=> {
-            use ::std::borrow::Borrow;
-            <#ty as ::ez_jni::ToJValue>::to_jvalue_env((#value).borrow(), env)
-        } }
+        quote_spanned! {value.span()=> <#ty as ::ez_jni::ToJValue>::to_jvalue_env((#value).borrow(), env) }
     }
 
     /// Converts a [`Type`] to a *Rust type* as a [`TokenStream`].
@@ -402,11 +399,10 @@ impl ArrayType {
             // Must be the full Array Type. E.g. "[Ljava/lang/String;"
             let array_ty = self.sig_type();
 
-            quote_spanned! {value.span() => {
-                use ::std::borrow::BorrowMut as _;
-                ::ez_jni::utils::get_object_array_converted(&(#value), Some(#array_ty), |_element, #[allow(unused_variables)] env| #elem_conversion, env.borrow_mut())
+            quote_spanned! {value.span() => 
+                ::ez_jni::utils::get_object_array_converted(&(#value), Some(#array_ty), |_element, #[allow(unused_variables)] env| #elem_conversion, env)
                     .unwrap_or_else(|err| panic!("{err}"))
-            } }
+            }
         };
 
         match self.ty.as_ref() {
@@ -454,21 +450,19 @@ impl ArrayType {
         /// class.convert_rust_to_java(&quote!(_element))
         /// ```
         fn create_obj_array(elem_class: LitStr, elem_conversion: TokenStream, value: &TokenStream) -> TokenStream {
-            quote_spanned! {value.span()=> {
-                use ::std::borrow::BorrowMut as _;
+            quote_spanned! {value.span()=>
                 ::ez_jni::utils::create_object_array_converted(
                     ::std::convert::AsRef::<[_]>::as_ref(&(#value)),
                     #elem_class,
                     |_element, #[allow(unused_variables)] env| #elem_conversion,
-                env.borrow_mut())
-            } }
-            // quote_spanned! {value.span()=> {
-            //     use ::std::borrow::BorrowMut as _;
+                env)
+            }
+            // quote_spanned! {value.span()=>
             //     ::ez_jni::utils::create_object_array(
             //         ::std::convert::AsRef::<[_]>::as_ref(&(#value)),
             //         #elem_class,
-            //     env.borrow_mut())
-            // } }
+            //     env)
+            // }
         }
 
         match self.ty.as_ref() {

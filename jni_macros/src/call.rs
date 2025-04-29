@@ -150,6 +150,7 @@ pub fn field(call: FieldCall) -> TokenStream {
 pub fn get_class(env: Env, class: Class) -> TokenStream {
     let class = class.to_jni_class_path();
     quote! { {
+        use ::std::borrow::Borrow;
         let env: &mut ::jni::JNIEnv = #env;
         env.find_class(#class)
             .unwrap_or_else(|err| ::ez_jni::__throw::handle_jni_call_error(err, env))
@@ -177,6 +178,7 @@ pub struct MethodCall {
     pub parameters: Punctuated<Parameter, Token![,]>,
     pub return_type: Return,
 }
+// TODO: modify inner macro calls to use this JNIEnv.
 impl Parse for MethodCall {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         // This parse implementation is complicated to allow parsing arbitrary Expressions as the callee.
