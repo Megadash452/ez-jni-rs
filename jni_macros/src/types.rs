@@ -94,7 +94,7 @@ impl Type {
             _ => self.ty_tokens(false),
         };
         // use the FromJValue implementation
-        quote_spanned! {value.span()=> <#ty as ::ez_jni::FromJValue>::from_jvalue_env((#value).borrow(), env).unwrap() }
+        quote_spanned! {value.span()=> <#ty as ::ez_jni::FromJValueImpl>::from_jvalue_env((#value).borrow(), env).unwrap() }
     }
 
     /// General function to convert a **Rust value** to a [`JValue`][jni::objects::JValueGen].
@@ -122,7 +122,7 @@ impl Type {
             _ => self.ty_tokens(true),
         };
         // use the ToJValue implementation
-        quote_spanned! {value.span()=> <#ty as ::ez_jni::ToJValue>::to_jvalue_env((#value).borrow(), env) }
+        quote_spanned! {value.span()=> <#ty as ::ez_jni::ToJValueImpl>::to_jvalue_env((#value).borrow(), env) }
     }
 
     /// Converts a [`Type`] to a *Rust type* as a [`TokenStream`].
@@ -383,7 +383,7 @@ impl ArrayType {
         fn convert_prim_array(r_prim: RustPrimitive, value: &TokenStream) -> TokenStream {
             let r_prim = Ident::new(&r_prim.to_string(), value.span());
             quote_spanned! {r_prim.span()=>
-                <[#r_prim] as ::ez_jni::FromJValue>::from_jvalue_env(#value, env)
+                <[#r_prim] as ::ez_jni::FromJValueImpl>::from_jvalue_env(#value, env)
             }
         }
 
@@ -412,10 +412,10 @@ impl ArrayType {
                 InnerType::RustPrimitive { ty, .. } => convert_prim_array(*ty, value),
                 InnerType::Object(class) => match class {
                     Class::Short(ty) if ty == "String" => quote_spanned! {ty.span()=>
-                        <[String] as ::ez_jni::FromJValue>::from_jvalue_env(#value, env)
+                        <[String] as ::ez_jni::FromJValueImpl>::from_jvalue_env(#value, env)
                     },
                     _ => quote_spanned! {ty.span()=>
-                        <Box<[JObject<'_>]> as ::ez_jni::FromJValue>::from_jvalue_env(#value, env)
+                        <Box<[JObject<'_>]> as ::ez_jni::FromJValueImpl>::from_jvalue_env(#value, env)
                     }
                 },
             },
@@ -423,7 +423,7 @@ impl ArrayType {
             Type::Option { ty, .. } => match ty.convert_java_to_rust(&quote_spanned!(value.span()=> _element)) {
                 Some(conversion) => get_object_arr(conversion),
                 None => quote_spanned! {ty.span()=>
-                    <Box<[Option<JObject<'_>>]> as ::ez_jni::FromJValue>::from_jvalue_env(#value, env)
+                    <Box<[Option<JObject<'_>>]> as ::ez_jni::FromJValueImpl>::from_jvalue_env(#value, env)
                 }
             },
             Type::Array(array) => get_object_arr(array.convert_java_to_rust(&quote_spanned!(value.span()=> _element))),
@@ -437,7 +437,7 @@ impl ArrayType {
         fn convert_prim_array(r_prim: RustPrimitive, value: &TokenStream) -> TokenStream {
             let r_prim = Ident::new(&r_prim.to_string(), value.span());
             quote_spanned! {r_prim.span()=>
-                ::ez_jni::ToJValue::to_jvalue_env(::std::convert::AsRef::<[#r_prim]>::as_ref(&(#value)), env)
+                ::ez_jni::ToJValueImpl::to_jvalue_env(::std::convert::AsRef::<[#r_prim]>::as_ref(&(#value)), env)
             }
         }
 
@@ -471,10 +471,10 @@ impl ArrayType {
                 InnerType::RustPrimitive { ty, .. } => convert_prim_array(*ty, value),
                 InnerType::Object(class) => match class {
                     Class::Short(ty) if ty == "String" => quote_spanned! {ty.span()=>
-                        ::ez_jni::ToJValue::to_jvalue_env(::std::convert::AsRef::<[_]>::as_ref(&(#value)), env)
+                        ::ez_jni::ToJValueImpl::to_jvalue_env(::std::convert::AsRef::<[_]>::as_ref(&(#value)), env)
                     },
                     _ => quote_spanned! {ty.span()=>
-                        ::ez_jni::ToJValue::to_jvalue_env(::std::convert::AsRef::<[_]>::as_ref(&(#value)), env)
+                        ::ez_jni::ToJValueImpl::to_jvalue_env(::std::convert::AsRef::<[_]>::as_ref(&(#value)), env)
                     }
                 },
             },
@@ -482,7 +482,7 @@ impl ArrayType {
             Type::Option { ty, .. } => match ty.convert_rust_to_java(&quote_spanned! {value.span()=> _element}) {
                 Some(conversion) => create_obj_array(ty.sig_type(), conversion, value),
                 None => quote_spanned! {ty.span()=>
-                    ::ez_jni::ToJValue::to_jvalue_env(::std::convert::AsRef::<[_]>::as_ref(&(#value)), env)
+                    ::ez_jni::ToJValueImpl::to_jvalue_env(::std::convert::AsRef::<[_]>::as_ref(&(#value)), env)
                 }
             },
             Type::Array(array) => create_obj_array(

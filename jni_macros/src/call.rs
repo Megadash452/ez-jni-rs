@@ -34,7 +34,7 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
         // Void conversion
         Return::Assertive(ReturnableType::Void(ident))
         | Return::Result { ty: ReturnableType::Void(ident), .. } => {
-            quote_spanned! {ident.span()=> <() as ::ez_jni::FromJValue>::from_jvalue_env(v.borrow(), env).unwrap()}
+            quote_spanned! {ident.span()=> <() as ::ez_jni::FromJValueImpl>::from_jvalue_env(v.borrow(), env).unwrap()}
         }
     };
 
