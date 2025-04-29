@@ -33,9 +33,7 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
         | Return::Result { ty: ReturnableType::Type(ty), .. } => ty.convert_jvalue_to_rvalue(&quote_spanned! {ty.span()=> v }),
         // Void conversion
         Return::Assertive(ReturnableType::Void(ident))
-        | Return::Result { ty: ReturnableType::Void(ident), .. } => {
-            quote_spanned! {ident.span()=> <() as ::ez_jni::FromJValue>::from_jvalue_env(v.borrow(), env).unwrap()}
-        }
+        | Return::Result { ty: ReturnableType::Void(ident), .. } => Type::convert_void_to_unit(&quote_spanned! {ident.span()=> v })
     };
 
     // Handle call result depending on whether it is expected to throw or not

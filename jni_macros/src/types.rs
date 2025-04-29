@@ -100,7 +100,6 @@ impl Type {
     /// General function to convert a **Rust value** to a [`JValue`][jni::objects::JValueGen].
     /// 
     /// Used to generate the conversion for the *argument values* of a JNI call.
-    // FIXME: Compiler emmits a `noop_method_call` warning when the argument's Rust type is `&str`.
     pub fn convert_rvalue_to_jvalue(&self, value: &TokenStream) -> TokenStream {
         // Get a concrete Rust type to tell ToJValue to use
         let ty = match self {
@@ -119,10 +118,23 @@ impl Type {
                 },
                 _ => self.ty_tokens(true),
             },
+            // Strings must be converted using AsRef instead of Borrow.
+            Self::Assertive(InnerType::Object(Class::Short(ty)))
+            | Self::Option { ty: OptionType::Object(Class::Short(ty)), .. }
+            if ty == "String" => return quote_spanned! {ty.span()=>
+                ::ez_jni::ToJValue::to_jvalue_env(::std::convert::AsRef::<str>::as_ref(&(#value)), env)
+            },
             _ => self.ty_tokens(true),
         };
         // use the ToJValue implementation
         quote_spanned! {value.span()=> <#ty as ::ez_jni::ToJValue>::to_jvalue_env((#value).borrow(), env) }
+    }
+
+    /// Convert a *Java `void`* value to a *Rust Unit `()`* value.
+    /// 
+    /// Even though `void` and `()` are the same, it must still be *unwrapped* from the [`JValue`][::jni::objects::JValueGen].
+    pub fn convert_void_to_unit(value: &TokenStream) -> TokenStream {
+        quote_spanned! {value.span()=> <() as ::ez_jni::FromJValue>::from_jvalue_env((#value).borrow(), env).unwrap()}
     }
 
     /// Converts a [`Type`] to a *Rust type* as a [`TokenStream`].

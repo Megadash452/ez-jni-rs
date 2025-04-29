@@ -75,9 +75,11 @@ pub enum FromObjectError {
 pub trait FromObject<'local>
 where Self: Sized {
     /// Construct a [`Self`] by reading data from a *Java Object*.
+    /// 
     /// Will [`panic!`] if any of the underlying JNI calls fail.
     /// 
     /// Automatically captures the [`JNIEnv`] from the local stack.
+    /// To pass in your own [`JNIEnv`], see [`FromObject::from_object_env`].
     fn from_object(object: &JObject) -> Result<Self, FromObjectError> {
         Self::from_object_env(object, get_env::<'_, 'local>())
     }
@@ -100,9 +102,11 @@ where Self: Sized {
 /// and [`to_object_env`][ToObject::to_object_env] is the method that has the implementation.
 pub trait ToObject {
     /// Create an instance of a Class by constructing an object from data in a *Rust struct*.
+    /// 
     /// Will [`panic!`] if any of the underlying JNI calls fail.
     /// 
     /// Automatically captures the [`JNIEnv`] from the local stack.
+    /// To pass in your own [`JNIEnv`], see [`ToObject::to_object_env`].
     fn to_object<'local>(&self) -> JObject<'local> {
         self.to_object_env(get_env::<'_, 'local>())
     }

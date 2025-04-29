@@ -16,8 +16,10 @@ where Self: Sized {
     /// Get a **Rust** value from a **Java** value.
     /// 
     /// Returns an [`Error`][FromJValueError] if the *value* was not the correct type.
+    /// Will [`panic!`] if any of the underlying JNI calls fail.
     /// 
     /// Automatically captures the [`JNIEnv`] from the local stack.
+    /// To pass in your own [`JNIEnv`], see [`FromJValue::from_jvalue_env`].
     fn from_jvalue(val: JValue<'_, 'a>) -> Result<Self, FromJValueError> {
         Self::from_jvalue_env(val, get_env::<'_, 'local>())
     }
@@ -41,7 +43,10 @@ where Self: Sized {
 pub trait ToJValue {
     /// Convert a **Rust** value to a **Java** value.
     /// 
+    /// Will [`panic!`] if any of the underlying JNI calls fail.
+    /// 
     /// Automatically captures the [`JNIEnv`] from the local stack.
+    /// To pass in your own [`JNIEnv`], see [`ToJValue::to_jvalue_env`].
     fn to_jvalue<'local>(&self) -> JValueOwned<'local> {
         self.to_jvalue_env(get_env::<'_, 'local>())
     }
