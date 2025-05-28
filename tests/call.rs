@@ -1,6 +1,6 @@
 mod common;
 
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use common::setup_jvm;
 use ez_jni::{call, class, eprintln, field, new, println, singleton};

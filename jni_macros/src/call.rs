@@ -5,7 +5,7 @@ use syn::{
     parenthesized, parse::{discouraged::Speculative, Parse, ParseStream, Parser}, punctuated::Punctuated, Expr, Ident, LitStr, Token
 };
 use crate::{
-    types::{ArrayType, Class, InnerType, SigType, SpecialCaseConversion, Type, NULL_KEYWORD},
+    types::{ArrayType, Class, InnerType, SigType, Conversion, Type, NULL_KEYWORD},
     utils::{gen_signature, join_spans, Spanned, StepResult, TokenTreeExt as _}
 };
 

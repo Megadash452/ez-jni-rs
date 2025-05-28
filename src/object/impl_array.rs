@@ -76,7 +76,7 @@ impl ToObject for [&str] {
 
 // Implementation for [Option<T>]
 
-impl<'local> FromObject<'local> for Vec<Option<JObject<'local>>> {
+impl<'local> FromObject<'local> for Box<[Option<JObject<'local>>]> {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
         get_object_array(object, None, env)
             .map(|array|

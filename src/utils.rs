@@ -1,5 +1,5 @@
 use jni::{
-    errors::{Error as JNIError, Result as JNIResult}, objects::{JClass, JObject, JObjectArray, JPrimitiveArray, JString, JThrowable, JValue, JValueOwned}, sys::jsize, JNIEnv
+    errors::{Error as JNIError, Result as JNIResult}, objects::{JClass, JObject, JObjectArray, JPrimitiveArray, JThrowable, JValue, JValueOwned}, sys::jsize, JNIEnv
 };
 use crate::{call, object::FromObjectError, FromException, __throw::{panic_exception, try_catch}, LOCAL_JNIENV_STACK};
 use utils::{first_char_uppercase, java_path_to_dot_notation};
@@ -46,29 +46,29 @@ mod android {
     }
 }
 
-/// Get a [`String`] from a `java.lang.String`, asserting that the object is NOT **`NULL`**.
-pub fn get_string(arg: JString, env: &mut JNIEnv) -> String {
-    String::from(
-        env.get_string(&arg)
-            .expect("String argument can't be NULL")
-    )
-}
-/// Get [`String`] from a `java.lang.String`, which could be **`NULL`**.
-pub fn get_nullable_string(arg: JString, env: &mut JNIEnv) -> Option<String> {
-    if arg.is_null() {
-        None
-    } else {
-        env.get_string(&arg)
-            .ok()
-            .map(String::from)
-    }
-}
-/// Create a *Java String* from a *Rust [`String`]*.
-pub fn new_string<'local>(s: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
-    env.new_string(s)
-        .unwrap_or_else(|err| panic!("Error creating Java String: {err}"))
-        .into()
-}
+// /// Get a [`String`] from a `java.lang.String`, asserting that the object is NOT **`NULL`**.
+// pub fn get_string(arg: JString, env: &mut JNIEnv) -> String {
+//     String::from(
+//         env.get_string(&arg)
+//             .expect("String argument can't be NULL")
+//     )
+// }
+// /// Get [`String`] from a `java.lang.String`, which could be **`NULL`**.
+// pub fn get_nullable_string(arg: JString, env: &mut JNIEnv) -> Option<String> {
+//     if arg.is_null() {
+//         None
+//     } else {
+//         env.get_string(&arg)
+//             .ok()
+//             .map(String::from)
+//     }
+// }
+// /// Create a *Java String* from a *Rust [`String`]*.
+// pub fn new_string<'local>(s: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
+//     env.new_string(s)
+//         .unwrap_or_else(|err| panic!("Error creating Java String: {err}"))
+//         .into()
+// }
 
 // TODO: doc
 // TODO: ensure the returned JNIEnv can't escape the function it was called from
@@ -620,4 +620,17 @@ pub fn create_object_array_converted<'local, T>(
             .collect::<Box<[_]>>();
         Ok(create_object_array(&slice, elem_class, env))
     }).unwrap()
+}
+
+#[doc(hidden)]
+pub fn jboolean_to_bool(b: jni::sys::jboolean) -> bool { b != 0 }
+#[doc(hidden)]
+pub fn jchar_to_char(c: jni::sys::jchar) -> char {
+    char::decode_utf16(Some(c))
+        .next().unwrap()
+        .unwrap_or(char::REPLACEMENT_CHARACTER)
+}
+#[doc(hidden)]
+pub fn char_to_jchar(c: char) -> jni::sys::jchar {
+    c.encode_utf16(&mut [0;1])[0]
 }

@@ -3,7 +3,7 @@ use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
 use syn::{braced, ext::IdentExt as _, parenthesized, parse::{Parse, ParseStream}, punctuated::Punctuated, token::{Brace, Paren}, Attribute, GenericParam, Generics, Ident, LifetimeParam, LitStr, Token};
 use utils::java_method_to_symbol;
 use crate::{
-    types::{ArrayType, Class, InnerType, JavaPrimitive, OptionType, RustPrimitive, SigType, SpecialCaseConversion as _, Type}, utils::{gen_signature, merge_errors, take_class_attribute_required, Spanned}
+    types::{ArrayType, Class, InnerType, JavaPrimitive, OptionType, RustPrimitive, SigType, Conversion as _, Type}, utils::{gen_signature, merge_errors, take_class_attribute_required, Spanned}
 };
 
 /// Processes the input for [`crate::jni_fns`].
@@ -73,17 +73,20 @@ impl JniFn {
         // Build a java method signature, something like (Ljava.lang.String;)I
         let method_sig = gen_signature(self.inputs.iter().map(|i| &i.ty), &self.output).value();
 
+        let pub_token = &self.pub_token;
+        let fn_token = &self.fn_token;
+        let lt_token = &self.lt_token;
+        let lifetime = &self.lifetime;
+        let gt_token = &self.gt_token;
+
         tokens.append_all(&self.attrs);
-        tokens.append_all(quote!(#[doc = ""]));
-        tokens.append_all(quote!(#[doc = #method_sig]));
-        tokens.append_all(quote!(#[unsafe(no_mangle)]));
-        self.pub_token.to_tokens(tokens);
-        tokens.append_all(quote!(extern "system"));
-        self.fn_token.to_tokens(tokens);
-        name.to_tokens(tokens);
-        self.lt_token.to_tokens(tokens);
-        self.lifetime.to_tokens(tokens);
-        self.gt_token.to_tokens(tokens);
+        tokens.append_all(quote! {
+            #[doc = ""]
+            #[doc = #method_sig]
+            #[unsafe(no_mangle)]
+            #pub_token extern "system" #fn_token #name #lt_token #lifetime #gt_token
+        });
+        // Parameters
         self.paren_token.surround(tokens, |tokens| {
             // Static methods receive the Class, and Object methods receive the Object
             let receiver = if let Some(static_token) = &self.static_token {
@@ -92,7 +95,7 @@ impl JniFn {
                 quote!(this: ::jni::objects::JObject<'local>)
             };
             tokens.append_all(quote_spanned!(self.paren_token.span.span()=>
-                mut env: ::jni::JNIEnv<'local>, #[allow(unused_variables)] #receiver,
+                mut __env: ::jni::JNIEnv<'local>, #[allow(unused_variables)] #receiver,
             ));
             self.inputs.to_tokens(tokens);
         });
@@ -110,10 +113,10 @@ impl JniFn {
 
             tokens.append_all(match self.output.convert_rust_to_java(&quote_spanned!(self.output.span()=> r)) {
                 Some(conversion) => quote_spanned! {self.content.span()=>
-                    ::ez_jni::__throw::catch_throw_map(&mut env, move |#[allow(unused_variables)] env| -> #rust_type #body, |r: #rust_type, #[allow(unused_variables)] env| #conversion)
+                    ::ez_jni::__throw::run_with_jnienv_map(__env, move || -> #rust_type #body, |r: #rust_type| #conversion)
                 },
                 None => quote_spanned! {self.content.span()=>
-                    ::ez_jni::__throw::catch_throw(&mut env, move |#[allow(unused_variables)] env| -> #rust_type #body)
+                    ::ez_jni::__throw::run_with_jnienv(__env, move || -> #rust_type #body)
                 }
             });
         });

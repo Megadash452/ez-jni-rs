@@ -124,7 +124,7 @@ impl ToJValue for () {
 impl FromJValue<'_, '_> for bool {
     fn from_jvalue_env(val: JValue<'_, '_>, env: &mut JNIEnv<'_>) -> Result<Self, FromJValueError> {
         match val {
-            JValueGen::Bool(val) => Ok(val != 0),
+            JValueGen::Bool(b) => Ok(crate::utils::jboolean_to_bool(b)),
             JValueGen::Object(object) => Ok(Self::from_object_env(object, env)?),
             val => Err(FromJValueError::IncorrectType {
                 actual: jvalue_to_str(val),
@@ -144,11 +144,7 @@ impl FromJValue<'_, '_> for char {
     fn from_jvalue_env<'a, 'local>(val: JValue<'_, '_>, env: &mut JNIEnv<'local>) -> Result<Self, FromJValueError> {
         match val {
             // Decode UTF-16
-            JValueGen::Char(val) => Ok(
-                char::decode_utf16(Some(val))
-                    .next().unwrap()
-                    .unwrap_or(char::REPLACEMENT_CHARACTER)
-            ),
+            JValueGen::Char(c) => Ok(crate::utils::jchar_to_char(c)),
             JValueGen::Object(object) => Ok(Self::from_object_env(object, env)?),
             val => Err(FromJValueError::IncorrectType {
                 actual: jvalue_to_str(val),
