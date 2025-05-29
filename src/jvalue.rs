@@ -155,7 +155,7 @@ impl FromJValue<'_, '_> for char {
 }
 impl ToJValue for char {
     fn to_jvalue_env<'local>(&self, _: &mut JNIEnv<'local>) -> JValueOwned<'local> {
-        JValueGen::Char(self.encode_utf16(&mut [0;1])[0])
+        JValueGen::Char(crate::utils::char_to_jchar(*self))
     }
 }
 
@@ -272,7 +272,7 @@ where Box<[T]>: FromObject<'local> {
 }
 
 impl<'a, 'local, T> FromJValue<'a, 'local> for Box<[T]>
-where Box<[T]>: FromObject<'local> {
+where Self: FromObject<'local> {
     fn from_jvalue_env(val: ::jni::objects::JValue<'_, 'a>, env: &mut ::jni::JNIEnv<'local>) -> Result<Self, FromJValueError> {
         match val {
             ::jni::objects::JValueGen::Object(object) => Ok(Self::from_object_env(object, env)?),
@@ -284,7 +284,13 @@ where Box<[T]>: FromObject<'local> {
     }
 }
 impl<T> ToJValue for [T]
-where [T]: ToObject {
+where Self: ToObject {
+    fn to_jvalue_env<'local>(&self, env: &mut JNIEnv<'local>) -> JValueOwned<'local> {
+        ::jni::objects::JValueGen::Object(self.to_object_env(env))
+    }
+}
+impl<T> ToJValue for (&str, &[T])
+where Self: ToObject {
     fn to_jvalue_env<'local>(&self, env: &mut JNIEnv<'local>) -> JValueOwned<'local> {
         ::jni::objects::JValueGen::Object(self.to_object_env(env))
     }

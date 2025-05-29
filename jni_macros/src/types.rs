@@ -100,18 +100,20 @@ impl Type {
             | Self::Option { ty: OptionType::Array(array), .. } => match &*array.ty {
                 // Check if the Array's inner type is also Array:
                 // Arrays above 1 dimensions don't have ToJValue implementations and require generated conversion code
-                Type::Array(_) | Type::Option { ty: OptionType::Array(_), .. }
-                    // Unwrap JValue to JObject and generate conversion code
-                    // TODO:
-                    => return array.convert_rust_to_java(value),
+                Type::Array(_) | Type::Option { ty: OptionType::Array(_), .. } => {
+                    // Wrap the conversion code in a JValue so it can be passed to the arguments
+                    let conversion = array.convert_rust_to_java(&value);
+                    return quote_spanned! {array.span()=> ::jni::objects::JValueGen::<::jni::objects::JObject<'_>>::Object(#conversion) }
+                }
                 // Converting a JObject slice to a Java Array requires explicitly passing the element class
                 Type::Assertive(InnerType::Object(class)) | Type::Option { ty: OptionType::Object(class) , .. }
                 if class.is_jobject() => {
-                    // Use one of the util functions instead of the ToJValue implementation
+                    // The JObject type must be coupled with the Class, so put it in a tuple (there are implementations for this)
                     let elem_class = class.to_jni_class_path();
-                    return quote_spanned! {value.span()=>
-                        ::jni::objects::JValueOwned::Object(::ez_jni::utils::create_object_array((#value).borrow(), #elem_class, env))
-                    }
+                    let inner_ty = array.ty.ty_tokens(true);
+                    return quote_spanned! {array.span()=>
+                        <(&'static str, &[#inner_ty]) as ::ez_jni::ToJValue>::to_jvalue_env(&(#elem_class, (#value).borrow()), env)
+                    };
                 },
                 _ => self.ty_tokens(true),
             },
@@ -124,7 +126,7 @@ impl Type {
             _ => self.ty_tokens(true),
         };
         // use the ToJValue implementation
-        quote_spanned! {value.span()=> <#ty as ::ez_jni::ToJValue>::to_jvalue_env((#value).borrow(), env) }
+        quote_spanned! {ty.span()=> <#ty as ::ez_jni::ToJValue>::to_jvalue_env((#value).borrow(), env) }
     }
 
     /// Convert a *Java `void`* value to a *Rust Unit `()`* value.
@@ -138,42 +140,61 @@ impl Type {
     /// 
     /// **as_ref**: Whether the resulting Rust type should be the Unsized reference type.
     /// E.g. `[char]` instead of `Box<[char]>`.
+    /// Is `true` when used for [`ToJValue`] and `false` for [`FromValue`].
     fn ty_tokens(&self, as_ref: bool) -> TokenStream {
-        let array_tokens = |array: &ArrayType| -> TokenStream {
-            // Must be recursive
-            let ty = array.ty.ty_tokens(as_ref);
+        // DRY helpers
+
+        /// Generates the Rust type tokens for a Arrays specifically.
+        fn array_tokens(array: &ArrayType, as_ref: bool) -> TokenStream {
+            // vvv Recursion occurs here vvv
+            let ty = run(array.ty.as_ref(), as_ref, true);
             if as_ref {
                 quote_spanned! {array.span()=> [#ty] }
             } else {
                 quote_spanned! {array.span()=> ::std::boxed::Box<[#ty]> }
             }
-        };
-        let string_tokens = |class: &Class| -> TokenStream {
-            if as_ref {
-                quote_spanned! {class.span()=> str }
-            } else {
-                quote_spanned! {class.span()=> String }
-            }
-        };
-
-        match self {
-            Self::Assertive(ty) => match ty {
-                InnerType::JavaPrimitive { ident, ty } => Ident::new(&RustPrimitive::from(*ty).to_string(), ident.span()).to_token_stream(),
-                InnerType::RustPrimitive { ident, ty: _ } => ident.to_token_stream(),
-                InnerType::Object(class) if class.to_jni_class_path() == "java/lang/String" => string_tokens(class),
-                InnerType::Object(_) => quote_spanned! {ty.span()=> ::jni::objects::JObject::<'_> },
-            },
-            Self::Option { ident: opt_ident, ty } => {
-                let ty = match ty {
-                    OptionType::Object(class) if class.to_jni_class_path() == "java/lang/String" => string_tokens(class),
-                    OptionType::Object(_) => quote_spanned! {ty.span()=> ::jni::objects::JObject::<'_> },
-                    OptionType::Array(array) => array_tokens(array),
-                };
-                quote_spanned! {ty.span()=> #opt_ident<#ty> }
-            },
-            
-            Self::Array(array) => array_tokens(array),
         }
+        /// Generates the Rust type tokens for a Class specifically.
+        fn class_tokens(class: &Class, as_ref: bool, is_nested: bool) -> TokenStream {
+            match class {
+                Class::Short(ident) if ident == "String" =>
+                    if as_ref && is_nested {
+                        // str nested in another type must be used with Reference (&)
+                        quote_spanned! {ident.span()=> &str }
+                    } else if as_ref {
+                        quote_spanned! {ident.span()=> str }
+                    } else {
+                        quote_spanned! {ident.span()=> String }
+                    },
+                _ => quote_spanned! {class.span()=> ::jni::objects::JObject::<'_> }
+            }
+        }
+
+        /// Run the function code, but with the aditional (private) `is_nested` parameter.
+        ///
+        /// `is_nested`:
+        ///   Keeps track of whether the current type is nested within another type (i.e. Array or Option) in the recursion.
+        ///   This is necessary because some Rust types (i.e. str and slice) require the ampersand (&).
+        ///   Is only set once.
+        fn run(ty: &Type, as_ref: bool, is_nested: bool) -> TokenStream {
+            match ty {
+                Type::Assertive(ty) => match ty {
+                    InnerType::JavaPrimitive { ident, ty } => Ident::new(&RustPrimitive::from(*ty).to_string(), ident.span()).to_token_stream(),
+                    InnerType::RustPrimitive { ident, ty: _ } => ident.to_token_stream(),
+                    InnerType::Object(class) => class_tokens(class, as_ref, is_nested),
+                },
+                Type::Option { ident: opt_ident, ty } => {
+                    let ty = match ty {
+                        OptionType::Object(class) => class_tokens(class, as_ref, true),
+                        OptionType::Array(array) => array_tokens(array, as_ref),
+                    };
+                    quote_spanned! {ty.span()=> #opt_ident<#ty> }
+                },
+                Type::Array(array) => array_tokens(array, as_ref),
+            }
+        }
+
+        run(self, as_ref, false)
     }
 }
 impl Spanned for Type {
@@ -706,7 +727,10 @@ impl Class {
     /// 
     /// For now, this will return `false` only for [`String`].
     pub fn is_jobject(&self) -> bool {
-        self.to_jni_class_path() != "java/lang/String"
+        match self {
+            Self::Short(ident) if ident == "String" => false,
+            _ => true,
+        }
     }
 
     /// Converts the [`ClassPath`] to a string used by `JNI`, where each component is separated by a slash.

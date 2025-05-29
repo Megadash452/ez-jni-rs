@@ -710,7 +710,7 @@ fn gen_arg_vars_defs<'a>(params: impl Iterator<Item = &'a Parameter>) -> TokenSt
         .enumerate()
         .map(|(i, param)| {
             let value = match &param.value {
-                ParamValue::Null(null) => quote_spanned!(null.span()=> ::jni::objects::JObject::null()),
+                ParamValue::Null(null) => quote_spanned! {null.span()=> ::jni::objects::JValueOwned::Object(::jni::objects::JObject::null()) },
                 ParamValue::Value(value) => param.ty.convert_rvalue_to_jvalue(value),
             };
             let var_name = Ident::new(&format!("__param_{i}"), value.span());

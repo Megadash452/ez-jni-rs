@@ -41,7 +41,7 @@ impl<'local> FromObject<'local> for Box<[JObject<'local>]> {
     }
 }
 /// Implementation for an Object slice paired with the element Class
-impl ToObject for (&str, [JObject<'_>]) {
+impl ToObject for (&str, &[JObject<'_>]) {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         create_object_array(
             &self.1.iter()
@@ -50,7 +50,7 @@ impl ToObject for (&str, [JObject<'_>]) {
         env)
     }
 }
-impl ToObject for (&str, [&JObject<'_>]) {
+impl ToObject for (&str, &[&JObject<'_>]) {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         create_object_array(&self.1, self.0, env)
     }
@@ -86,7 +86,7 @@ impl<'local> FromObject<'local> for Box<[Option<JObject<'local>>]> {
             )
     }
 }
-impl ToObject for (&str, [Option<JObject<'_>>]) {
+impl ToObject for (&str, &[Option<JObject<'_>>]) {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         create_object_array(
             &self.1.iter()
@@ -100,7 +100,7 @@ impl ToObject for (&str, [Option<JObject<'_>>]) {
         env)
     }
 }
-impl ToObject for (&str, [Option<&JObject<'_>>]) {
+impl ToObject for (&str, &[Option<&JObject<'_>>]) {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         create_object_array(
             &self.1.iter()
