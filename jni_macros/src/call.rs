@@ -114,31 +114,34 @@ pub fn field(call: FieldCall) -> TokenStream {
     let name = call.field_name.to_string();
     let ty_sig = call.ty.sig_type();
 
-    let jni_method = if call.call_type.is_static() {
-        quote!(::ez_jni::utils::set_static_field)
-    } else {
-        quote!(::ez_jni::utils::set_obj_field)
-    };
-
     // Build the macro function call
     match call.set_val {
         Some(val) => {
-            // If the value is already a JObject, do not convert
-            let val = call.ty.convert_rust_to_java(&val.to_token_stream());
+            let jni_method = if call.call_type.is_static() {
+                quote!(::ez_jni::utils::set_static_field)
+            } else {
+                quote!(::ez_jni::utils::set_obj_field)
+            };
+            // Convert Rust value to JValue for argument
+            let val = call.ty.convert_rvalue_to_jvalue(&val.to_token_stream());
             quote! { {
                 use ::std::borrow::Borrow;
                 let env: &mut ::jni::JNIEnv = #env;
-                #jni_method(#callee, #name, #ty_sig, #val, env)
+                #jni_method(#callee, #name, #ty_sig, ::jni::objects::JValueGen::borrow(&(#val)), env)
             } }
         },
         None => {
-            let conversion = call.ty.convert_java_to_rust(&quote_spanned! {call.ty.span()=> v });
+            let jni_method = if call.call_type.is_static() {
+                quote!(::ez_jni::utils::get_static_field)
+            } else {
+                quote!(::ez_jni::utils::get_obj_field)
+            };
+            // Convert jvalue returned from call
+            let call = call.ty.convert_jvalue_to_rvalue(&quote! { #jni_method(#callee, #name, #ty_sig, env) });
             quote! { {
                 use ::std::borrow::Borrow;
                 let env: &mut ::jni::JNIEnv = #env;
-                #jni_method(#callee, #name, #ty_sig, env.borrow_mut())
-                    .map(|v| #conversion)
-                    .unwrap_or_else(|err| ::ez_jni::__throw::handle_jni_call_error(err, env))
+                #call
             } }
         }
     }
@@ -302,6 +305,15 @@ impl CallType {
         }, callee)
     }
 }
+impl Debug for CallType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Static(ClassRepr::String(class)) => f.debug_tuple("CallType::Static").field(class).finish(),
+            Self::Static(ClassRepr::Object(_)) => write!(f, "CallType::Static"),
+            Self::Object(_) => write!(f, "CallType::Object"),
+        }
+    }
+}
 
 /// A JNI call to *access* or *set* the value of a **field**.
 pub struct FieldCall {
@@ -342,6 +354,17 @@ impl Parse for FieldCall {
                 }
             }
         })
+    }
+}
+impl Debug for FieldCall {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FieldCall")
+            .field("env", &self.env)
+            .field("call_type", &self.call_type)
+            .field("field_name", &self.field_name)
+            .field("ty", &self.ty)
+            .field("set_val", &self.set_val.is_some())
+            .finish()
     }
 }
 
@@ -693,6 +716,14 @@ impl ToTokens for Env {
                 None => quote!(::ez_jni::utils::get_env()),
             }
         );
+    }
+}
+impl Debug for Env {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            Some(_) => write!(f, "Some"),
+            None => write!(f, "None")
+        }
     }
 }
 

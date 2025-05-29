@@ -328,7 +328,7 @@ fn constructor() {
 }
 #[test]
 fn constructor_fail() {
-    setup_env!(env);
+    setup_jvm();
     // Should panic if the constructor throws, but user did not indicate that the constructor could throw
     catch_unwind(AssertUnwindSafe(|| {
         new!(me.test.Test(java.lang.String(null)))
@@ -396,7 +396,7 @@ fn class() {
 
 #[test]
 fn singleton() {
-    setup_env!(env);
+    setup_jvm();
 
     let obj = singleton!(me.test.Test$Singleton);
     assert_eq!(call!(obj.method() -> int), 3);
