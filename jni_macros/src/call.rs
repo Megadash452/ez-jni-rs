@@ -5,7 +5,7 @@ use syn::{
     parenthesized, parse::{discouraged::Speculative, Parse, ParseStream, Parser}, punctuated::Punctuated, Expr, Ident, LitStr, Token
 };
 use crate::{
-    types::{ArrayType, Class, InnerType, SigType, Conversion, Type, NULL_KEYWORD},
+    types::{ArrayType, Class, InnerType, SigType, Type, NULL_KEYWORD},
     utils::{gen_signature, join_spans, Spanned, StepResult, TokenTreeExt as _}
 };
 
@@ -23,7 +23,6 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
     };
     let name = call.method_name.to_string();
     let signature = gen_signature(call.parameters.iter(), &call.return_type);
-    let param_vars = gen_arg_vars_defs(call.parameters.iter());
     let arguments = gen_arguments(call.parameters.iter());
 
     // Convert from the returned Java value to Rust value
@@ -58,9 +57,9 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
         quote!(::ez_jni::utils::call_obj_method)
     };
     quote! { {
+        // #![allow(noop_method_call)]
         use ::std::borrow::Borrow;
         let env: &mut ::jni::JNIEnv = #env;
-        #param_vars
         #jni_method(#callee, #name, #signature, #arguments, env)
             .map(|v| #return_conversion)
             #error_handler
@@ -72,29 +71,34 @@ pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
     let env = &call.env;
     // The Class/ClassObject that the constructor was called for
     let callee = match &call.class {
-        ClassRepr::String(class) => class.to_jni_class_path().to_token_stream(),
-        ClassRepr::Object(expr) => quote_spanned!{expr.span()=> (#expr).borrow() },
+        ClassRepr::String(class) => {
+            let class = class.to_jni_class_path();
+            quote!(::ez_jni::utils::ClassRepr::String(#class))
+        },
+        ClassRepr::Object(expr) => quote!{ ::ez_jni::utils::ClassRepr::Object((#expr).borrow()) },
     };
     let signature = gen_signature(call.parameters.iter(), &Return::new_void(Span::call_site()));
-    let param_vars = gen_arg_vars_defs(call.parameters.iter());
     let arguments = gen_arguments(call.parameters.iter());
     // Handle call result depending on whether it is expected to throw or not
     let error_handler = match call.err_type {
         // Move the result of the method call to a Result if the caller expects that the method could throw.
         Some(err_ty) => quote! {
-            .map_err(|err| ::ez_jni::__throw::handle_exception_conversion::<#err_ty>(err, env))
+            .map_err(|exception| ::ez_jni::__throw::convert_exception::<#err_ty>(exception, env))
         },
         // For return types that are not Result
         None => quote! {
-            .unwrap_or_else(|err| ::ez_jni::__throw::handle_jni_call_error(err, env))
+            .unwrap_or_else(|exception| {
+                env.throw(exception).unwrap();
+                ::ez_jni::__throw::handle_jni_call_error(::jni::errors::Error::JavaException, env)
+            })
         },
     };
 
     quote! { {
+        // #![allow(noop_method_call)]
         use ::std::borrow::Borrow;
         let env: &mut ::jni::JNIEnv = #env;
-        #param_vars
-        env.new_object(#callee, #signature, #arguments)
+        ::ez_jni::utils::create_object(#callee, #signature, #arguments, env)
             #error_handler
     } }
 }
@@ -108,7 +112,7 @@ pub fn field(call: FieldCall) -> TokenStream {
             let class = class.to_jni_class_path();
             quote!(::ez_jni::utils::ClassRepr::String(#class))
         },
-        CallType::Static(ClassRepr::Object(class)) => quote!{ ::ez_jni::utils::ClassRepr::Object((#class).borrow()) },
+        CallType::Static(ClassRepr::Object(expr)) => quote!{ ::ez_jni::utils::exprRepr::Object((#expr).borrow()) },
         CallType::Object(expr) => quote!{ (#expr).borrow() },
     };
     let name = call.field_name.to_string();
@@ -125,6 +129,7 @@ pub fn field(call: FieldCall) -> TokenStream {
             // Convert Rust value to JValue for argument
             let val = call.ty.convert_rvalue_to_jvalue(&val.to_token_stream());
             quote! { {
+                // #![allow(noop_method_call)]
                 use ::std::borrow::Borrow;
                 let env: &mut ::jni::JNIEnv = #env;
                 #jni_method(#callee, #name, #ty_sig, ::jni::objects::JValueGen::borrow(&(#val)), env)
@@ -139,6 +144,7 @@ pub fn field(call: FieldCall) -> TokenStream {
             // Convert jvalue returned from call
             let call = call.ty.convert_jvalue_to_rvalue(&quote! { #jni_method(#callee, #name, #ty_sig, env) });
             quote! { {
+                // #![allow(noop_method_call)]
                 use ::std::borrow::Borrow;
                 let env: &mut ::jni::JNIEnv = #env;
                 #call
@@ -151,6 +157,7 @@ pub fn field(call: FieldCall) -> TokenStream {
 pub fn get_class(env: Env, class: Class) -> TokenStream {
     let class = class.to_jni_class_path();
     quote! { {
+        // #![allow(noop_method_call)]
         use ::std::borrow::Borrow;
         let env: &mut ::jni::JNIEnv = #env;
         env.find_class(#class)
@@ -727,41 +734,16 @@ impl Debug for Env {
     }
 }
 
-/// Generate *variable definitions* for the arguments that will be passed to the JNI call.
+/// Generates the argument array that will be passed to the JNI call.
 /// 
-/// Defines 1 variable for each argument,
-/// where the *variable's name* is `__param_i` and *i* is the 0-based index of the argument.
-/// 
-/// Use [`gen_params()`] to put the resulting variables in the JNI call.
-/// 
-/// Putting the arguments in variables prevents them from being dropped (since JValue takes references),
-/// and mitigates borrow checker error if the argument expression *borrows env* (since the call itself borrows &mut env).
-fn gen_arg_vars_defs<'a>(params: impl Iterator<Item = &'a Parameter>) -> TokenStream {
-    params
-        .enumerate()
-        .map(|(i, param)| {
-            let value = match &param.value {
-                ParamValue::Null(null) => quote_spanned! {null.span()=> ::jni::objects::JValueOwned::Object(::jni::objects::JObject::null()) },
-                ParamValue::Value(value) => param.ty.convert_rvalue_to_jvalue(value),
-            };
-            let var_name = Ident::new(&format!("__param_{i}"), value.span());
-            // Parameters of type object must always be passed by reference.
-            if param.ty.is_primitive() {
-                quote_spanned! {value.span()=> let #var_name = #value; }
-            } else {
-                quote_spanned! {value.span()=> let #var_name = &(#value); }
-            }
-        })
-        .collect()
-}
-/// Generates the argument array that will be passed to the JNI call,
-/// but the values are just the variables generated by [`gen_arg_vars_defs()`].
+/// Each [`Parameter`] generates a [`JValue`][jni::objects::JValue] (specifically the *borrowed* version) using [`Type::convert_rvalue_to_jvalue()`].
 fn gen_arguments<'a>(params: impl Iterator<Item = &'a Parameter>) -> TokenStream {
     let params = params
-        .enumerate()
-        .map(|(i, param)| {
-            let var = Ident::new(&format!("__param_{i}"), param.span());
-            quote_spanned! {param.span()=> ::jni::objects::JValueGen::borrow(&(#var)) }
+        .map(|param| {
+            match &param.value {
+                ParamValue::Null(null) => quote_spanned! {null.span()=> ::jni::objects::JValue::Object(&::jni::objects::JObject::null()) },
+                ParamValue::Value(value) => param.ty.convert_rvalue_to_jvalue(value),
+            }
         });
     quote! { &[ #( #params ),* ] }
 }

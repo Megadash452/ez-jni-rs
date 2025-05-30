@@ -4,7 +4,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use common::setup_jvm;
 use ez_jni::{call, class, eprintln, field, new, println, singleton};
-use jni::objects::{JClass, JObject};
+use jni::objects::{JClass, JObject, JThrowable};
 
 #[test]
 fn return_primitives() {
@@ -47,11 +47,13 @@ fn return_primitives() {
 }
 
 #[test]
-fn return_other() {
+fn return_object() {
     setup_jvm();
     // Object
     let _: JObject = call!(static me.test.Test.getObject() -> java.lang.Object);
-    let _: String = call!(static me.test.Test.getString() -> java.lang.String);
+    let _: JObject = call!(static me.test.Test.getString() -> java.lang.String);
+    let _: JClass = call!(static me.test.Test.getString() -> Class);
+    let _: JThrowable = call!(static me.test.Test.getString() -> Exception);
     let _: String = call!(static me.test.Test.getString() -> String);
     // Result Primitive
     let r: Result<bool, String> = call!(static me.test.Test.getBoolean() -> Result<bool, String>);
@@ -127,7 +129,7 @@ fn return_arrays_other() {
     setup_jvm();
     // Object
     let _: Box<[JObject]> = call!(static me.test.Test.getObjectArray() -> [java.lang.Object]);
-    let _: Box<[String]> = call!(static me.test.Test.getStringArray() -> [java.lang.String]);
+    let _: Box<[JObject]> = call!(static me.test.Test.getStringArray() -> [java.lang.String]);
     let _: Box<[String]> = call!(static me.test.Test.getStringArray() -> [String]);
     // Result Primitive
     let r: Result<Box<[bool]>, String> =
@@ -226,8 +228,9 @@ fn arguments() {
     setup_jvm();
     // -- Non-Array Arguments
     call!(static me.test.Test.primArgs(boolean(true), char('a'), byte(1i8), short(1i16), int(1i32), long(1i64), float(1f32), double(1f64)) -> void);
-    call!(static me.test.Test.objArgs(java.lang.Object(new!(java.lang.Object())), java.lang.String("hi")) -> void);
-    call!(static me.test.Test.objArgs(java.lang.Object(JObject::null()), java.lang.String(String::from("hi"))) -> void);
+    call!(static me.test.Test.objArgs(java.lang.Object(new!(java.lang.Object())), String("hi")) -> void);
+    call!(static me.test.Test.objArgs(Object(JObject::null()), String("hi".to_string())) -> void);
+    call!(static me.test.Test.objArgs(Class(null), Exception(null)) -> void);
     // call!(static me.test.Test.objArgs(java.lang.Object(None), java.lang.String(Some("hi"))) -> void);
     call!(static me.test.Test.objArgs(java.lang.Object(null), java.lang.String(null)) -> void);
     // -- Primitive Array Arguments
@@ -280,11 +283,11 @@ fn arguments() {
     // Rust slices stored in variables
     let l = [new!(java.lang.Object()), JObject::null()];
     let s = ["Hello", "World"];
-    call!(static me.test.Test.objArrayArgs([java.lang.Object](l), [java.lang.String](s)) -> void);
+    call!(static me.test.Test.objArrayArgs([java.lang.Object](l), [String](s)) -> void);
     // Array literals
     call!(static me.test.Test.objArrayArgs(
         [java.lang.Object]([new!(java.lang.Object()), JObject::null()]),
-        [java.lang.String](["Hello", "World"])
+        [String](["Hello", "World"])
     ) -> void);
     // Empty Array literal
     call!(static me.test.Test.objArrayArgs(
@@ -352,8 +355,7 @@ fn obj_method() {
     call!(Some(Some(&obj)).unwrap().unwrap().getBoolean() -> boolean);
 
     // Test method on class Object
-    // FIXME: add JClass as a Rust Type in the macros
-    let class = JClass::from(call!(obj.getClass() -> java.lang.Class));
+    let class = call!(obj.getClass() -> Class);
     assert_eq!(call!(class.getName() -> String), "me.test.Test$Instanced");
 }
 

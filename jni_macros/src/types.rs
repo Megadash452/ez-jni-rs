@@ -64,6 +64,7 @@ pub enum Type {
 impl Type {
     /// Returns whether the [`InnerType`] of the type is a *primitive*.
     /// Returns `false` if this is an [`Array`][Type::Array].
+    #[allow(unused)]
     pub fn is_primitive(&self) -> bool {
         match self {
             Self::Assertive(InnerType::RustPrimitive { .. } | InnerType::JavaPrimitive { .. }) => true,
@@ -84,13 +85,21 @@ impl Type {
             if matches!(&*array.ty, Type::Array(_) | Type::Option { ty: OptionType::Array(_), .. })
                 // Unwrap JValue to JObject and generate conversion code
                 => return array.convert_java_to_rust(&quote_spanned! {value.span()=> (#value).l().unwrap() }),
+            // Unwrap the JObject directly; no need to allocate another object
+            Self::Assertive(InnerType::Object(class)) if class.is_jobject() => {
+                // JObject can be converted to JClass or JThrowable
+                let unwrap = quote_spanned! {value.span()=> (#value).l().unwrap() };
+                return class.convert_java_to_rust(&unwrap)
+                    .unwrap_or(unwrap);
+            },
             _ => self.ty_tokens(false),
         };
         // use the FromJValue implementation
         quote_spanned! {value.span()=> <#ty as ::ez_jni::FromJValue>::from_jvalue_env((#value).borrow(), env).unwrap() }
     }
 
-    /// General function to convert a **Rust value** to a [`JValue`][jni::objects::JValueGen].
+    /// General function to convert a **Rust value** to a [`JValue`][jni::objects::JValue].
+    /// The expression resolves specifically to the *borrowed* version of [`JValue`][jni::objects::JValue].
     /// 
     /// Used to generate the conversion for the *argument values* of a JNI call.
     pub fn convert_rvalue_to_jvalue(&self, value: &TokenStream) -> TokenStream {
@@ -103,30 +112,37 @@ impl Type {
                 Type::Array(_) | Type::Option { ty: OptionType::Array(_), .. } => {
                     // Wrap the conversion code in a JValue so it can be passed to the arguments
                     let conversion = array.convert_rust_to_java(&value);
-                    return quote_spanned! {array.span()=> ::jni::objects::JValueGen::<::jni::objects::JObject<'_>>::Object(#conversion) }
+                    return quote_spanned! {array.span()=> ::jni::objects::JValue::Object(&(#conversion)) }
                 }
                 // Converting a JObject slice to a Java Array requires explicitly passing the element class
                 Type::Assertive(InnerType::Object(class)) | Type::Option { ty: OptionType::Object(class) , .. }
-                if class.is_jobject() => {
+                if class.rust_type() == ClassRustType::JObject => {
                     // The JObject type must be coupled with the Class, so put it in a tuple (there are implementations for this)
                     let elem_class = class.to_jni_class_path();
                     let inner_ty = array.ty.ty_tokens(true);
                     return quote_spanned! {array.span()=>
-                        <(&'static str, &[#inner_ty]) as ::ez_jni::ToJValue>::to_jvalue_env(&(#elem_class, (#value).borrow()), env)
+                        ::jni::objects::JValueGen::borrow(&<(&'static str, &[#inner_ty]) as ::ez_jni::ToJValue>::to_jvalue_env(&(#elem_class, (#value).borrow()), env))
                     };
                 },
                 _ => self.ty_tokens(true),
             },
             // Strings must be converted using AsRef instead of Borrow.
-            Self::Assertive(InnerType::Object(Class::Short(ty)))
-            | Self::Option { ty: OptionType::Object(Class::Short(ty)), .. }
-            if ty == "String" => return quote_spanned! {ty.span()=>
-                ::ez_jni::ToJValue::to_jvalue_env(::std::convert::AsRef::<str>::as_ref(&(#value)), env)
+            Self::Assertive(InnerType::Object(class))
+            | Self::Option { ty: OptionType::Object(class), .. }
+            if class.rust_type() == ClassRustType::String => return quote_spanned! {class.span()=>
+                ::jni::objects::JValueGen::borrow(&::ez_jni::ToJValue::to_jvalue_env(::std::convert::AsRef::<str>::as_ref(&(#value)), env))
+            },
+            // Wrap in JValue if type is JObject; no need to allocate another object
+            Self::Assertive(InnerType::Object(class)) if class.is_jobject() => {
+                // JClass or JThrowable can be converted to JObject, which is converted to JValue
+                let converted = class.convert_rust_to_java(value);
+                let converted = converted.as_ref().unwrap_or(value);
+                return quote_spanned! {class.span()=> ::jni::objects::JValue::Object((#converted).borrow()) };
             },
             _ => self.ty_tokens(true),
         };
         // use the ToJValue implementation
-        quote_spanned! {ty.span()=> <#ty as ::ez_jni::ToJValue>::to_jvalue_env((#value).borrow(), env) }
+        quote_spanned! {ty.span()=> ::jni::objects::JValueGen::borrow(&<#ty as ::ez_jni::ToJValue>::to_jvalue_env((#value).borrow(), env)) }
     }
 
     /// Convert a *Java `void`* value to a *Rust Unit `()`* value.
@@ -156,17 +172,19 @@ impl Type {
         }
         /// Generates the Rust type tokens for a Class specifically.
         fn class_tokens(class: &Class, as_ref: bool, is_nested: bool) -> TokenStream {
-            match class {
-                Class::Short(ident) if ident == "String" =>
+            match class.rust_type() {
+                ClassRustType::JObject => quote_spanned! {class.span()=> ::jni::objects::JObject::<'_> },
+                ClassRustType::JClass => quote_spanned! {class.span()=> ::jni::objects::JClass::<'_> },
+                ClassRustType::JThrowable => quote_spanned! {class.span()=> ::jni::objects::JThrowable::<'_> },
+                ClassRustType::String =>
                     if as_ref && is_nested {
                         // str nested in another type must be used with Reference (&)
-                        quote_spanned! {ident.span()=> &str }
+                        quote_spanned! {class.span()=> &str }
                     } else if as_ref {
-                        quote_spanned! {ident.span()=> str }
+                        quote_spanned! {class.span()=> str }
                     } else {
-                        quote_spanned! {ident.span()=> String }
+                        quote_spanned! {class.span()=> String }
                     },
-                _ => quote_spanned! {class.span()=> ::jni::objects::JObject::<'_> }
             }
         }
 
@@ -697,6 +715,29 @@ impl Display for InnerType {
     }
 }
 
+/// A representation of the *Rust type* that should be used for a value.
+/// 
+/// This is vague, as the type could be a reference, or could be an unsized counterpart (i.e. `str`),
+/// So [`Class`] is needed for that context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClassRustType {
+    // TODO: go and change all uses of java.lang.Class and java.lang.Object to short form
+    JObject, JClass, JThrowable, String
+}
+impl FromStr for ClassRustType {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Object" => Ok(Self::JObject),
+            "Class" => Ok(Self::JClass),
+            "Exception" => Ok(Self::JThrowable),
+            "String" => Ok(Self::String),
+            _ => Err(()),
+        }
+    }
+}
+
 /// Represents the path in the JVM of a *Java Class*, such as `java.lang.String`.
 ///
 /// Parsed as [`Punctuated`] Tokens of [`Ident`]s and `Dot`s, disallowing trailing Dots.
@@ -720,18 +761,30 @@ pub struct NestedPath {
     pub final_class: Ident
 }
 impl Class {
-    const VALID_SHORTHANDS: [&str; 2] = ["String", "Object"];
 
-    /// Whether the Rust type of the [`Class`] is a [`JObject`][jni::objects::JObject],
-    /// or if it's another Rust type.
+    /// Get the final *Rust type* that will be used for a value with this [`Class`].
     /// 
-    /// For now, this will return `false` only for [`String`].
-    pub fn is_jobject(&self) -> bool {
+    /// Will only return something other than [`JObject`][ClassRustType::JObject] if the [`Class`] is a [shorthand][Class::Short].
+    /// 
+    /// E.g. `String` -> [`ClassRustType::String`], but `java.lang.String` -> [`ClassRustType::JObject`].
+    pub fn rust_type(&self) -> ClassRustType {
         match self {
-            Self::Short(ident) if ident == "String" => false,
-            _ => true,
+            Self::Short(ident) => ClassRustType::from_str(&ident.to_string())
+                .expect("Unreachable; Class::Short can only be constructed from select valid strings. See [ClassRustType][#impl-FromStr-for-ClassRustType] for that list"),
+            _ => ClassRustType::JObject,
         }
     }
+    /// Whether the Rust type of the [`Class`] is a [`JObject`][jni::objects::JObject] or one of its **wrappers**,
+    /// or if it's another Rust type.
+    /// 
+    /// See [`Class::rust_type`].
+    pub fn is_jobject(&self) -> bool {
+        match self.rust_type() {
+            ClassRustType::JObject | ClassRustType::JClass | ClassRustType::JThrowable => true,
+            ClassRustType::String => false,
+        }
+    }
+    
 
     /// Converts the [`ClassPath`] to a string used by `JNI`, where each component is separated by a slash.
     /// e.g. `java/lang/String` or `me/author/Class$Nested`.
@@ -748,8 +801,10 @@ impl Class {
         match self {
             Self::Short(class) => {
                 let expanded_path = match class.to_string().as_str() {
-                    "String" => ["java", "lang", "String"],
-                    "Object" => ["java", "lang", "Object"],
+                    "Object"    => ["java", "lang", "Object"],
+                    "Class"     => ["java", "lang", "Class"],
+                    "Exception" => ["java", "lang", "Exception"],
+                    "String"    => ["java", "lang", "String"],
                     _ => panic!("Unreachable")
                 };
                 expanded_path.into_iter()
@@ -833,7 +888,7 @@ impl Parse for Class {
         };
         // Check for short hands
         let packages = if path.is_empty() {
-            return if Self::VALID_SHORTHANDS.contains(&class.to_string().as_str()) {
+            return if ClassRustType::from_str(&class.to_string()).is_ok() {
                 Ok(Self::Short(class))
             } else {
                 Err(syn::Error::new(class.span(), "Java Class Path must have more than one component, such as `me.author`"))
@@ -866,23 +921,31 @@ impl Parse for Class {
 }
 impl Conversion for Class {
     fn convert_java_to_rust(&self, value: &TokenStream) -> Option<TokenStream> {
-        // FIXME: when Class is `String` it should be converted, but if it is `java.lang.String` it should stay as JObject
-        if self.to_jni_class_path() == "java.lang.String" {
-            Some(quote_spanned! {value.span()=>
+        match self.rust_type() {
+            ClassRustType::JObject => None,
+            ClassRustType::JClass => Some(quote_spanned! {self.span()=>
+                <::jni::objects::JObject::<'_> as Into<::jni::objects::JClass<'_>>>::into(#value)
+            }),
+            ClassRustType::JThrowable => Some(quote_spanned! {self.span()=>
+                <::jni::objects::JObject::<'_> as Into<::jni::objects::JThrowable<'_>>>::into(#value)
+            }),
+            ClassRustType::String => Some(quote_spanned! {self.span()=>
                 <String as ::ez_jni::FromObject>::from_object_env(&(#value), env)
-            })
-        } else {
-            None
+            }),
         }
     }
     fn convert_rust_to_java(&self, value: &TokenStream) -> Option<TokenStream> {
-        // FIXME: when Class is `String` it should be converted, but if it is `java.lang.String` it should stay as JObject
-        if self.to_jni_class_path() == "java.lang.String" {
-            Some(quote_spanned! {value.span()=>
+        match self.rust_type() {
+            ClassRustType::JObject => None,
+            ClassRustType::JClass => Some(quote_spanned! {self.span()=>
+                <&::jni::objects::JClass::<'_> as Into<&::jni::objects::JObject<'_>>>::into((#value).borrow())
+            }),
+            ClassRustType::JThrowable => Some(quote_spanned! {self.span()=>
+                <&::jni::objects::JThrowable::<'_> as Into<&::jni::objects::JObject<'_>>>::into((#value).borrow())
+            }),
+            ClassRustType::String => Some(quote_spanned! {self.span()=>
                 <String as ::ez_jni::ToObject>::to_object_env(::std::convert::AsRef::<str>::as_ref(&(#value)), env)
-            })
-        } else {
-            None
+            }),
         }
     }
 }

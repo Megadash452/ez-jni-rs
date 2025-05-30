@@ -102,10 +102,10 @@ pub fn jni_fn(input: TokenStream) -> TokenStream {
 ///
 /// # Syntax
 /// ```text
-/// call!(static me.author.ClassName.methodName(int(arg1), java.lang.String(arg2)) -> int)
-///                Primitive type parameter --->\_______/  \____________________/     \_/
-///                  Object type parameter --------------------------^                 |
-///                     Return type        --------------------------------------------^
+/// call!(static me.author.ClassName.methodName(int(arg1), String(arg2), java.lang.Int(arg3)) -> int)
+///                Primitive type parameter --->\_______/                \_________________/     \_/
+///                  Object type parameter ---------------------------------------^               |
+///                     Return type        -------------------------------------------------------^
 /// ```
 ///
 /// ## Method Types
@@ -159,6 +159,7 @@ pub fn jni_fn(input: TokenStream) -> TokenStream {
 /// Inner types of the array can also be wrapped with [`Option`] (except primitives, of course).
 /// 
 /// For the class `java.lang.String`, use the Rust type [`String`] instead.
+/// Using `java.lang.String` will assume the value is a [`JObject`][jni::objects::JObject].
 /// 
 /// [`String`], **Array**, and [`Option`] values will be automatically converted between the 2 languages when making calls.
 /// 
@@ -186,12 +187,15 @@ pub fn jni_fn(input: TokenStream) -> TokenStream {
 /// followed by a **value** (wrapped in parenthesis).
 /// 
 /// **Array** arguments' **values** can be any Rust Type that is `AsRef<[T]>`,
+/// where `T` is a primitive, or can be [converted to `JObject`][ez_jni::ToObject].
 /// i.e. the value can be read as a *slice* of said type.
 /// e.g. [slice](https://doc.rust-lang.org/std/primitive.slice.html)s, [`Vec`]s, boxed slices, etc.
 /// 
+/// #### Null keyword
+/// 
 /// Because [`String`] arguments only accept Rust strings (which can't be **null**),
 /// the macro creates a *custom keyword* `null` for the argument values.
-/// This is only usable for *Objects*.
+/// This is only usable for *Object* types and can't be used within array literals.
 /// 
 /// Example of `null` argument value:
 /// ```ignore
@@ -229,7 +233,7 @@ pub fn call(input: TokenStream) -> TokenStream {
 /// Has similar syntax as [*calling a static method*][call!#method-types], but there is no *method name* or *return value*.
 /// 
 /// ```ignore
-/// new!(me.author.ClassName(int(arg1), java.lang.String(arg2)))
+/// new!(me.author.ClassName(int(arg1), String(arg2), java.lang.Int(arg3)))
 /// ```
 /// 
 /// Can also take a custom [`JNIEnv`][jni::JNIEnv], like in [`call!`](call!#explicit-jnienv).

@@ -1,3 +1,4 @@
+use jni::objects::JClass;
 use crate::utils::{create_java_prim_array, create_object_array, get_java_prim_array, get_object_array};
 use super::*;
 
@@ -53,6 +54,47 @@ impl ToObject for (&str, &[JObject<'_>]) {
 impl ToObject for (&str, &[&JObject<'_>]) {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         create_object_array(&self.1, self.0, env)
+    }
+}
+
+impl<'local> FromObject<'local> for Box<[JClass<'local>]> {
+    fn from_object_env(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+        crate::utils::get_object_array_converted(
+            object,
+            Some("java/lang/Class"),
+            |obj, _| JClass::from(obj),
+        env)
+    }
+}
+impl ToObject for [JClass<'_>] {
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        crate::utils::create_object_array_converted(
+            self,
+            "java/lang/Class",
+            // Can allocate without worry because the function creates a new local frame
+            |class, env| <&JObject>::from(class).to_object_env(env),
+        env)
+    }
+}
+
+impl<'local> FromObject<'local> for Box<[JThrowable<'local>]> {
+    fn from_object_env(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+        crate::utils::get_object_array_converted(
+            object,
+            Some("java/lang/Exception"),
+            |obj, _| JThrowable::from(obj),
+        env)
+    }
+}
+impl ToObject for [JThrowable<'_>] {
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        crate::utils::create_object_array_converted(
+            self,
+            "java/lang/Exception",
+            // Can allocate without worry because the function creates a new local frame
+            |class, env| <&JObject>::from(class).to_object_env(env),
+            env
+        )
     }
 }
 
