@@ -121,7 +121,9 @@ impl Type {
                     let elem_class = class.to_jni_class_path();
                     let inner_ty = array.ty.ty_tokens(true);
                     return quote_spanned! {array.span()=>
-                        ::jni::objects::JValueGen::borrow(&<(&'static str, &[#inner_ty]) as ::ez_jni::ToJValue>::to_jvalue_env(&(#elem_class, (#value).borrow()), env))
+                        ::jni::objects::JValueGen::borrow(&<(&'static str, &[#inner_ty]) as ::ez_jni::ToJValue>::to_jvalue_env(
+                            &(#elem_class, ::std::convert::AsRef::<_>::as_ref(&(#value))),
+                        env))
                     };
                 },
                 _ => self.ty_tokens(true),
@@ -721,7 +723,6 @@ impl Display for InnerType {
 /// So [`Class`] is needed for that context.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClassRustType {
-    // TODO: go and change all uses of java.lang.Class and java.lang.Object to short form
     JObject, JClass, JThrowable, String
 }
 impl FromStr for ClassRustType {

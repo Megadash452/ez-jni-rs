@@ -112,7 +112,7 @@ pub fn field(call: FieldCall) -> TokenStream {
             let class = class.to_jni_class_path();
             quote!(::ez_jni::utils::ClassRepr::String(#class))
         },
-        CallType::Static(ClassRepr::Object(expr)) => quote!{ ::ez_jni::utils::exprRepr::Object((#expr).borrow()) },
+        CallType::Static(ClassRepr::Object(expr)) => quote!{ ::ez_jni::utils::ClassRepr::Object((#expr).borrow()) },
         CallType::Object(expr) => quote!{ (#expr).borrow() },
     };
     let name = call.field_name.to_string();
@@ -132,7 +132,7 @@ pub fn field(call: FieldCall) -> TokenStream {
                 // #![allow(noop_method_call)]
                 use ::std::borrow::Borrow;
                 let env: &mut ::jni::JNIEnv = #env;
-                #jni_method(#callee, #name, #ty_sig, ::jni::objects::JValueGen::borrow(&(#val)), env)
+                #jni_method(#callee, #name, #ty_sig, #val, env)
             } }
         },
         None => {

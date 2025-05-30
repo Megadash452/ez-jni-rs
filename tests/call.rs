@@ -2,13 +2,12 @@ mod common;
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use common::setup_jvm;
+use common::get_env;
 use ez_jni::{call, class, eprintln, field, new, println, singleton};
 use jni::objects::{JClass, JObject, JThrowable};
 
 #[test]
-fn return_primitives() {
-    setup_jvm();
+fn return_primitives() { ez_jni::__throw::run_with_jnienv(get_env(), || {
     // Java primitive return types
     let _: () = call!(static me.test.Test.getVoid() -> void);
     let _: bool = call!(static me.test.Test.getBoolean() -> boolean);
@@ -44,11 +43,10 @@ fn return_primitives() {
     assert_eq!(r, 3.3);
     let r: f64 = call!(static me.test.Test.getDouble() -> f64);
     assert_eq!(r, 3.3);
-}
+}) }
 
 #[test]
-fn return_object() {
-    setup_jvm();
+fn return_object() { ez_jni::__throw::run_with_jnienv(get_env(), || {
     // Object
     let _: JObject = call!(static me.test.Test.getObject() -> java.lang.Object);
     let _: JObject = call!(static me.test.Test.getString() -> java.lang.String);
@@ -79,11 +77,10 @@ fn return_object() {
     let r: Result<Option<JObject>, String> =
         call!(static me.test.Test.nullable() -> Result<Option<java.lang.Object>, String>);
     assert!(r.unwrap().is_none());
-}
+}) }
 
 #[test]
-fn return_arrays() {
-    setup_jvm();
+fn return_arrays() { ez_jni::__throw::run_with_jnienv(get_env(), || {
     // Java primitives
     let _: Box<[bool]> = call!(static me.test.Test.getBooleanArray() -> [boolean]);
     let _: Box<[char]> = call!(static me.test.Test.getCharArray() -> [char]);
@@ -122,11 +119,10 @@ fn return_arrays() {
     let r: Box<[Box<[i32]>]> = call!(static me.test.Test.get2DIntArray() -> [[int]]);
     let expect: Box<[Box<[i32]>]> = Box::new([Box::new([1, 2]), Box::new([3, 4])]);
     assert_eq!(r, expect);
-}
+}) }
 
 #[test]
-fn return_arrays_other() {
-    setup_jvm();
+fn return_arrays_other() { ez_jni::__throw::run_with_jnienv(get_env(), || {
     // Object
     let _: Box<[JObject]> = call!(static me.test.Test.getObjectArray() -> [java.lang.Object]);
     let _: Box<[JObject]> = call!(static me.test.Test.getStringArray() -> [java.lang.String]);
@@ -200,11 +196,10 @@ fn return_arrays_other() {
     let r: Result<Option<Box<[JObject]>>, String> =
         call!(static me.test.Test.nullObjArray() -> Result<Option<[java.lang.Object]>, String>);
     assert!(r.unwrap().is_none());
-}
+}) }
 
 #[test]
-fn return_fail() {
-    setup_jvm();
+fn return_fail() { ez_jni::__throw::run_with_jnienv(get_env(), || {
     catch_unwind(AssertUnwindSafe(
         || call!(static me.test.Test.nullable() -> java.lang.Object),
     ))
@@ -221,11 +216,10 @@ fn return_fail() {
         || call!(static me.test.Test.nullObjArray() -> [Option<java.lang.Object>]),
     ))
     .unwrap_err();
-}
+}) }
 
 #[test]
-fn arguments() {
-    setup_jvm();
+fn arguments() { ez_jni::__throw::run_with_jnienv(get_env(), || {
     // -- Non-Array Arguments
     call!(static me.test.Test.primArgs(boolean(true), char('a'), byte(1i8), short(1i16), int(1i32), long(1i64), float(1f32), double(1f64)) -> void);
     call!(static me.test.Test.objArgs(java.lang.Object(new!(java.lang.Object())), String("hi")) -> void);
@@ -306,12 +300,10 @@ fn arguments() {
         [[char]]([['a', 'b'], ['c', 'd']]),
         [[int]]([[1, 2], [3, 4]]),
     ) -> void);
-}
+}) }
 
 #[test]
-fn constructor() {
-    setup_jvm();
-
+fn constructor() { ez_jni::__throw::run_with_jnienv(get_env(), || {
     new!(me.test.Test());
     new!(me.test.Test(int(3)));
     new!(me.test.Test(String("Hello, World!")));
@@ -324,25 +316,22 @@ fn constructor() {
     new!({ &class }(String("Hello, World!")));
     // Allow arbitrary Expressions as the Object
     new!(Some(Some(&class)).unwrap().unwrap()());
-    new!("me/test/Test"() throws String).unwrap();
+    // new!("me/test/Test"() throws String).unwrap(); Class lookups are not supported; user must do that manually
 
     // Test other class
     new!(java.lang.Object());
-}
+}) }
 #[test]
-fn constructor_fail() {
-    setup_jvm();
+fn constructor_fail() { ez_jni::__throw::run_with_jnienv(get_env(), || {
     // Should panic if the constructor throws, but user did not indicate that the constructor could throw
     catch_unwind(AssertUnwindSafe(|| {
         new!(me.test.Test(java.lang.String(null)))
     }))
     .unwrap_err();
-}
+}) }
 
 #[test]
-fn obj_method() {
-    setup_jvm();
-
+fn obj_method() { ez_jni::__throw::run_with_jnienv(get_env(), || {
     let obj: JObject<'_> = new!(me.test.Test$Instanced());
     call!(obj.getBoolean() -> boolean);
     call!(obj.getObject() -> java.lang.Object);
@@ -357,12 +346,10 @@ fn obj_method() {
     // Test method on class Object
     let class = call!(obj.getClass() -> Class);
     assert_eq!(call!(class.getName() -> String), "me.test.Test$Instanced");
-}
+}) }
 
 #[test]
-fn field() {
-    setup_jvm();
-
+fn field() { ez_jni::__throw::run_with_jnienv(get_env(), || {
     assert_eq!(field!(static me.test.Test.member1: u32), 3);
     assert_eq!(field!(static me.test.Test.member2: String), "Hello, World!");
     assert_eq!(field!(static me.test.Test.member3: char), 'a');
@@ -383,27 +370,24 @@ fn field() {
     field!(obj.member1: u32 = 5);
     field!(obj.member2: String = "Goodbye, World!");
     field!(obj.member3: char = 'b');
-}
+}) }
 
 #[test]
-fn class() {
-    setup_jvm();
+fn class() { ez_jni::__throw::run_with_jnienv(get_env(), || {
     let mut class: JClass<'_>;
 
     class = class!(me.test.Test);
     assert_eq!(call!(class.getName() -> String), "me.test.Test");
     class = class!(me.test.Test$Instanced);
     assert_eq!(call!(class.getName() -> String), "me.test.Test$Instanced");
-}
+}) }
 
 #[test]
-fn singleton() {
-    setup_jvm();
-
+fn singleton() { ez_jni::__throw::run_with_jnienv(get_env(), || {
     let obj = singleton!(me.test.Test$Singleton);
     assert_eq!(call!(obj.method() -> int), 3);
     assert_eq!(field!(obj.member: int), 3);
-}
+}) }
 
 #[test]
 fn print() {
