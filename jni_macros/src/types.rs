@@ -159,7 +159,7 @@ impl Type {
     /// **as_ref**: Whether the resulting Rust type should be the Unsized reference type.
     /// E.g. `[char]` instead of `Box<[char]>`.
     /// Is `true` when used for [`ToJValue`] and `false` for [`FromValue`].
-    fn ty_tokens(&self, as_ref: bool) -> TokenStream {
+    pub fn ty_tokens(&self, as_ref: bool) -> TokenStream {
         // DRY helpers
 
         /// Generates the Rust type tokens for a Arrays specifically.
@@ -762,7 +762,6 @@ pub struct NestedPath {
     pub final_class: Ident
 }
 impl Class {
-
     /// Get the final *Rust type* that will be used for a value with this [`Class`].
     /// 
     /// Will only return something other than [`JObject`][ClassRustType::JObject] if the [`Class`] is a [shorthand][Class::Short].

@@ -1,94 +1,117 @@
 //! Contains helper functions for the macros in `/jni_macros/src/object.rs`.
 use jni::{
-    errors::Error as JNIError,
     objects::{JObject, JValueOwned},
+    errors::{Error as JNIError},
     JNIEnv
 };
-use utils::first_char_uppercase;
-use crate::{call, FromException, FromObjectError, __throw::{panic_exception, try_catch}};
+use crate::{call, FromObjectError, __throw::try_catch};
+use super::{field_helper, getter_name_and_sig, FieldNotFound, MethodNotFound};
 
-#[derive(FromException)]
-#[class(java.lang.NoSuchFieldError)]
-struct FieldNotFound;
-
-#[derive(FromException)]
-#[class(java.lang.NoSuchMethodError)]
-struct MethodNotFound;
-
-/// Read a **field** from a Java Object, given the **name** of the field and its **ty**pe.
+/// Get the value of a **field** from an Object.
 /// 
-/// If the field does not exists and **getter_fallback** is `true`,
-/// this will call a *getter method* with `get` prepended to the field's name.
-/// E.g. if the field `java.lang.String message` did not exist,
-/// then `java.lang.String getMessage()` will be called.
-///
+/// This function is the same as [`get_obj_field()`][crate::utils::get_obj_field()]
+/// but returns [`FieldNotFound`][FromObjectError::FieldNotFound] if the **field** or **getter** method were not found.
+/// 
 /// This is used by the derive macros of [`FromObject`][crate::FromObject] and [`FromObject`][crate::FromException].
-/// This might be removed in the future in favor of [`get_obj_field()`].
 #[doc(hidden)]
-pub fn get_field<'local>(
-    object: &JObject,
-    name: &str,
-    ty: &str,
-    getter_fallback: bool,
-    env: &mut JNIEnv<'local>,
-) -> Result<JValueOwned<'local>, FromObjectError> {
-    let class = env.get_object_class(object)
-        .unwrap_or_else(|err| panic!("Error gettig object's Class: {err}"));
-    let class = call!(env=> class.getName() -> String);
-
-    // What to do if FieldNotFound
-    let handle_not_found = |env: &mut JNIEnv<'local>| {
-        if getter_fallback {
-            let method = format!("get{}", first_char_uppercase(name));
-            call_getter(object, &method, ty, env)
-        } else {
-            Err(FromObjectError::FieldNotFound {
+pub fn from_object_get_field<'local>(object: &JObject<'_>, name: &'static str, ty: &'static str, env: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, FromObjectError> {
+    field_helper(name, ty,
+        |env| env.get_field(object, name, ty),
+        |env| {
+            let (name, sig) = getter_name_and_sig(name, ty);
+            env.call_method(object, name, sig, &[])
+        },
+        |env| env.get_object_class(object),
+    env)
+        .map_err(|err| {
+            // Create the error that will be returned before checking
+            let not_found_error = FromObjectError::FieldNotFound {
                 name: name.to_string(),
                 ty: ty.to_string(),
-                target_class: class
-            })
-        }
-    };
-
-    env.get_field(object, name, ty)
-        .or_else(|err| match err {
-            JNIError::FieldNotFound { .. } => handle_not_found(env),
-            JNIError::JavaException =>
-                if let Some(FieldNotFound) = try_catch(env) {
-                    handle_not_found(env)
-                } else {
-                    panic_exception(env.exception_occurred().unwrap(), env)
+                target_class: call!(env=> call!(env=> object.getClass() -> Class).getName() -> String)
+            };
+            match err {
+                // NUll was already checked, will not appear here
+                JNIError::FieldNotFound { .. }
+                | JNIError::MethodNotFound { .. } => not_found_error,
+                JNIError::JavaException => {
+                    if let Some(FieldNotFound) = try_catch(env) {
+                        not_found_error
+                    } else if let Some(MethodNotFound) = try_catch(env) {
+                        not_found_error
+                    } else {
+                        crate::__throw::handle_jni_call_error(JNIError::JavaException, env)
+                    }
                 },
-            err => panic!("Error occurred while accessing field: {err}")
+                err => crate::__throw::handle_jni_call_error(err, env)
+            }
         })
 }
-/// This is used by the derive macros of [`FromObject`][crate::FromObject] and [`FromObject`][crate::FromException].
-/// This might be removed in the future in favor of [`get_obj_field()`].
+
+/// Helper function for the [`FromObject`][ez_jni::FromObject] [derive macro][ez_jni_macros::from_object] to check whether the *object*'s Class matches the struct's *target Class*.
 #[doc(hidden)]
-pub fn call_getter<'local>(
-    object: &JObject,
-    mathod_name: &str,
-    ty: &str,
-    env: &mut JNIEnv<'local>,
-) -> Result<JValueOwned<'local>, FromObjectError> {
-    let class = env.get_object_class(object)
-        .unwrap_or_else(|err| panic!("Error gettig object's Class: {err}"));
-    let class = call!(env=> class.getName() -> String);
+pub fn check_class_struct(object: &JObject, target_class: &'static str, env: &mut JNIEnv<'_>) -> Result<(), FromObjectError> {
+    if object.is_null() {
+        return Err(FromObjectError::Null);
+    }
 
-    let error = FromObjectError::FieldNotFound {
-        name: format!("{mathod_name}()"),
-        ty: ty.to_string(),
-        target_class: class
-    };
-    env.call_method(object, mathod_name, format!("(){ty}"), &[])
-        .map_err(|err| match err {
-            JNIError::MethodNotFound { .. } => error,
-            JNIError::JavaException
-                => if let Some(MethodNotFound) = try_catch(env) {
-                    error
-                } else {
-                    panic_exception(env.exception_occurred().unwrap(), env)
-                },
-            err => panic!("Error occurred while calling getter method: {err}")
+    let class = env.get_object_class(object)
+        .unwrap_or_else(|err| panic!("Failed to get Object's class: {err}"));
+    
+    if !env.is_instance_of(object, target_class).unwrap() {
+        return Err(::ez_jni::FromObjectError::ClassMismatch {
+            obj_class: ::ez_jni::call!(env=> class.getName() -> String),
+            target_class: Some(target_class.to_string())
         })
+    }
+
+    Ok(())
 }
+
+// My urge to avoid duplicate code generated by the macros is running through my veins, but I MUST resist it!
+
+// enum MyEnum { Var1, Var2 }
+// impl<> crate::FromObject<'_> for MyEnum {
+//     fn from_object_env(object: &JObject<'_>, env: &mut ::jni::JNIEnv<'_>) -> Result<Self, ::ez_jni::FromObjectError> {
+//         ::ez_jni::utils::check_classes_enum(object, Some("java/lang/String"), ::std::boxed::Box::new([
+//             Constructor { target_class: "java/lang/Int", constructor: Box::new(|env| MyEnum::Var1) },
+//             Constructor { target_class: "java/lang/Float", constructor: Box::new(|env| MyEnum::Var2) },
+//         ]), env)
+//     }
+// }
+//
+// #[doc(hidden)]
+// pub struct Constructor<T> {
+//     target_class: &'static str,
+//     constructor: Box<dyn FnOnce(&mut JNIEnv<'_>) -> T>
+// }
+// #[doc(hidden)]
+// pub fn check_classes_enum<T>(object: &JObject, base_class: Option<&'static str>, constructors: Box<[Constructor<T>]>, env: &mut JNIEnv<'_>) -> Result<T, FromObjectError> {
+//     if object.is_null() {
+//         return Err(FromObjectError::Null);
+//     }
+//
+//     let class = env.get_object_class(object)
+//         .unwrap_or_else(|err| panic!("Failed to get Object's class: {err}"));
+//
+//     if let Some(base_class) = base_class {
+//         if !env.is_instance_of(object, base_class).unwrap() {
+//             return Err(::ez_jni::FromObjectError::ClassMismatch {
+//                 obj_class: ::ez_jni::call!(env=> class.getName() -> String),
+//                 target_class: Some(base_class.to_string())
+//             })
+//         }
+//     }
+//
+//     // Check if the object's Class matches any of the variants' classes and call the "constructor" for the first variant that matches.
+//     for item in constructors {
+//         if env.is_instance_of(object, item.target_class).unwrap() {
+//             return Ok((item.constructor)(env))
+//         }
+//     }
+//     // None of the variants matched
+//     Err(::ez_jni::FromObjectError::ClassMismatch {
+//         obj_class: ::ez_jni::call!(env=> class.getName() -> String),
+//         target_class: None
+//     })
+// }

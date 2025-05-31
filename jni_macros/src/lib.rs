@@ -333,7 +333,7 @@ pub fn singleton(input: TokenStream) -> TokenStream {
 pub fn from_object(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     let trait_ = syn::parse_quote!(::ez_jni::FromObject);
-    let method = syn::parse_quote!(from_object);
+    let method = syn::parse_quote!(from_object_env);
     let obj_ty = syn::parse_quote!(::jni::objects::JObject);
 
     match item_from_derive_input(input) {

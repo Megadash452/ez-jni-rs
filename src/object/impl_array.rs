@@ -41,21 +41,34 @@ impl<'local> FromObject<'local> for Box<[JObject<'local>]> {
         get_object_array(object, None, env)
     }
 }
-/// Implementation for an Object slice paired with the element Class
-impl ToObject for (&str, &[JObject<'_>]) {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        create_object_array(
-            &self.1.iter()
-                .collect::<Box<_>>(),
-            self.0,
-        env)
-    }
+
+/// Implementation for a slice of Objects of an ambiguous Class paired with the element Class
+macro_rules! impl_paired_obj_slice {
+    (ref $($impl_decl:tt)*) => {
+        $($impl_decl)* {
+            fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+                create_object_array(
+                    &self.1.iter()
+                        .collect::<Box<_>>(),
+                    self.0,
+                env)
+            }
+        }
+    };
+    ($($impl_decl:tt)*) => {
+        $($impl_decl)* {
+            fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+                create_object_array(&self.1, self.0, env)
+            }
+        }
+    };
 }
-impl ToObject for (&str, &[&JObject<'_>]) {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        create_object_array(&self.1, self.0, env)
-    }
-}
+impl_paired_obj_slice!(    impl ToObject for (&str, [JObject<'_>]));
+impl_paired_obj_slice!(ref impl ToObject for (&str, [&JObject<'_>]));
+impl_paired_obj_slice!(    impl ToObject for (&str, &[JObject<'_>]));
+impl_paired_obj_slice!(ref impl ToObject for (&str, &[&JObject<'_>]));
+impl_paired_obj_slice!(    impl<const N: usize> ToObject for (&str, [JObject<'_>; N]));
+impl_paired_obj_slice!(ref impl<const N: usize> ToObject for (&str, [&JObject<'_>; N]));
 
 impl<'local> FromObject<'local> for Box<[JClass<'local>]> {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {

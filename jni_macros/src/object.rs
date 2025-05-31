@@ -6,7 +6,7 @@ use syn::{parse::{Parse, ParseStream, Parser}, punctuated::Punctuated, AngleBrac
 use itertools::Itertools as _;
 use std::{cell::RefCell, collections::{HashMap, HashSet}};
 use crate::{
-    types::{Class, InnerType, SigType, Type},
+    types::{Class, ClassRustType, InnerType, OptionType, SigType, Type},
     utils::{merge_errors, take_class_attribute, take_class_attribute_required, Spanned}
 };
 
@@ -25,22 +25,7 @@ pub fn derive_struct(mut st: ItemStruct,trait_: syn::Path, method: Ident, obj_ty
     Ok(quote! {
         impl <#st_generic_params> #trait_<#env_lt> for #st_ident #st_generics {
             fn #method(object: &#obj_ty, env: &mut ::jni::JNIEnv<#env_lt>) -> Result<Self, ::ez_jni::FromObjectError> {
-                if object.is_null() {
-                    return Err(::ez_jni::FromObjectError::Null);
-                }
-
-                static __CLASS: &str = #class;
-
-                let __class = env.get_object_class(object)
-                    .unwrap_or_else(|err| panic!("Failed to get Object's class: {err}"));
-                
-                if !env.is_instance_of(object, __CLASS).unwrap() {
-                    return Err(::ez_jni::FromObjectError::ClassMismatch {
-                        obj_class: ::ez_jni::call!(env=> __class.getName() -> String),
-                        target_class: Some(__CLASS.to_string())
-                    })
-                }
-
+                ::ez_jni::utils::check_class_struct(object, #class, env)?;
                 Ok(Self #st_ctor)
             }
         }
@@ -340,12 +325,100 @@ impl FieldAttr {
     }
 }
 
-fn get_type_from_field(field: &Field, class: Option<Class>) -> syn::Result<Type> {
-    match class {
-        // Use the FromObject impl even if it is primitive when a class is provided
-        Some(class) => Ok(Type::Assertive(InnerType::Object(class))),
-        None => syn::parse2::<Type>(field.ty.to_token_stream())
-            .map_err(|_| syn::Error::new(field.span(), "Field must have \"class\" property if it is not a primitive or String."))
+/// Convert the [`Type`][syn::Type] of a [`Field`] to the internal [`Type`] used for the macros.
+/// 
+/// This is necessary to generate the conversion code with [`Type::convert_jvalue_to_rvalue()`].
+fn get_field_type(field_ty: &syn::Type) -> syn::Result<Type> {
+    /// Gets the generic arguments of a type (if any)
+    fn get_generic_args<'a>(ty: &'a syn::PathSegment) -> syn::Result<Option<&'a syn::AngleBracketedGenericArguments>> {
+        match &ty.arguments {
+            syn::PathArguments::None => Ok(None),
+            syn::PathArguments::AngleBracketed(args) => Ok(Some(args)),
+            syn::PathArguments::Parenthesized(_) => Err(syn::Error::new(ty.span(), "Function types are not allowed here"))
+        }
+    }
+
+    match field_ty {
+        syn::Type::BareFn(_) => todo!("support Callbacks"),
+        syn::Type::Group(group) => get_field_type(group.elem.as_ref()),
+        syn::Type::Paren(group) => get_field_type(group.elem.as_ref()),
+        syn::Type::Path(path) => {
+            // Only required to modify the outer layer. Then parse with Type
+            let ty = path.path.segments.last().unwrap(); // last segment is the type
+            let no_generics_error = syn::Error::new(ty.span(), "This type must have 1 generic argument");
+            match ty.ident.to_string().as_str() {
+                "Vec" => {
+                    let inner = get_generic_args(ty)?
+                        .ok_or(no_generics_error.clone())?
+                        .args
+                        .first()
+                        .ok_or(no_generics_error.clone())?;
+                    syn::parse2::<Type>(quote_spanned! {ty.span()=> [#inner] })
+                },
+                "Box" => {
+                    let inner = get_generic_args(ty)?
+                        .ok_or(no_generics_error.clone())?
+                        .args
+                        .first()
+                        .ok_or(no_generics_error.clone())?;
+                    // Could be Boxed slice or a regular type
+                    match inner {
+                        syn::GenericArgument::Type(inner_ty) => match inner_ty {
+                            syn::Type::Slice(slice) => syn::parse2::<Type>(slice.to_token_stream()),
+                            _ => todo!("Support Box for any type")
+                        },
+                        _ => return Err(syn::Error::new(field_ty.span(), "Generic argument in Box must be a type")),
+                    }
+                },
+                // FIXME: a better solution is to replace all instances of these in the type with Object, Class, and Exception respectively.
+                "JObject" => Ok(Type::Assertive(InnerType::Object(Class::Short(Ident::new("Object", field_ty.span()))))),
+                "JClass" => Ok(Type::Assertive(InnerType::Object(Class::Short(Ident::new("Class", field_ty.span()))))),
+                // TODO: allow class argument to be used with JThrowable
+                "JThrowable" => Ok(Type::Assertive(InnerType::Object(Class::Short(Ident::new("Exception", field_ty.span()))))),
+                // Other types should be directly parseable by Type
+                _ => syn::parse2::<Type>(field_ty.to_token_stream())
+            }
+        },
+        // Try to parse the type
+        syn::Type::Verbatim(field_ty) => syn::parse2::<Type>(field_ty.clone()),
+        _ => Err(syn::Error::new(field_ty.span(), "This type is not supported. Can only use primitives, String, Option, Vec, Boxed slice, or JObject"))
+    }
+}
+
+/// Converts the value obtained from a *field access* or *getter call* to a *Rust value* using [`Type::convert_jvalue_to_rvalue()`].
+/// 
+/// Passing a **class** will force the use of `FromObject` instead of `FromJValue`.
+/// **class** is *required* if the type is [`JObject`][jni::objects::JObject].
+fn convert_field_value(ty: &Type, class: Option<&Class>, value: &TokenStream) -> syn::Result<TokenStream> {
+    match ty {
+        // JObjects must use the *field::class* attribute
+        Type::Assertive(InnerType::Object(ty))
+        | Type::Option { ty: OptionType::Object(ty), .. }
+        if ty.rust_type() == ClassRustType::JObject => {
+            match class {
+                Some(class) => Ok(Type::Assertive(InnerType::Object(class.clone())).convert_jvalue_to_rvalue(value)),
+                None => Err(syn::Error::new(ty.span(), "Field must have \"class\" property if it is JObject"))
+            }
+        },
+        // Multidimensional Arrays can skip class check (but should they?)
+        Type::Array(array)
+        | Type::Option { ty: OptionType::Array(array), .. }
+        if matches!(&*array.ty, Type::Array(_) | Type::Option { ty: OptionType::Array(_), .. })
+            => Ok(ty.convert_jvalue_to_rvalue(value)),
+        _ => match class {
+            // *field::class* attribute was used; Call from_object()
+            Some(class) => {
+                let ty = ty.ty_tokens(false);
+                let error_msg = format!("Expected field value to be an Object of class \"{class}\": {{err}}");
+                Ok(quote_spanned! {ty.span() =>
+                    <#ty as ::ez_jni::FromObject>::from_object_env(
+                        (#value).borrow()
+                            .l().unwrap_or_else(|err| panic!(#error_msg)),
+                    env).unwrap()
+                })
+            },
+            None => Ok(ty.convert_jvalue_to_rvalue(value))
+        }
     }
 }
 
@@ -367,35 +440,43 @@ fn struct_constructor(fields: &Fields) -> syn::Result<TokenStream> {
     let values = fields.iter()
         .map(|field| {
             let attr = FieldAttr::get_from_attrs(field)?;
-            let ty = get_type_from_field(field, attr.class)?;
+            let ty = get_field_type(&field.ty)?;
 
-            // Use FromObject to convert the returned value to the specified Rust Type.
-            let convert = |call: TokenStream| -> TokenStream {
-                let converted = ty.convert_jvalue_to_rvalue(&call);
-                quote_spanned! {converted.span()=> #converted.unwrap_or_else(|err| panic!("The method call did not return the expected type: {err}")) }
-            };
-            let get_field = |name: String, getter_fallback: bool| {
-                let sig_ty = ty.sig_type();
+            let get_field = |name: String| {
+                // Use *class* for the sig Type if it is used
+                let sig_ty = match &attr.class {
+                    Some(class) => class.sig_type(),
+                    None => ty.sig_type(),
+                };
 
-                convert(quote_spanned! {field.span()=>
-                    ::ez_jni::utils::get_field(&object, #name, #sig_ty, #getter_fallback, env)?
+                convert_field_value(&ty, attr.class.as_ref(), &quote_spanned! {field.span()=>
+                    ::ez_jni::utils::from_object_get_field(&object, #name, #sig_ty, env)?
                 })
             };
             
             Ok(if let Some(name) = attr.name {
                 // Use the "name" of the field attribute
-                get_field(name.to_string(), false)
+                get_field(name.to_string())?
             } else if let Some(call) = attr.call {
                 // Call the Java method
                 let method = LitStr::new(&call.to_string(), call.span());
-                let sig_ty = ty.sig_type();
+                // Use *class* for the sig Type if it is used
+                let sig_ty = match &attr.class {
+                    Some(class) => class.sig_type(),
+                    None => ty.sig_type(),
+                };
+                let sig = format!("(){}", sig_ty.value());
                 
-                convert(quote_spanned! {method.span()=>
-                    ::ez_jni::utils::call_getter(&object, #method, #sig_ty, env)?
-                })
+                convert_field_value(&ty, attr.class.as_ref(), &quote_spanned! {method.span()=>
+                    ::ez_jni::utils::call_obj_method(&object, #method, #sig, &[], env)
+                        .unwrap_or_else(|exception| {
+                            env.throw(exception).unwrap();
+                            ::ez_jni::__throw::handle_jni_call_error(::jni::errors::Error::JavaException, env)
+                        })
+                })?
             } else if let Some(name) = &field.ident {
-                // Use the name of the field, and also call "get{Name}" if field not found
-                get_field(name.to_string().to_case(Case::Camel), true)
+                // Convert the Rust field name to camelCase for the Java field
+                get_field(name.to_string().to_case(Case::Camel))?
             } else {
                 return Err(syn::Error::new(field.span(), "Field must have \"name\" or \"call\" properties if it is unnamed. See the 'field' attribute."))
             })

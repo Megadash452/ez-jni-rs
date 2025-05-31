@@ -2,6 +2,7 @@ mod common;
 
 use std::{path::PathBuf, process::Command, sync::LazyLock};
 use utils::{CLASS_DIR, run, absolute_path};
+use common::get_env;
 
 static NATIVE_TEST_DIR: LazyLock<PathBuf> = LazyLock::new(|| absolute_path("./tests/native_test"));
 
@@ -35,13 +36,14 @@ fn jni_fn() {
 /// Tests when a jni_fn `panic!s` and the panic data jas to be thrown to the JVM.
 #[test]
 fn throw_panic() {
-    setup_env!(env);
-
-    println!("throw_panic:");
-    // FIXME: It seems that in Rust 2024, the ! (never) type can be used for inferred types, making the closure below have ! as the return type,
-    // but in Rust 2021 it was () (unit) since it would never (pun intended) try to infer the ! type.
-    // This use case is rare, but I guess it's no longer supported.
-    ez_jni::__throw::run_with_jnienv::<()>(&mut env, |_| panic!("Release me!"));
-    let exception = ez_jni::__throw::try_catch::<String>(&mut env).unwrap();
+    ez_jni::__throw::run_with_jnienv::<()>(get_env(), || panic!("Release me!"));
+    let exception = ez_jni::__throw::try_catch::<String>(&mut get_env()).unwrap();
     assert_eq!(exception, "me.marti.ezjni.RustPanic: Release me!");
+
+    ez_jni::__throw::run_with_jnienv::<()>(get_env(), || {
+        let err = std::panic::catch_unwind(|| {
+            panic!("Release me!")
+        }).unwrap_err();
+        assert_eq!(&"Release me!", err.downcast::<&'static str>().unwrap().as_ref());
+    });
 }

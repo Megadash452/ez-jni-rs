@@ -1,13 +1,12 @@
 mod common;
 
-use common::setup_jvm;
+use common::get_env;
 use ez_jni::{call, new, FromException, FromObject, ToObject};
 use jni::objects::JObject;
 
 /// Tests the implementations of FromObject, etc. for *standard library* types.
 #[test]
-fn implementations() {
-    setup_jvm();
+fn implementations() { ez_jni::__throw::run_with_jnienv(get_env(), || {
     static S: &str = "Hello, World!";
     static N: i8 = -3;
     static UN: i8 = 3;
@@ -29,7 +28,7 @@ fn implementations() {
     );
 
     // Testing IO Error
-    obj = new!(java.io.FileNotFoundException(java.lang.String(S)));
+    obj = new!(java.io.FileNotFoundException(String(S)));
     let err = std::io::Error::from_object(&obj).unwrap();
     assert_eq!(err.to_string(), S);
 
@@ -152,7 +151,7 @@ fn implementations() {
         ['a', 'b', 'c'],
         Box::<[char]>::from_object(&obj).unwrap().as_ref()
     );
-}
+}) }
 
 #[derive(FromObject)]
 #[class(me.test.Test)]
@@ -203,28 +202,43 @@ enum MyEnumClass2 {
 }
 
 #[test]
-fn from_object() {
-    setup_jvm();
+fn from_object() { ez_jni::__throw::run_with_jnienv(get_env(), || {
     const VAL: i32 = 3;
+    const ARRAY_VAL: &[&'static str] = &["Hello", "World"];
     let mut object = new!(me.test.Test(int(VAL)));
 
     assert_eq!(
-        MyClass::from_object(&object)
-            .unwrap()
+        MyClass::from_object(&object).unwrap()
             .member_field,
         VAL
     );
     assert_eq!(
-        MyClass1::from_object(&object)
-            .unwrap()
+        MyClass1::from_object(&object).unwrap()
             .member,
         VAL
+    );
+    assert_eq!(
+        MyClass1::from_object(&object).unwrap()
+            .array_field
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Box<[_]>>()
+            .as_ref(),
+        ARRAY_VAL
     );
     let int = MyClass2::from_object(&object).unwrap().member;
     assert_eq!(call!(int.intValue() -> int), VAL);
     assert_eq!(
-        MyClass3::from_object(&object)
-            .unwrap()
+        MyClass2::from_object(&object).unwrap()
+            .array_field
+            .iter()
+            .map(|s| s.as_ref().unwrap())
+            .collect::<Box<[_]>>()
+            .as_ref(),
+        ARRAY_VAL
+    );
+    assert_eq!(
+        MyClass3::from_object(&object).unwrap()
             .member,
         VAL
     );
@@ -236,12 +250,12 @@ fn from_object() {
     );
 
     const S: &str = "Hello, World!";
-    object = new!(me.test.Test$SumClass$SumClass2(java.lang.String(S)));
+    object = new!(me.test.Test$SumClass$SumClass2(String(S)));
     assert_eq!(
         MyEnumClass::from_object(&object).unwrap(),
         MyEnumClass::Variant2 { str: S.to_string() }
     );
-}
+}) }
 
 #[derive(FromException)]
 #[class(java.lang.Exception)]
@@ -267,8 +281,7 @@ impl Exception {
 }
 
 #[test]
-fn from_exception() {
-    setup_jvm();
+fn from_exception() { ez_jni::__throw::run_with_jnienv(get_env(), || {
     assert_eq!(
         call!(static me.test.Test.throwObj() -> Result<java.lang.Object, MyErr1>)
             .unwrap_err()
@@ -287,4 +300,4 @@ fn from_exception() {
             .message(),
         "exception"
     );
-}
+}) }

@@ -699,7 +699,7 @@ impl Debug for Return {
 /// ```ignore
 /// call!(env=> myfn() -> void)
 /// ```
-pub struct Env(Option<Expr>);
+pub struct Env(pub Option<Expr>);
 impl Parse for Env {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         use proc_macro2::{TokenTree, Spacing};

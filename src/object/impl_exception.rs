@@ -6,9 +6,9 @@ impl FromException<'_> for String {
     fn from_exception(exception: &JThrowable, env: &mut jni::JNIEnv) -> Result<Self, FromObjectError> {
         let class = env.get_object_class(&exception)
             .unwrap_or_else(|err| panic!("Failed to get exception's class: {err}"));
-        let class = call!(class.getName() -> String);
+        let class = call!(env=> class.getName() -> String);
 
-        let msg = call!(exception.getMessage() -> Option<String>).unwrap_or_default();
+        let msg = call!(env=> exception.getMessage() -> Option<String>).unwrap_or_default();
 
         Ok(format!("{class}: {msg}"))
     }

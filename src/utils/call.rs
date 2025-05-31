@@ -130,7 +130,7 @@ fn handle_call_error<'local, T>(
 }
 
 /// Generates the **name** and **signature** of the *Getter Method* that is called if a Field was not found.
-fn getter_name_and_sig(field_name: &'static str, ty: &'static str) -> (String, String) { (
+pub(super) fn getter_name_and_sig(field_name: &'static str, ty: &'static str) -> (String, String) { (
     format!("get{}", first_char_uppercase(field_name)),
     format!("(){ty}")
 ) }
@@ -158,6 +158,7 @@ pub fn get_obj_field<'local>(object: &JObject<'_>, name: &'static str, ty: &'sta
         },
         |env| env.get_object_class(object),
     env)
+        .unwrap_or_else(|err| crate::__throw::handle_jni_call_error(err, env))
 }
 /// Like [`get_obj_field()`], but gets the value of a `static` field of a **Class**.
 pub fn get_static_field<'local>(class: ClassRepr<'_, '_>, name: &'static str, ty: &'static str, env: &mut JNIEnv<'local>) -> JValueOwned<'local> {
@@ -175,6 +176,7 @@ pub fn get_static_field<'local>(class: ClassRepr<'_, '_>, name: &'static str, ty
         },
         |env| class.get_class(env),
     env)
+        .unwrap_or_else(|err| crate::__throw::handle_jni_call_error(err, env))
 }
 
 /// Sets the value of a **field** of a *Java Object*, given the **name** of the field and its **type**.
@@ -198,7 +200,7 @@ pub fn set_obj_field(object: &JObject<'_>, name: &'static str, ty: &'static str,
         },
         |env| env.get_object_class(object),
     env)
-        .v()
+        .and_then(|val| val.v())
         .unwrap_or_else(|err| crate::__throw::handle_jni_call_error(err, env))
 }
 /// Like [`set_obj_field()`], but sets the value of a `static` field of a **Class**.
@@ -225,7 +227,7 @@ pub fn set_static_field<'local>(class: ClassRepr<'_, '_>, name: &'static str, ty
         },
         |env| class.get_class(env),
     env)
-        .v()
+        .and_then(|val| val.v())
         .unwrap_or_else(|err| crate::__throw::handle_jni_call_error(err, env))
 }
 
@@ -235,14 +237,14 @@ pub fn set_static_field<'local>(class: ClassRepr<'_, '_>, name: &'static str, ty
 /// 
 /// If that also fails, The function will print some hints to the user about why a Field or Method was not found.
 /// However, this only happens when building in DEBUG mode because this involves *A LOT* of Java calls.
-fn field_helper<'local>(
+pub(super) fn field_helper<'local>(
     name: &'static str,
     ty: &'static str,
     field_op: impl FnOnce(&mut JNIEnv<'local>) -> JNIResult<JValueOwned<'local>>,
     method_op: impl FnOnce(&mut JNIEnv<'local>) -> JNIResult<JValueOwned<'local>>,
     get_class: impl FnOnce(&mut JNIEnv<'local>) -> JNIResult<JClass<'local>>,
     env: &mut JNIEnv<'local>
-) -> JValueOwned<'local> {
+) -> JNIResult<JValueOwned<'local>> {
     #![allow(unused_variables)]
     // This closure is ran if the Field was not found in field_op.
     // method_op will be called, and if a Method for this field was still not found,
@@ -252,25 +254,36 @@ fn field_helper<'local>(
     #[cfg(debug_assertions)]
     let call_method_op = |env: &mut JNIEnv<'local>| {
         method_op(env)
-            .or_else(|err| match err {
-                JNIError::MethodNotFound { .. } => crate::hints::check_field_existence(get_class(env)?, name, ty, env)
-                    .map(|_| JValueOwned::Void),
-                JNIError::JavaException => {
-                    if let Some(MethodNotFound) = try_catch(env) {
-                        crate::hints::check_field_existence(get_class(env)?, name, ty, env)
-                            .map(|_| JValueOwned::Void)
-                    } else {
-                        // Other unexpected exception
-                        Err(JNIError::JavaException)
-                    }
-                },
-                err => Err(err)
+            // Group the Error with the Class
+            .map_err(|err| (
+                err,
+                get_class(env)
+                    .unwrap_or_else(|err| crate::__throw::handle_jni_call_error(err, env))
+            ))
+            // Check Field and Getter Method failure
+            .map_err(|(err, class)| {
+                match &err {
+                    JNIError::MethodNotFound { .. } => {
+                        crate::hints::check_field_existence(class, name, ty, env)
+                            .unwrap_or_else(|err| crate::__throw::handle_jni_call_error(err, env));
+                    },
+                    JNIError::JavaException => {
+                        if let Some(MethodNotFound) = try_catch(env) {
+                            crate::hints::check_field_existence(class, name, ty, env)
+                                .unwrap_or_else(|err| crate::__throw::handle_jni_call_error(err, env));
+                            // FIXME: need to rethrow the exception
+                        }
+                    },
+                    err => { },
+                };
+                err
             })
     };
 
     field_op(env)
         .or_else(|err| match err {
             JNIError::FieldNotFound { .. } => { cfg_if::cfg_if! {
+                // Field does not exist, try calling a Getter
                 if #[cfg(debug_assertions)] {
                     call_method_op(env)
                 } else {
@@ -294,5 +307,4 @@ fn field_helper<'local>(
             },
             err => Err(err)
         })
-        .unwrap_or_else(|err| crate::__throw::handle_jni_call_error(err, env))
 }
