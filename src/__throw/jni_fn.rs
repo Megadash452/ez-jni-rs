@@ -1,5 +1,5 @@
 use super::*;
-use std::{any::Any, panic::UnwindSafe};
+use std::{any::Any, panic::{AssertUnwindSafe, UnwindSafe}};
 use jni::objects::{GlobalRef, JObject};
 use crate::{compile_java_class, LOCAL_JNIENV_STACK};
 
@@ -13,24 +13,24 @@ use crate::{compile_java_class, LOCAL_JNIENV_STACK};
 /// DO NOT try to operate on the return value because you will have no indication wether **f** panicked and returned *zeroed*.
 /// 
 /// This function is used by [ez_jni_macros::jni_fn].
-pub fn run_with_jnienv<'local, R: Sized>(
+pub fn run_with_jnienv<'local, R: UnwindSafe>(
     env: JNIEnv<'local>,
-    f: impl FnOnce() -> R + UnwindSafe,
+    f: impl FnOnce(&mut JNIEnv<'local>) -> R + UnwindSafe,
 ) -> R {
-    run_with_jnienv_main(env, ||
-        std::panic::catch_unwind(|| f())
+    run_with_jnienv_main(env, |env|
+        std::panic::catch_unwind(AssertUnwindSafe(|| f(env)))
     )
 }
 /// Same as [`run_with_jnienv()`], but maps the returned `R` to a Java value `J`.
 pub fn run_with_jnienv_map<'local, R: UnwindSafe, J: Sized>(
     env: JNIEnv<'local>,
-    f: impl FnOnce() -> R + UnwindSafe,
+    f: impl FnOnce(&mut JNIEnv<'local>) -> R + UnwindSafe,
     // map function should not capture variables
-    map: fn(R) -> J,
+    map: fn(R, &mut JNIEnv<'local>) -> J,
 ) -> J {
-    run_with_jnienv_main(env, ||
-        std::panic::catch_unwind(|| f())
-            .and_then(|r| std::panic::catch_unwind(|| map(r)))
+    run_with_jnienv_main(env, |env|
+        std::panic::catch_unwind(AssertUnwindSafe(|| f(env)))
+            .and_then(|r| std::panic::catch_unwind(AssertUnwindSafe(|| map(r, env))))
     )
 }
 /// Handles setting up the *panic hook* and throwing the *panic payload*.
@@ -39,10 +39,10 @@ pub fn run_with_jnienv_map<'local, R: UnwindSafe, J: Sized>(
 /// 
 /// Unwind panicking accross language barriers is undefined behavior, so it MUST NOT happen in this function.
 #[allow(unused_must_use)]
-fn run_with_jnienv_main<'local, R: Sized>(mut env: JNIEnv<'local>, f: impl FnOnce() -> std::thread::Result<R>) -> R {
+fn run_with_jnienv_main<'local, R: Sized>(mut env: JNIEnv<'local>, f: impl FnOnce(&mut JNIEnv<'local>) -> std::thread::Result<R>) -> R {
     // Helper to catch unwinding panics of regular rust functions
     fn my_catch<'local, R>(f: impl FnOnce() -> R) -> Result<R, String> {
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f()))
+        std::panic::catch_unwind(AssertUnwindSafe(|| f()))
             .map_err(|payload| {
                 match payload.downcast::<&'static str>() {
                     Ok(msg) => msg.as_ref().to_string(),
@@ -78,7 +78,8 @@ fn run_with_jnienv_main<'local, R: Sized>(mut env: JNIEnv<'local>, f: impl FnOnc
         });
 
     // Run the function
-    let result = f();
+    // Pass a reference of the JNIEnv that was just pushed; for conversions
+    let result = f(crate::utils::get_env::<'_, 'local>());
 
     // Remove the JNIEnv when the function finishes running
     let (env_r, popped_idx) = my_catch(|| {

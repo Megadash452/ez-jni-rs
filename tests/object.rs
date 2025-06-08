@@ -6,7 +6,7 @@ use jni::objects::JObject;
 
 /// Tests the implementations of FromObject, etc. for *standard library* types.
 #[test]
-fn implementations() { ez_jni::__throw::run_with_jnienv(get_env(), || {
+fn implementations() { ez_jni::__throw::run_with_jnienv(get_env(), |_| {
     static S: &str = "Hello, World!";
     static N: i8 = -3;
     static UN: i8 = 3;
@@ -202,7 +202,7 @@ enum MyEnumClass2 {
 }
 
 #[test]
-fn from_object() { ez_jni::__throw::run_with_jnienv(get_env(), || {
+fn from_object() { ez_jni::__throw::run_with_jnienv(get_env(), |_| {
     const VAL: i32 = 3;
     const ARRAY_VAL: &[&'static str] = &["Hello", "World"];
     let mut object = new!(me.test.Test(int(VAL)));
@@ -281,7 +281,7 @@ impl Exception {
 }
 
 #[test]
-fn from_exception() { ez_jni::__throw::run_with_jnienv(get_env(), || {
+fn from_exception() { ez_jni::__throw::run_with_jnienv(get_env(), |_| {
     assert_eq!(
         call!(static me.test.Test.throwObj() -> Result<java.lang.Object, MyErr1>)
             .unwrap_err()

@@ -1,5 +1,5 @@
-use ez_jni::jni_fn;
-use jni::objects::JObject;
+use ez_jni::{call, jni_fn, FromObject as _};
+use jni::objects::{JClass, JObject};
 
 jni_fn! { me.test.Native =>
     pub fn native_test_bool<'local>(b: bool) -> bool { let b: bool = b; assert_eq!(b, true); b }
@@ -14,7 +14,8 @@ jni_fn! { me.test.Native =>
     pub fn native_test_ushort<'local>(i: u16) -> u16 { let i: u16 = i; assert_eq!(i, 3); i }
     pub fn native_test_uint<'local>(i: u32) -> u32 { let i: u32 = i; assert_eq!(i, 3); i }
     pub fn native_test_ulong<'local>(i: u64) -> u64 { let i: u64 = i; assert_eq!(i, 3); i }
-
+}
+jni_fn! { me.test.Native =>
     pub fn native_test_bool_array<'local>(b: [bool]) -> [bool] { let b: Box<[bool]> = b; assert_eq!(b.as_ref(), &[true, false]); b }
     pub fn native_test_char_array<'local>(c: [char]) -> [char] { let c: Box<[char]> = c; assert_eq!(c.as_ref(), &['a', 'b']); c }
     pub fn native_test_byte_array<'local>(i: [byte]) -> [byte] { let i: Box<[i8]> = i; assert_eq!(i.as_ref(), &[1, 2, 3]); i }
@@ -27,34 +28,42 @@ jni_fn! { me.test.Native =>
     pub fn native_test_ushort_array<'local>(i: [u16]) -> [u16] { let i: Box<[u16]> = i; assert_eq!(i.as_ref(), &[1, 2, 3]); i }
     pub fn native_test_uint_array<'local>(i: [u32]) -> [u32] { let i: Box<[u32]> = i; assert_eq!(i.as_ref(), &[1, 2, 3]); i }
     pub fn native_test_ulong_array<'local>(i: [u64]) -> [u64] { let i: Box<[u64]> = i; assert_eq!(i.as_ref(), &[1, 2, 3]); i }
+}
 
-
+jni_fn! { me.test.Native =>
     pub fn native_test_void<'local>() { }
 
-    pub fn native_test_recursion<'local>(i: byte) {
+    pub fn native_test_recursion<'local>(mut i: byte) {
         if i == 7 {
             return;
         }
         i += 1;
-        call!(me.test.Native.native_test_recursion(byte(i)) -> void);
+        call!(static me.test.Native.native_test_recursion(byte(i)) -> void);
     }
 
-    pub fn native_test_static<'local>(s: java.lang.String) -> int {
+    /// Also test implicit variable `class`.
+    pub static fn native_test_static<'local>(s: String) -> int {
+        let _: JClass = class;
         let s: String = s;
         assert_eq!(s, "Hello, World!");
         s.len() as i32
     }
 
-    pub fn native_test_str<'local>(s: String) -> String {
-        let s: String = s;
+    /// Also tests java.lang.String vs String
+    pub fn native_test_str<'local>(s: java.lang.String) -> String {
+        let s: String = String::from_object(&s).unwrap();
         assert_eq!(s, "Hello, World!");
         s
     }
 
+    /// Also test implicit variable `this`.
     pub fn native_test_obj<'local>(obj: java.lang.Object) -> java.lang.Object {
+        let _: JObject = this;
         obj
     }
+}
 
+jni_fn! { me.test.Native =>
     pub fn native_test_str_arr<'local>(arr: [String]) -> [String] {
         let arr: Box<[String]> = arr;
         assert_eq!(arr.as_ref(), &["Hello", "World"]);
@@ -70,7 +79,7 @@ jni_fn! { me.test.Native =>
     pub fn native_test_null_str<'local>(s: Option<String>) -> Option<String> {
         let s: Option<String> = s;
         assert_eq!(s, None);
-        None?
+        s
     }
 
     pub fn native_test_str_null_arr<'local>(arr: Option<[String]>) -> Option<[String]> {
@@ -131,14 +140,14 @@ jni_fn! { me.test.Native =>
         ]);
         arr
     }
+}
 
-
+jni_fn! { me.test.Native =>
     // pub fn test_jni_fn_10<'local>() -> Result<String, java.lang.Exception> {
-        
+    //
     // }
 
-
     // pub fn test_jni_fn_11<'local>() -> Result<Option<String>, java.lang.Exception> {
-        
+    //
     // }
 }

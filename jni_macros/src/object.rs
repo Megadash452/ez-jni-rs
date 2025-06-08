@@ -408,7 +408,7 @@ fn convert_field_value(ty: &Type, class: Option<&Class>, value: &TokenStream) ->
         _ => match class {
             // *field::class* attribute was used; Call from_object()
             Some(class) => {
-                let ty = ty.ty_tokens(false);
+                let ty = ty.ty_tokens(false, None);
                 let error_msg = format!("Expected field value to be an Object of class \"{class}\": {{err}}");
                 Ok(quote_spanned! {ty.span() =>
                     <#ty as ::ez_jni::FromObject>::from_object_env(

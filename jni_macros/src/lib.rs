@@ -26,11 +26,11 @@ use utils::item_from_derive_input;
 /// 1. be defined with `pub` visibility,
 /// 2. have exactly *one lifetime* (named `local`),
 /// 3. no generic constants or types,
-/// 4. and no arguments named `env` or `this` (or `class` if it is *static*.).
+/// 4. and no argument named `this` (or `class` if it is *static*.).
 ///
 /// All *jni_fn*s must belong to a *Java Class* where the native function is declared.
 /// The class must be the full class path (e.g. `java.lang.String`).
-/// This can be done with a `class` attribute on each function,
+/// This can be specified with a `class` attribute on each function,
 /// or with the Class at the start of the macro input,
 /// which will apply to all functions in that macro invocation.
 /// 
@@ -72,8 +72,7 @@ use utils::item_from_derive_input;
 /// /// (Ljava/lang/String;)I
 /// #[unsafe(no_mangle)]
 /// pub extern "system" fn Java_me_author_MyClass_hello_1world<'local>(
-///     mut env: JNIEnv<'local>, #[allow(unused_variables)] class: JClass<'local>,
-///     s: JString<'local>,
+///     #[allow(unused_variables)] class: JClass<'local>, s: JString<'local>,
 /// ) -> jni::sys::jint {
 ///     ez_jni::__throw::catch_throw(&mut env, move |#[allow(unused_variables)] env| -> i32 {
 ///         let s = ez_jni::utils::get_string(s, env);

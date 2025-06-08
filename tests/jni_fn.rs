@@ -36,11 +36,11 @@ fn jni_fn() {
 /// Tests when a jni_fn `panic!s` and the panic data jas to be thrown to the JVM.
 #[test]
 fn throw_panic() {
-    ez_jni::__throw::run_with_jnienv::<()>(get_env(), || panic!("Release me!"));
+    ez_jni::__throw::run_with_jnienv::<()>(get_env(), |_| panic!("Release me!"));
     let exception = ez_jni::__throw::try_catch::<String>(&mut get_env()).unwrap();
     assert_eq!(exception, "me.marti.ezjni.RustPanic: Release me!");
 
-    ez_jni::__throw::run_with_jnienv::<()>(get_env(), || {
+    ez_jni::__throw::run_with_jnienv::<()>(get_env(), |_| {
         let err = std::panic::catch_unwind(|| {
             panic!("Release me!")
         }).unwrap_err();

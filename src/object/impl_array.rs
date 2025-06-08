@@ -74,7 +74,7 @@ impl<'local> FromObject<'local> for Box<[JClass<'local>]> {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
         crate::utils::get_object_array_converted(
             object,
-            Some("java/lang/Class"),
+            Some("[Ljava/lang/Class;"),
             |obj, _| JClass::from(obj),
         env)
     }
@@ -94,7 +94,7 @@ impl<'local> FromObject<'local> for Box<[JThrowable<'local>]> {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
         crate::utils::get_object_array_converted(
             object,
-            Some("java/lang/Exception"),
+            Some("[Ljava/lang/Exception;"),
             |obj, _| JThrowable::from(obj),
         env)
     }

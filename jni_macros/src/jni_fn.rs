@@ -1,10 +1,8 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
-use syn::{braced, ext::IdentExt as _, parenthesized, parse::{Parse, ParseStream}, punctuated::Punctuated, token::{Brace, Paren}, Attribute, GenericParam, Generics, Ident, LifetimeParam, LitStr, Token};
+use syn::{braced, ext::IdentExt as _, parenthesized, parse::{Parse, ParseStream}, punctuated::Punctuated, token::{Brace, Paren}, Attribute, GenericParam, Generics, Ident, Lifetime, LitStr, Token};
 use utils::java_method_to_symbol;
-use crate::{
-    types::{ArrayType, Class, InnerType, JavaPrimitive, OptionType, RustPrimitive, SigType, Conversion as _, Type}, utils::{gen_signature, merge_errors, take_class_attribute_required, Spanned}
-};
+use crate::{types::{Class, Conversion as _, InnerType, JavaPrimitive, RustPrimitive, SigType, Type}, utils::{gen_signature, merge_errors, take_class_attribute_required, Spanned}};
 
 /// Processes the input for [`crate::jni_fns`].
 /// Converts the parsed [`JniFn`] to a regular function used in Rust.
@@ -18,7 +16,7 @@ pub fn jni_fn(input: ParseStream) -> syn::Result<Vec<TokenStream>> {
 
     // Parse multiple jni_fn
     while !input.is_empty() {
-        inputs.push(input.parse::<JniFn>()?.to_token_stream(class.as_ref())?);
+        inputs.push(input.parse::<JniFn>()?.into_token_stream(class.as_ref())?);
     }
 
     // Convert all JniFn to ItemFn 
@@ -37,7 +35,7 @@ pub struct JniFn {
     pub fn_token: Token![fn],
     pub name: Ident,
     pub lt_token: Token![<],
-    pub lifetime: LifetimeParam,
+    pub lifetime: Lifetime,
     pub gt_token: Token![>],
     pub paren_token: Paren,
     pub inputs: Punctuated<JniFnArg, Token![,]>,
@@ -47,10 +45,12 @@ pub struct JniFn {
     pub content: TokenStream,
 }
 impl JniFn {
+    const USER_FUNCTION_NAME: &str = "f";
+
     /// Fulfills the same role as [`ToTokens::to_tokens`],
     /// but [`JniFn`] mut have the [`Class`] that it belongs to either in the [`Attribute`]s,
     /// or provided as the argument to this function.
-    fn to_token_stream(mut self, class: Option<&Class>) -> syn::Result<TokenStream> {
+    pub fn into_token_stream(mut self, class: Option<&Class>) -> syn::Result<TokenStream> {
         let mut tt = TokenStream::new();
         let tokens = &mut tt;
 
@@ -88,40 +88,114 @@ impl JniFn {
         });
         // Parameters
         self.paren_token.surround(tokens, |tokens| {
-            // Static methods receive the Class, and Object methods receive the Object
-            let receiver = if let Some(static_token) = &self.static_token {
-                quote_spanned!(static_token.span()=> class: ::jni::objects::JClass<'local>)
-            } else {
-                quote!(this: ::jni::objects::JObject<'local>)
-            };
+            let receiver = self.receiver();
             tokens.append_all(quote_spanned!(self.paren_token.span.span()=>
-                mut __env: ::jni::JNIEnv<'local>, #[allow(unused_variables)] #receiver,
+                env: ::jni::JNIEnv<'local>, #receiver,
             ));
             self.inputs.to_tokens(tokens);
         });
         self.output.to_tokens(tokens);
         self.brace_token.surround(tokens, |tokens| {
-            let mut body = TokenStream::new();
-            self.brace_token.surround(&mut body, |tokens| {
-                // Create local variables that hold the converted values of the arguments
-                for arg in &self.inputs {
-                    tokens.append_all(arg.create_rust_val());
-                }
-                self.content.to_tokens(tokens);
-            });
-            let rust_type = rust_return_type(&self.output);
+            tokens.append_all(self.user_function());
+            let run = self.convert_arguments();
 
-            tokens.append_all(match self.output.convert_rust_to_java(&quote_spanned!(self.output.span()=> r)) {
+            // Use the _map version of run_with_jnienv() if the return type needs conversion to Java
+            tokens.append_all(match self.output.convert_rust_to_java_sys(&quote_spanned!(self.output.span()=> r)) {
                 Some(conversion) => quote_spanned! {self.content.span()=>
-                    ::ez_jni::__throw::run_with_jnienv_map(__env, move || -> #rust_type #body, |r: #rust_type| #conversion)
+                    ::ez_jni::__throw::run_with_jnienv_map(env, #run, |r, #[allow(unused_variables)] env| #conversion)
                 },
                 None => quote_spanned! {self.content.span()=>
-                    ::ez_jni::__throw::run_with_jnienv(__env, move || -> #rust_type #body)
+                    ::ez_jni::__throw::run_with_jnienv(env, #run)
                 }
             });
         });
 
         Ok(tt)
+    }
+
+    /// Generates the **function** that executes the code that the *user provided* to the macro.
+    /// 
+    /// The generated function will take the *same parameters* and the *same return type* that the user provided.
+    fn user_function(&self) -> TokenStream {
+        let Self { fn_token, name, lt_token, lifetime, gt_token, paren_token, inputs, output, brace_token, content, .. } = self;
+
+        let name = Ident::new(Self::USER_FUNCTION_NAME, name.span());
+        
+        let mut parameters = TokenStream::new();
+        paren_token.surround(&mut parameters, |tokens| {
+            // Add receiver to parameters
+            tokens.append_all(self.receiver());
+            tokens.append(proc_macro2::TokenTree::Punct(proc_macro2::Punct::new(',', proc_macro2::Spacing::Alone)));
+            
+            for (param, comma) in inputs.pairs().map(|pair| pair.into_tuple()) {
+                tokens.append_all(&param.attrs);
+                param.mutability.to_tokens(tokens);
+                param.name.to_tokens(tokens);
+                param.colon_token.to_tokens(tokens);
+                tokens.append_all(param.ty.ty_tokens(false, Some(lifetime.clone())));
+                comma.to_tokens(tokens);
+            }
+        });
+
+        let output = match output {
+            JniReturn::Void => quote!(),
+            JniReturn::Type { arrow_token, ty } => {
+                let rust_ty = ty.ty_tokens(false, Some(lifetime.clone()));
+                quote! { #arrow_token #rust_ty }
+            }
+        };
+
+        let mut body = TokenStream::new();
+        brace_token.surround(&mut body, |tokens| content.to_tokens(tokens));
+        quote! { #fn_token #name #lt_token #lifetime #gt_token #parameters #output #body }
+    }
+
+    /// Generates the **closure** that converts the *Java arguments* passed to the jni_fn to *Rust values* to be passed to the [`user_function`][Self::user_function()].
+    /// 
+    /// The generated closure is also what calls the [`user_function`][Self::user_function()] at the end and passes the arguments to it.
+    fn convert_arguments<'a>(&self) -> TokenStream {
+        let user_function_ident = Ident::new(Self::USER_FUNCTION_NAME, Span::call_site());
+
+        let receiver = Ident::new(match &self.static_token {
+            Some(_) => "class",
+            None => "this"
+        }, Span::call_site());
+
+        // Create list of argument names to pass to the user_function
+        let arg_names = self.inputs.pairs()
+            .map(|pair| {
+                let (arg, punct) = pair.into_tuple();
+                syn::punctuated::Pair::new(&arg.name, punct)
+            })
+            .collect::<Punctuated<_, Token![,]>>();
+        
+        // Create variables with the converted value, where the variable name shadows the argument of the jni_fn
+        let conversions = self.inputs.iter()
+            .map(|arg| arg.create_rust_val())
+            .collect::<TokenStream>();
+
+        quote! {
+            /* #[allow(noop_method_call)] */ move | #[allow(unused_variables)] env | {
+                #[allow(unused_imports)]
+                use ::std::borrow::Borrow;
+                // #[allow(unused_variables)]
+                // let env: &mut ::jni::JNIEnv = #env;
+                #conversions
+                #user_function_ident(#receiver, #arg_names)
+            }
+        }
+    }
+
+    /// Generates a **parameter** that is used as the receiver of the function.
+    /// This is the same funcitonality as `self` but with Java names.
+    /// 
+    /// *Static* methods receive [`Class`][jni::objects::JClass], and *object* methods receive [`Object`][jni::objects::JObject].
+    fn receiver(&self) -> TokenStream {
+        let param = match &self.static_token {
+            Some(static_token) => quote_spanned! {static_token.span()=> class: ::jni::objects::JClass<'local> },
+            None => quote! { this: ::jni::objects::JObject<'local> }
+        };
+        quote! { #[allow(unused_variables)] #param }
     }
 }
 impl Parse for JniFn {
@@ -224,7 +298,6 @@ impl Parse for JniFn {
                 None
             },
         };
-
         // Only allow 1 lifetime
         if let Some(lifetime) = iter.next() {
             errors.push(syn::Error::new(lifetime.span(), LIFETIME_ERROR))
@@ -243,57 +316,7 @@ impl Parse for JniFn {
         merge_errors(errors)?;
         let lifetime = lifetime.unwrap();
 
-        Ok(Self { attrs, pub_token, static_token, fn_token, name, lt_token, lifetime, gt_token, paren_token, inputs, output, brace_token, content })
-    }
-}
-
-/// Get a concrete *return Type* for the closure with the main body of the jni_fn.
-/// This is similar to JniReturn::to_tokens(), but is a rust type
-fn rust_return_type(ty: &JniReturn) -> TokenStream {
-    fn primitive(r_prim: RustPrimitive, ident: &Ident, tokens: &mut TokenStream) {
-        Ident::new(&r_prim.to_string(), ident.span()).to_tokens(tokens)
-    }
-    fn object(class: &Class, tokens: &mut TokenStream) {
-        match class {
-            Class::Short(ident) if ident.to_string() == "String" => ident.to_token_stream(),
-            Class::Path { .. } if class.to_jni_class_path() == "java/lang/String" => quote_spanned!(class.span()=> String),
-            _ => quote_spanned!(class.span()=> ::jni::objects::JObject)
-        }.to_tokens(tokens);
-    }
-    fn array_type(array: &ArrayType, tokens: &mut TokenStream) {
-        tokens.append_all(quote_spanned! {array.bracket_token.span.span()=> ::std::boxed::Box<});
-        array.bracket_token.surround(tokens, |tokens| tokens.append_all(type_tokens(&array.ty)));
-        tokens.append_all(quote_spanned! {array.span()=> >});
-    }
-
-    /// This function is recursive!!
-    fn type_tokens(ty: &Type) -> TokenStream {
-        let mut tt = TokenStream::new();
-        let tokens = &mut tt;
-
-        match ty {
-            Type::Assertive(ty) => match ty {
-                InnerType::RustPrimitive { ident, ty } => primitive(*ty, ident, tokens),
-                InnerType::JavaPrimitive { ident, ty } => primitive(RustPrimitive::from(*ty), ident, tokens),
-                InnerType::Object(class) => object(class, tokens)
-            },
-            Type::Array(array) => array_type(array, tokens),
-            Type::Option { ident, ty } => {
-                tokens.append_all(quote!(::std::option::#ident<));
-                match ty {
-                    OptionType::Object(class) => object(class, tokens),
-                    OptionType::Array(array) => array_type(array, tokens),
-                }
-                tokens.append_all(quote!(>));
-            }
-        }
-
-        tt
-    }
-
-    match ty {
-        JniReturn::Void => quote!(()),
-        JniReturn::Type { ty, .. } => type_tokens(ty),
+        Ok(Self { attrs, pub_token, static_token, fn_token, name, lt_token, lifetime: lifetime.lifetime, gt_token, paren_token, inputs, output, brace_token, content })
     }
 }
 
@@ -308,7 +331,7 @@ impl JniFnArg {
     /// Outputs a statement (*local variable definition*) that converts the argument to a Rust value.
     /// 
     /// The argument is shadowed by the local variable with the same name.
-    pub fn create_rust_val(&self) -> TokenStream {
+    fn create_rust_val(&self) -> TokenStream {
         let attrs = &self.attrs;
         let mutability = &self.mutability;
         let name = &self.name;
@@ -326,8 +349,8 @@ impl Parse for JniFnArg {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         Ok(Self {
             attrs: Attribute::parse_outer(input)?,
-            name: input.call(Ident::parse_any)?,
             mutability: input.parse()?,
+            name: input.call(Ident::parse_any)?,
             colon_token: input.parse()?,
             ty: input.parse()?
         })
@@ -336,7 +359,7 @@ impl Parse for JniFnArg {
 impl ToTokens for JniFnArg {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         tokens.append_all(&self.attrs);
-        self.mutability.to_tokens(tokens);
+        // self.mutability.to_tokens(tokens); // Ignore mutability in the jni_fn. It is used in the user_function
         self.name.to_tokens(tokens);
         self.colon_token.to_tokens(tokens);
         
@@ -348,7 +371,7 @@ impl ToTokens for JniFnArg {
         tokens.append_all(match &self.ty {
             Type::Assertive(InnerType::RustPrimitive { ident, ty }) => primitive(JavaPrimitive::from(*ty), ident.span()),
             Type::Assertive(InnerType::JavaPrimitive { ident, ty }) => primitive(*ty, ident.span()),
-            Type::Assertive(InnerType::Object(class)) if class.to_string() == "java.lang.String" => quote_spanned! {class.span()=> ::jni::objects::JString<'local>},
+            // Type::Assertive(InnerType::Object(class)) if class.to_string() == "java.lang.String" => quote_spanned! {class.span()=> ::jni::objects::JString<'local>},
             Type::Assertive(InnerType::Object(_))
             | Type::Array(_)
             | Type::Option { .. } => quote_spanned! {self.ty.span()=> ::jni::objects::JObject<'local>},
@@ -365,21 +388,22 @@ pub enum JniReturn {
 }
 impl JniReturn {
     /// Convert the value returned by the *main body* of the jni_fn to one of the [`jni::sys`] types.
-    pub fn convert_rust_to_java(&self, value: &TokenStream) -> Option<TokenStream> {
+    /// 
+    /// See [`Type::convert_rust_to_java()`].
+    /// Returns [`None`] if no conversion is necessary.
+    pub fn convert_rust_to_java_sys(&self, value: &TokenStream) -> Option<TokenStream> {
         match self {
             Self::Void => None,
-            Self::Type { ty, .. } => {
-                let conversion = ty.convert_rust_to_java(value);
-                match ty {
-                    Type::Assertive(InnerType::RustPrimitive { .. } | InnerType::JavaPrimitive { .. }) => conversion,
-                    // Always convert Object to jni::sys::jobject
-                    Type::Assertive(InnerType::Object(_))
-                    | Type::Array(_)
-                    | Type::Option { .. } => Some(match conversion {
-                        Some(conversion) => quote_spanned!(conversion.span()=> #conversion.as_raw()),
-                        None => quote_spanned!(value.span()=> #value.as_raw())
-                    })
-                }   
+            Self::Type { ty, .. } => match ty {
+                Type::Assertive(InnerType::RustPrimitive { ty: prim, .. }) => prim.convert_rust_to_java(value),
+                Type::Assertive(InnerType::JavaPrimitive { ty: prim, .. }) => RustPrimitive::from(*prim).convert_rust_to_java(value),
+                // Always convert Object to jni::sys::jobject
+                Type::Assertive(InnerType::Object(_))
+                | Type::Array(_)
+                | Type::Option { .. } => Some(match ty.convert_rust_to_java(value) {
+                    Some(conversion) => quote_spanned!(conversion.span()=> #conversion.as_raw()),
+                    None => quote_spanned!(value.span()=> #value.as_raw())
+                })
             },
         }
     }
@@ -409,6 +433,7 @@ impl Parse for JniReturn {
     }
 }
 impl ToTokens for JniReturn {
+    /// Appends the [`jni::sys`] type tokens to the [`TokenStream`].
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match self {
             Self::Void => { }, // Void return has no tokens
@@ -422,7 +447,7 @@ impl ToTokens for JniReturn {
                 tokens.append_all(match output {
                     Type::Assertive(InnerType::RustPrimitive { ident, ty }) => primitive(JavaPrimitive::from(*ty), ident.span()),
                     Type::Assertive(InnerType::JavaPrimitive { ident, ty }) => primitive(*ty, ident.span()),
-                    Type::Assertive(InnerType::Object(class)) if class.to_string() == "java.lang.String" => quote_spanned! {class.span()=> ::jni::sys::jstring},
+                    // Type::Assertive(InnerType::Object(class)) if class.to_string() == "java.lang.String" => quote_spanned! {class.span()=> ::jni::sys::jstring},
                     Type::Assertive(InnerType::Object(_))
                     | Type::Array(_)
                     | Type::Option { .. } => quote_spanned! {output.span()=> ::jni::sys::jobject},
