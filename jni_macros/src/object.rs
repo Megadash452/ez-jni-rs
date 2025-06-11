@@ -25,7 +25,7 @@ pub fn derive_struct(mut st: ItemStruct,trait_: syn::Path, method: Ident, obj_ty
     Ok(quote! {
         impl <#st_generic_params> #trait_<#env_lt> for #st_ident #st_generics {
             fn #method(object: &#obj_ty, env: &mut ::jni::JNIEnv<#env_lt>) -> Result<Self, ::ez_jni::FromObjectError> {
-                ::ez_jni::utils::check_class_struct(object, #class, env)?;
+                ::ez_jni::utils::check_object_class(object, #class, env)?;
                 Ok(Self #st_ctor)
             }
         }

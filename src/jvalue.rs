@@ -1,4 +1,4 @@
-use jni::{objects::{JObject, JValue, JValueGen, JValueOwned}, JNIEnv};
+use jni::{objects::{JClass, JObject, JThrowable, JValue, JValueGen, JValueOwned}, JNIEnv};
 use thiserror::Error;
 use crate::{utils::get_env, FromObject, FromObjectError, ToObject};
 
@@ -232,6 +232,10 @@ macro_rules! map_to_object_impl {
 // FIXME: Increases memory by allocating a new local frame, but that shouldn't be necessary
 map_to_object_impl!(FromJValue for JObject<'local>);
 map_to_object_impl!(ToJValue for JObject<'_>);
+map_to_object_impl!(FromJValue for JClass<'local>);
+map_to_object_impl!(ToJValue for JClass<'_>);
+map_to_object_impl!(FromJValue for JThrowable<'local>);
+map_to_object_impl!(ToJValue for JThrowable<'_>);
 
 impl<'a, 'local, T> FromJValue<'a, 'local> for Option<T>
 where T: FromObject<'local> {

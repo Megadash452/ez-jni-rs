@@ -151,22 +151,3 @@ pub trait FromException<'local>
 where Self: Sized {
     fn from_exception(exception: &JThrowable, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError>;
 }
-
-/// Does the required checks to ensure that a Java Object is valid.
-fn object_check_boilerplate(object: &JObject, path: &'static str, env: &mut JNIEnv) -> Result<(), FromObjectError> {
-    if object.is_null() {
-        return Err(FromObjectError::Null)
-    }
-    
-    let obj_class = env.get_object_class(object)
-        .unwrap_or_else(|err| panic!("Failed to get Object's class: {err}"));
-    
-    if !env.is_instance_of(object, path).unwrap() {
-        return Err(FromObjectError::ClassMismatch {
-            obj_class: call!(env=> obj_class.getName() -> String),
-            target_class: Some(path.to_string())
-        })
-    }
-
-    Ok(())
-}

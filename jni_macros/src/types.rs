@@ -934,14 +934,20 @@ impl Parse for Class {
 }
 impl Conversion for Class {
     fn convert_java_to_rust(&self, value: &TokenStream) -> Option<TokenStream> {
+        let class = self.to_jni_class_path();
+        // Also checks object's class
         match self.rust_type() {
             ClassRustType::JObject => None,
-            ClassRustType::JClass => Some(quote_spanned! {self.span()=>
-                <::jni::objects::JObject::<'_> as Into<::jni::objects::JClass<'_>>>::into(#value)
-            }),
-            ClassRustType::JThrowable => Some(quote_spanned! {self.span()=>
-                <::jni::objects::JObject::<'_> as Into<::jni::objects::JThrowable<'_>>>::into(#value)
-            }),
+            ClassRustType::JClass => Some(quote_spanned! {self.span()=> {
+                let __value = (#value);
+                ::ez_jni::utils::object::check_object_class(__value.borrow(), #class, env).unwrap();
+                <::jni::objects::JObject::<'_> as Into<::jni::objects::JClass<'_>>>::into(__value)
+            } }),
+            ClassRustType::JThrowable => Some(quote_spanned! {self.span()=> {
+                let __value = (#value);
+                ::ez_jni::utils::object::check_object_class(__value.borrow(), #class, env).unwrap();
+                <::jni::objects::JObject::<'_> as Into<::jni::objects::JThrowable<'_>>>::into(__value)
+            } }),
             ClassRustType::String => Some(quote_spanned! {self.span()=>
                 <String as ::ez_jni::FromObject>::from_object_env(&(#value), env).unwrap()
             }),
