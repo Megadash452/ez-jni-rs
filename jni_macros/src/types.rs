@@ -85,12 +85,11 @@ impl Type {
             if matches!(&*array.ty, Type::Array(_) | Type::Option { ty: OptionType::Array(_), .. })
                 // Unwrap JValue to JObject and generate conversion code
                 => return array.convert_java_to_rust(&quote_spanned! {value.span()=> (#value).l().unwrap() }),
-            // Unwrap the JObject directly; no need to allocate another object
-            Self::Assertive(InnerType::Object(class)) if class.is_jobject() => {
-                // JObject can be converted to JClass or JThrowable
-                let unwrap = quote_spanned! {value.span()=> (#value).l().unwrap() };
-                return class.convert_java_to_rust(&unwrap)
-                    .unwrap_or(unwrap);
+            // Use special trait to unwrap Owned version of Object
+            Self::Assertive(InnerType::Object(class))
+            | Self::Option { ty: OptionType::Object(class), .. } if class.is_jobject() => {
+                let ty = self.ty_tokens(false, None);
+                return quote_spanned! {value.span()=> <#ty as ::ez_jni::FromJValueOwned>::from_jvalue_owned_env((#value), env) }
             },
             _ => self.ty_tokens(false, None),
         };
@@ -115,7 +114,8 @@ impl Type {
                     return quote_spanned! {array.span()=> ::jni::objects::JValue::Object(&(#conversion)) }
                 }
                 // Converting a JObject slice to a Java Array requires explicitly passing the element class
-                Type::Assertive(InnerType::Object(class)) | Type::Option { ty: OptionType::Object(class) , .. }
+                Type::Assertive(InnerType::Object(class))
+                | Type::Option { ty: OptionType::Object(class) , .. }
                 if class.rust_type() == ClassRustType::JObject => {
                     // The JObject type must be coupled with the Class, so put it in a tuple (there are implementations for this)
                     let elem_class = class.to_jni_class_path();
@@ -135,7 +135,8 @@ impl Type {
                 ::jni::objects::JValueGen::borrow(&::ez_jni::ToJValue::to_jvalue_env(::std::convert::AsRef::<str>::as_ref(&(#value)), env))
             },
             // Wrap in JValue if type is JObject; no need to allocate another object
-            Self::Assertive(InnerType::Object(class)) if class.is_jobject() => {
+            Self::Assertive(InnerType::Object(class))
+            | Self::Option { ty: OptionType::Object(class), .. } if class.is_jobject() => {
                 // JClass or JThrowable can be converted to JObject, which is converted to JValue
                 let converted = class.convert_rust_to_java(value);
                 let converted = converted.as_ref().unwrap_or(value);
@@ -940,12 +941,12 @@ impl Conversion for Class {
             ClassRustType::JObject => None,
             ClassRustType::JClass => Some(quote_spanned! {self.span()=> {
                 let __value = (#value);
-                ::ez_jni::utils::object::check_object_class(__value.borrow(), #class, env).unwrap();
+                ::ez_jni::utils::check_object_class(__value.borrow(), #class, env).unwrap();
                 <::jni::objects::JObject::<'_> as Into<::jni::objects::JClass<'_>>>::into(__value)
             } }),
             ClassRustType::JThrowable => Some(quote_spanned! {self.span()=> {
                 let __value = (#value);
-                ::ez_jni::utils::object::check_object_class(__value.borrow(), #class, env).unwrap();
+                ::ez_jni::utils::check_object_class(__value.borrow(), #class, env).unwrap();
                 <::jni::objects::JObject::<'_> as Into<::jni::objects::JThrowable<'_>>>::into(__value)
             } }),
             ClassRustType::String => Some(quote_spanned! {self.span()=>

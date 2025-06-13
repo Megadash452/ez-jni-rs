@@ -2,7 +2,7 @@ mod r#impl;
 mod impl_array;
 mod impl_exception;
 
-use jni::{JNIEnv, objects::{JObject, JThrowable}};
+use jni::{objects::{JObject, JThrowable}, JNIEnv};
 use thiserror::Error;
 use ez_jni_macros::call;
 
@@ -71,7 +71,7 @@ pub enum FromObjectError {
 ///     Final(#[field(call = getMessage)] String),
 /// }
 /// ```
-pub trait FromObject<'local>
+pub trait FromObject<'a, 'obj, 'local>
 where Self: Sized {
     /// Construct a [`Self`] by reading data from a *Java Object*.
     /// 
@@ -79,7 +79,7 @@ where Self: Sized {
     /// 
     /// Automatically captures the [`JNIEnv`] from the local stack.
     /// To pass in your own [`JNIEnv`], see [`FromObject::from_object_env`].
-    fn from_object(object: &JObject) -> Result<Self, FromObjectError> {
+    fn from_object(object: &'a JObject<'obj>) -> Result<Self, FromObjectError> {
         Self::from_object_env(object, get_env::<'_, 'local>())
     }
     /// Same as [`from_object`][FromObject::from_object], but does not capture the [`JNIEnv`] automatically; the caller must provide it themselves.
@@ -89,7 +89,7 @@ where Self: Sized {
     /// For jni macros, the env can be specified with this syntax: `macro!(env=> ...)`.
     /// 
     /// Only implement *this* method for the trait.
-    fn from_object_env(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError>;
+    fn from_object_env(object: &'a JObject<'obj>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError>;
 }
 
 /// Allows converting a *Rust type* to a *Java Object*.

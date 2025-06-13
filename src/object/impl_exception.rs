@@ -22,7 +22,7 @@ impl FromException<'_> for std::io::Error {
         <Self as FromObject>::from_object_env(exception, env)
     }
 }
-impl FromObject<'_> for std::io::Error {
+impl FromObject<'_, '_, '_> for std::io::Error {
     fn from_object_env(object: &JObject, env: &mut JNIEnv) -> Result<Self, FromObjectError> {
         static MAP: &[(&str, io::ErrorKind)] = &[
             ("java/io/FileNotFoundException", io::ErrorKind::NotFound),
@@ -121,7 +121,7 @@ impl FromException<'_> for Box<dyn std::error::Error> {
         Ok(<String as FromException>::from_exception(exception, env)?.into())
     }
 }
-impl FromObject<'_> for Box<dyn std::error::Error> {
+impl FromObject<'_, '_, '_> for Box<dyn std::error::Error> {
     fn from_object_env(object: &JObject, env: &mut JNIEnv) -> Result<Self, FromObjectError> {
         <Self as FromException>::from_exception(<&JThrowable>::from(object), env)
     }

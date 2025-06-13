@@ -58,6 +58,7 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
     };
     quote! { {
         // #![allow(noop_method_call)]
+        #[allow(unused_imports)]
         use ::std::borrow::Borrow;
         let env: &mut ::jni::JNIEnv = #env;
         #jni_method(#callee, #name, #signature, #arguments, env)
@@ -96,6 +97,7 @@ pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
 
     quote! { {
         // #![allow(noop_method_call)]
+        #[allow(unused_imports)]
         use ::std::borrow::Borrow;
         let env: &mut ::jni::JNIEnv = #env;
         ::ez_jni::utils::create_object(#callee, #signature, #arguments, env)
@@ -130,6 +132,7 @@ pub fn field(call: FieldCall) -> TokenStream {
             let val = call.ty.convert_rvalue_to_jvalue(&val.to_token_stream());
             quote! { {
                 // #![allow(noop_method_call)]
+                #[allow(unused_imports)]
                 use ::std::borrow::Borrow;
                 let env: &mut ::jni::JNIEnv = #env;
                 #jni_method(#callee, #name, #ty_sig, #val, env)
@@ -145,6 +148,7 @@ pub fn field(call: FieldCall) -> TokenStream {
             let call = call.ty.convert_jvalue_to_rvalue(&quote! { #jni_method(#callee, #name, #ty_sig, env) });
             quote! { {
                 // #![allow(noop_method_call)]
+                #[allow(unused_imports)]
                 use ::std::borrow::Borrow;
                 let env: &mut ::jni::JNIEnv = #env;
                 #call
@@ -158,6 +162,7 @@ pub fn get_class(env: Env, class: Class) -> TokenStream {
     let class = class.to_jni_class_path();
     quote! { {
         // #![allow(noop_method_call)]
+        #[allow(unused_imports)]
         use ::std::borrow::Borrow;
         let env: &mut ::jni::JNIEnv = #env;
         env.find_class(#class)

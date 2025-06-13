@@ -331,14 +331,11 @@ pub fn singleton(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(FromObject, attributes(class, field))]
 pub fn from_object(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
-    let trait_ = syn::parse_quote!(::ez_jni::FromObject);
-    let method = syn::parse_quote!(from_object_env);
-    let obj_ty = syn::parse_quote!(::jni::objects::JObject);
 
     match item_from_derive_input(input) {
-        Either::Left(st) => object::derive_struct(st, trait_, method, obj_ty)
+        Either::Left(st) => object::derive_struct(st, false)
             .unwrap_or_else(|err| err.to_compile_error()),
-        Either::Right(enm) => object::derive_enum(enm, trait_, method, obj_ty)
+        Either::Right(enm) => object::derive_enum(enm, false)
             .unwrap_or_else(|err| err.to_compile_error()),
     }.into()
 }
@@ -347,14 +344,11 @@ pub fn from_object(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(FromException, attributes(class, field))]
 pub fn from_exception(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
-    let trait_ = syn::parse_quote!(::ez_jni::FromException);
-    let method = syn::parse_quote!(from_exception);
-    let obj_ty = syn::parse_quote!(::jni::objects::JThrowable);
 
     match item_from_derive_input(input) {
-        Either::Left(st) => object::derive_struct(st, trait_, method, obj_ty)
+        Either::Left(st) => object::derive_struct(st, true)
             .unwrap_or_else(|err| err.to_compile_error()),
-        Either::Right(enm) => object::derive_enum(enm, trait_, method, obj_ty)
+        Either::Right(enm) => object::derive_enum(enm, true)
             .unwrap_or_else(|err| err.to_compile_error()),
     }.into()
 }
