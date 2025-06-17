@@ -68,9 +68,9 @@ pub(crate) fn check_method_existence(class: JClass<'_>, method_name: &'static st
         if mods.len() > 0 {
             write!(buf, ": The Method is {}", display_natural_list(&mods)).unwrap();
         }
-        writeln!(buf, ".").unwrap();
+        write!(buf, ".").unwrap();
         if same_name_sig_methods.len() > 1 {
-            writeln!(buf, "The are more methods that match this one:").unwrap();
+            writeln!(buf, "\nThe are more methods that match this one:").unwrap();
             write!(buf, "{}", display_methods(&same_name_sig_methods[1..], env)).unwrap();
         }
     } else if !same_name_methods.is_empty() {
@@ -81,16 +81,16 @@ pub(crate) fn check_method_existence(class: JClass<'_>, method_name: &'static st
         if mods.len() > 0 {
             write!(buf, " and is {}", display_natural_list(&mods)).unwrap();
         }
-        writeln!(buf, ".").unwrap();
+        write!(buf, ".").unwrap();
         if same_name_methods.len() > 1 {
-            writeln!(buf, "There are more methods with this name:").unwrap();
+            writeln!(buf, "\nThere are more methods with this name:").unwrap();
             write!(buf, "{}", display_methods(&same_name_methods[1..], env)).unwrap();
         }
     } else if !same_sig_methods.is_empty() {
         writeln!(buf, "Did not find method with name \"{method_name}\". These methods have the same signature:").unwrap();
         write!(buf, "{}", display_methods(&same_name_methods, env)).unwrap();
     } else {
-        writeln!(buf, "Did not find any Methods that match \"{method_str}\"").unwrap();
+        write!(buf, "Did not find any Methods that match \"{method_str}\"").unwrap();
     }
 
     println!("{buf}");
@@ -170,11 +170,11 @@ pub(crate) fn check_field_existence(class: JClass<'_>, field_name: &'static str,
         let mods = access_modifiers(call!(env=> field.getModifiers() -> int), env);
         write!(buf, "Found field \"{field_name}\" with type {field_ty} in {class}").unwrap();
         if mods.len() > 0 {
-            writeln!(buf, ": The Field is {}", display_natural_list(&mods)).unwrap();
+            write!(buf, ": The Field is {}", display_natural_list(&mods)).unwrap();
         }
-        writeln!(buf, ".").unwrap();
+        write!(buf, ".").unwrap();
         if same_name_type_fields.len() > 1 {
-            writeln!(buf, "The are more fields that match this one:").unwrap();
+            writeln!(buf, "\nThe are more fields that match this one:").unwrap();
             write!(buf, "{}", display_fields(&same_name_type_fields[1..], env)).unwrap();
         }
     } else if !same_name_fields.is_empty() {
@@ -184,9 +184,9 @@ pub(crate) fn check_field_existence(class: JClass<'_>, field_name: &'static str,
         if mods.len() > 0 {
             write!(buf, " and is {}", display_natural_list(&mods)).unwrap();
         }
-        writeln!(buf, ".").unwrap();
+        write!(buf, ".").unwrap();
         if same_name_fields.len() > 1 {
-            writeln!(buf, "There are more fields with this name and different types:").unwrap();
+            writeln!(buf, "\nThere are more fields with this name and different types:").unwrap();
             write!(buf, "{}", display_fields(&same_name_fields[1..], env)).unwrap();
         }
     } else if !similar_name_type_methods.is_empty() {
@@ -200,7 +200,7 @@ pub(crate) fn check_field_existence(class: JClass<'_>, field_name: &'static str,
         write!(buf, "{}", display_fields(&same_type_fields, env)).unwrap();
         write!(buf, "{}", display_methods(&same_type_methods, env)).unwrap();
     } else {
-        writeln!(buf, "Did not find any other Fields or Methods that are similar to \"{field_name}: {field_ty}\"").unwrap();
+        write!(buf, "Did not find any other Fields or Methods that are similar to \"{field_name}: {field_ty}\"").unwrap();
     }
 
     println!("{buf}");
