@@ -76,9 +76,13 @@ pub fn get_java_prim_array<'local, 'other, 'a, T>(
     obj: &'a JObject<'other>,
     filler: fn(&JNIEnv<'local>, &'a JPrimitiveArray<'other, T>, jsize, &mut [T]) -> jni::errors::Result<()>,
     env: &mut JNIEnv<'local>
-) -> Box<[T]>
+) -> Result<Box<[T]>, FromObjectError>
     where T: jni::objects::TypeArray
 {
+    if obj.is_null() {
+        return Err(FromObjectError::Null);
+    }
+
     let array = <&'a JPrimitiveArray<'other, T>>::from(obj);
     // Check object's type
     // let class = env.get_object_class(obj)
@@ -89,16 +93,16 @@ pub fn get_java_prim_array<'local, 'other, 'a, T>(
     // }
 
     let len = env.get_array_length(array)
-        .unwrap_or_else(|err| panic!("Failed to check Array's length: {err}"))
+        .map_err(|err| FromObjectError::Other(format!("Failed to check Array's length: {err}")))?
         as usize;
     // Allocate array
     let mut vec = vec![unsafe { std::mem::zeroed() }; len].into_boxed_slice();
 
     // Fill array
     filler(env, array, 0, &mut vec)
-        .unwrap_or_else(|err| panic!("Failed to read Array elements: {err}"));
+        .map_err(|err| FromObjectError::Other(format!("Failed to read Array elements: {err}")))?;
 
-    vec
+    Ok(vec)
 }
 
 /// Creates a Rust [`Vec`] of [`JObject`]s by reading elements from a **Java Array** (**obj**).
@@ -109,6 +113,10 @@ pub fn get_java_prim_array<'local, 'other, 'a, T>(
 /// If the Object should be converted to a *Rust Type* (e.g. `String`),
 /// then use [`get_object_array_converted()`] instead.
 pub fn get_object_array<'local>(obj: &JObject<'_>, array_class: Option<&'static str>, env: &mut JNIEnv<'local>) -> Result<Box<[JObject<'local>]>, FromObjectError> {
+    if obj.is_null() {
+        return Err(FromObjectError::Null);
+    }
+
     let array = <&JObjectArray>::from(obj);
     // Check object's type
     if let Some(class) = array_class {

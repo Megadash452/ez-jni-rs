@@ -190,7 +190,7 @@ impl ToObject for [Option<&str>] {
 
 impl FromObject<'_, '_, '_> for Box<[i8]> {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        Ok(get_java_prim_array(object, JNIEnv::get_byte_array_region, env))
+        get_java_prim_array(object, JNIEnv::get_byte_array_region, env)
     }
 }
 impl ToObject for [i8] {
@@ -204,7 +204,7 @@ impl ToObject for [i8] {
 
 impl FromObject<'_, '_, '_> for Box<[i16]> {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        Ok(get_java_prim_array(object, JNIEnv::get_short_array_region, env))
+        get_java_prim_array(object, JNIEnv::get_short_array_region, env)
     }
 }
 impl ToObject for [i16] {
@@ -218,7 +218,7 @@ impl ToObject for [i16] {
 
 impl FromObject<'_, '_, '_> for Box<[i32]> {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        Ok(get_java_prim_array(object, JNIEnv::get_int_array_region, env))
+        get_java_prim_array(object, JNIEnv::get_int_array_region, env)
     }
 }
 impl ToObject for [i32] {
@@ -232,7 +232,7 @@ impl ToObject for [i32] {
 
 impl FromObject<'_, '_, '_> for Box<[i64]> {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        Ok(get_java_prim_array(object, JNIEnv::get_long_array_region, env))
+        get_java_prim_array(object, JNIEnv::get_long_array_region, env)
     }
 }
 impl ToObject for [i64] {
@@ -246,7 +246,7 @@ impl ToObject for [i64] {
 
 impl FromObject<'_, '_, '_> for Box<[f32]> {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        Ok(get_java_prim_array(object, JNIEnv::get_float_array_region, env))
+        get_java_prim_array(object, JNIEnv::get_float_array_region, env)
     }
 }
 impl ToObject for [f32] {
@@ -260,7 +260,7 @@ impl ToObject for [f32] {
 
 impl FromObject<'_, '_, '_> for Box<[f64]> {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        Ok(get_java_prim_array(object, JNIEnv::get_double_array_region, env))
+        get_java_prim_array(object, JNIEnv::get_double_array_region, env)
     }
 }
 impl ToObject for [f64] {
@@ -276,7 +276,7 @@ impl ToObject for [f64] {
 
 impl FromObject<'_, '_, '_> for Box<[u8]> {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        Ok(get_java_prim_array(object, JNIEnv::get_byte_array_region, env)
+        Ok(get_java_prim_array(object, JNIEnv::get_byte_array_region, env)?
             .into_iter()
             .map(|t| unsafe { std::mem::transmute(t) })
             .collect()
@@ -298,7 +298,7 @@ impl ToObject for [u8] {
 
 impl FromObject<'_, '_, '_> for Box<[u16]> {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        Ok(get_java_prim_array(object, JNIEnv::get_short_array_region, env)
+        Ok(get_java_prim_array(object, JNIEnv::get_short_array_region, env)?
             .into_iter()
             .map(|t| unsafe { std::mem::transmute(t) })
             .collect()
@@ -320,7 +320,7 @@ impl ToObject for [u16] {
 
 impl FromObject<'_, '_, '_> for Box<[u32]> {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        Ok(get_java_prim_array(object, JNIEnv::get_int_array_region, env)
+        Ok(get_java_prim_array(object, JNIEnv::get_int_array_region, env)?
             .into_iter()
             .map(|t| unsafe { std::mem::transmute(t) })
             .collect()
@@ -342,7 +342,7 @@ impl ToObject for [u32] {
 
 impl FromObject<'_, '_, '_> for Box<[u64]> {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        Ok(get_java_prim_array(object, JNIEnv::get_long_array_region, env)
+        Ok(get_java_prim_array(object, JNIEnv::get_long_array_region, env)?
             .into_iter()
             .map(|t| unsafe { std::mem::transmute(t) })
             .collect()
@@ -366,7 +366,7 @@ impl ToObject for [u64] {
 
 impl FromObject<'_, '_, '_> for Box<[bool]> {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        Ok(get_java_prim_array(object, JNIEnv::get_boolean_array_region, env)
+        Ok(get_java_prim_array(object, JNIEnv::get_boolean_array_region, env)?
             .into_iter()
             .map(|t| unsafe { std::mem::transmute(t) })
             .collect()
@@ -388,7 +388,7 @@ impl ToObject for [bool] {
 
 impl FromObject<'_, '_, '_> for Box<[char]> {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        Ok(get_java_prim_array(object, JNIEnv::get_char_array_region, env)
+        Ok(get_java_prim_array(object, JNIEnv::get_char_array_region, env)?
             .into_iter()
             .map(|t| char::decode_utf16(Some(t))
                 .next().unwrap()

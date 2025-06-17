@@ -20,8 +20,8 @@ pub enum FromObjectError {
     ClassMismatch { obj_class: String, target_class: Option<String> },
     #[error("Could not find field {name:?} of type {ty} in class {target_class}; maybe its private?")]
     FieldNotFound { name: String, ty: String, target_class: String },
-    // #[error("{0}")]
-    // Other(String)
+    #[error("Error converting Java Object: {0}")]
+    Other(String)
 }
 
 /// Allows converting a *Java Object* to a Rust type by reading the Object's data.
