@@ -1,6 +1,6 @@
 use jni::{objects::{JClass, JObject, JThrowable, JValue, JValueGen, JValueOwned}, JNIEnv};
 use thiserror::Error;
-use crate::{utils::get_env, FromObject, FromObjectError, ToObject};
+use crate::{utils::get_env, FromObject, FromObjectError, FromObjectOwned, ToObject};
 
 /// Get a **Rust** value from a **Java** value.
 /// 
@@ -331,17 +331,18 @@ where Self: ToObject {
 }
 
 
-// Hidden trait for call! to use to convert the return value
+/// Hidden trait for `call!` to use to convert the return value
+/// Only used in the macros, so this will `panic!` on error.
 #[doc(hidden)]
 pub trait FromJValueOwned<'obj> {
     fn from_jvalue_owned_env(val: JValueOwned<'obj>, env: &mut JNIEnv<'_>) -> Self;
 }
 #[doc(hidden)]
 impl<'obj> FromJValueOwned<'obj> for JObject<'obj> {
-    fn from_jvalue_owned_env(val: JValueOwned<'obj>, _: &mut JNIEnv<'_>) -> Self {
+    fn from_jvalue_owned_env(val: JValueOwned<'obj>, env: &mut JNIEnv<'_>) -> Self {
         match val {
-            ::jni::objects::JValueGen::Object(object) => object,
-            val => panic!("{:?}", FromJValueError::IncorrectType {
+            ::jni::objects::JValueGen::Object(object) => Self::from_object_owned_env(object, env),
+            val => panic!("{}", FromJValueError::IncorrectType {
                 actual: jvalue_to_str(val.borrow()),
                 expected: JTYPE_OBJECT,
             })
@@ -367,44 +368,6 @@ impl<'obj, T> FromJValueOwned<'obj> for Option<T>
 where T: FromObjectOwned<'obj> {
     fn from_jvalue_owned_env(val: JValueOwned<'obj>, env: &mut JNIEnv<'_>) -> Self {
         let object = JObject::from_jvalue_owned_env(val, env);
-        if object.is_null() {
-            None
-        } else {
-            Some(T::from_object_owned_env(object, env))
-        }
-    }
-}
-
-trait FromObjectOwned<'obj> {
-    fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Self;
-}
-
-impl<'obj> FromObjectOwned<'obj> for JObject<'obj> {
-    #[inline]
-    fn from_object_owned_env(object: JObject<'obj>, _: &mut JNIEnv<'_>) -> Self {
-        object
-    }
-}
-
-impl<'obj> FromObjectOwned<'obj> for JClass<'obj> {
-    fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Self {
-        // Call from_object() to perform checks
-        <&Self>::from_object_env(&object, env).unwrap();
-        Self::from(object)
-    }
-}
-
-impl<'obj> FromObjectOwned<'obj> for JThrowable<'obj> {
-    fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Self {
-        // Call from_object() to perform checks
-        <&Self>::from_object_env(&object, env).unwrap();
-        Self::from(object)
-    }
-}
-
-impl<'obj, T> FromObjectOwned<'obj> for Option<T>
-where T: FromObjectOwned<'obj> {
-    fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Self {
         if object.is_null() {
             None
         } else {

@@ -2,7 +2,7 @@ mod r#impl;
 mod impl_array;
 mod impl_exception;
 
-use jni::{objects::{JObject, JThrowable}, JNIEnv};
+use jni::{objects::{JClass, JObject, JThrowable}, JNIEnv};
 use thiserror::Error;
 use ez_jni_macros::call;
 
@@ -150,4 +150,43 @@ pub trait ToObject {
 pub trait FromException<'local>
 where Self: Sized {
     fn from_exception(exception: &JThrowable, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError>;
+}
+
+/// Hidden trait for a macro to use to convert a java value.
+/// Only used in the macros, so this will `panic!` on error.
+#[doc(hidden)]
+pub trait FromObjectOwned<'obj> {
+    fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Self;
+}
+impl<'obj> FromObjectOwned<'obj> for JObject<'obj> {
+    #[inline]
+    fn from_object_owned_env(object: JObject<'obj>, _: &mut JNIEnv<'_>) -> Self {
+        // Call from_object() to perform checks
+        <&Self>::from_object(&object).unwrap();
+        object
+    }
+}
+impl<'obj> FromObjectOwned<'obj> for JClass<'obj> {
+    fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Self {
+        // Call from_object() to perform checks
+        <&Self>::from_object_env(&object, env).unwrap();
+        Self::from(object)
+    }
+}
+impl<'obj> FromObjectOwned<'obj> for JThrowable<'obj> {
+    fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Self {
+        // Call from_object() to perform checks
+        <&Self>::from_object_env(&object, env).unwrap();
+        Self::from(object)
+    }
+}
+impl<'obj, T> FromObjectOwned<'obj> for Option<T>
+where T: FromObjectOwned<'obj> {
+    fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Self {
+        if object.is_null() {
+            None
+        } else {
+            Some(T::from_object_owned_env(object, env))
+        }
+    }
 }
