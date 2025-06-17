@@ -199,29 +199,35 @@ fn return_arrays_other() { ez_jni::__throw::run_with_jnienv(get_env(), |_| {
 }) }
 
 #[test]
-fn return_fail() { ez_jni::__throw::run_with_jnienv(get_env(), |_| {
-    // FIXME: nested catch_unwind cancels all catch unwinds??
+fn return_fail() {
+    // Can't use run_with_jnienv() because of nested catch_unwind.
+    let env = &mut get_env();
+
     // Returned Object should NOT be NULL
     catch_unwind(AssertUnwindSafe(
-        || call!(static me.test.Test.nullable() -> java.lang.Object),
+        || call!(env=> static me.test.Test.nullable() -> java.lang.Object),
     ))
     .unwrap_err();
+    // .map_err(op); // TODO: Ensure error is "called `Result::unwrap()` on an `Err` value: Null"
     // Returned Array should NOT be NULL
     catch_unwind(AssertUnwindSafe(
-        || call!(static me.test.Test.nullObjArray() -> [java.lang.Object]),
+        || call!(env=> static me.test.Test.nullObjArray() -> [java.lang.Object]),
     ))
     .unwrap_err();
+    // .map_err(op); // TODO: Ensure error is "called `Result::unwrap()` on an `Err` value: Object(Null)"
     // Objects in returned Array should NOT be NULL
     catch_unwind(AssertUnwindSafe(
-        || call!(static me.test.Test.getNullObjectArray() -> [java.lang.Object]),
+        || call!(env=> static me.test.Test.getNullObjectArray() -> [java.lang.Object]),
     ))
     .unwrap_err();
+    // .map_err(op); // TODO: Ensure error is "called `Result::unwrap()` on an `Err` value: Object(Null)"
     // Returned Array should NOT be NULL, even if its Objects can
     catch_unwind(AssertUnwindSafe(
-        || call!(static me.test.Test.nullObjArray() -> [Option<java.lang.Object>]),
+        || call!(env=> static me.test.Test.nullObjArray() -> [Option<java.lang.Object>]),
     ))
     .unwrap_err();
-}) }
+    // .map_err(op); // TODO: Ensure error is "called `Result::unwrap()` on an `Err` value: Object(Null)"
+}
 
 #[test]
 fn arguments() { ez_jni::__throw::run_with_jnienv(get_env(), |_| {
@@ -327,14 +333,17 @@ fn constructor() { ez_jni::__throw::run_with_jnienv(get_env(), |_| {
     new!(java.lang.Object());
 }) }
 #[test]
-fn constructor_fail() { ez_jni::__throw::run_with_jnienv(get_env(), |_| {
-    // FIXME: nested catch_unwind cancels all catch unwinds??
+fn constructor_fail() {
+    // Can't use run_with_jnienv() because of nested catch_unwind.
+    let env = &mut get_env();
+
     // Should panic if the constructor throws, but user did not indicate that the constructor could throw
     catch_unwind(AssertUnwindSafe(|| {
-        new!(me.test.Test(java.lang.String(null)))
+        new!(env=> me.test.Test(java.lang.String(null)))
     }))
     .unwrap_err();
-}) }
+    // .map_err(op); // TODO: Ensure error is "java.lang.NullPointerException: String was null"
+}
 
 #[test]
 fn obj_method() { ez_jni::__throw::run_with_jnienv(get_env(), |_| {
