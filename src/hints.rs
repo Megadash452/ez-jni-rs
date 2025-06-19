@@ -77,7 +77,7 @@ pub(crate) fn check_method_existence(class: JClass<'_>, method_name: &'static st
         let method = &same_name_methods[0];
         let other_sig = display_sig(&get_sig(method, env));
         let mods = access_modifiers(call!(env=> method.getModifiers() -> int), env);
-        write!(buf, "Incorrect signature for method \"{method_str}\": the correct signature is {other_sig}").unwrap();
+        write!(buf, "Incorrect signature for method \"{method_str}\": the correct signature is \"{other_sig}\"").unwrap();
         if mods.len() > 0 {
             write!(buf, " and is {}", display_natural_list(&mods)).unwrap();
         }
@@ -358,19 +358,23 @@ fn display_methods(methods: &[JObject<'_>], env: &mut JNIEnv<'_>) -> String {
 /// E.g. `(II)V` -> `void (int, int)`.
 /// 
 /// `panic!s` if the input sig was malformed.
+#[allow(unstable_name_collisions)]
 fn display_sig(sig: &str) -> String {
     let (mut params, mut return_ty) = sig.strip_prefix('(')
         .unwrap()
         .split_once(')')
         .unwrap();
 
-    let mut params_buf = String::new();
+    let mut params_buf = Vec::new();
     while !params.is_empty() {
-        params_buf.push_str(&display_jni_type(&mut params));
+        params_buf.push(display_jni_type(&mut params));
     }
+    let params = params_buf.into_iter()
+        .intersperse(", ".to_string())
+        .collect::<String>();
     let return_ty = display_jni_type(&mut return_ty);
 
-    format!("{return_ty} ({params_buf})")
+    format!("{return_ty} ({params})")
 }
 /// The same as [`display_sig()`] but includes **method name**.
 fn display_method(method_name: &str, sig: &str) -> String {

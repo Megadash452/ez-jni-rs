@@ -169,9 +169,7 @@ pub fn get_object_array_converted<'local, T>(
 /// If the *Rust Type* should be converted before being added to the *Java Array*
 /// (e.g. the slice is `String`, so it must be converted to `JObject`),
 /// then use [`create_object_array_converted()`] instead.
-pub fn create_object_array<'local, 'other, I, O>(items: I, elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local>
-where I: ExactSizeIterator<Item = O>,
-      O: AsRef<JObject<'other>> {
+pub fn create_object_array<'local, 'other>(items: &[impl AsRef<JObject<'other>>], elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
     // Allocate the array
     let array = env.new_object_array(
         items.len() as jsize,
@@ -181,7 +179,7 @@ where I: ExactSizeIterator<Item = O>,
         .unwrap_or_else(|err| panic!("Failed to create Java Object \"{elem_class}\" array: {err}"));
 
     // Fill the array
-    for (i, element) in items.enumerate() {
+    for (i, element) in items.iter().enumerate() {
         env.set_object_array_element(&array, i as jsize, element)
             .unwrap_or_else(|err| panic!("Failed to set the value of Object array at index {i}: {err}"));
     }
@@ -205,6 +203,6 @@ pub fn create_object_array_converted<'local, T>(
         let items = slice.iter()
             .map(#[inline] |t| elem_conversion(t, env))
             .collect::<Box<[_]>>(); // Must collect in box to consume iterator, which holds a refernce to env
-        Ok(create_object_array(items.iter(), elem_class, env))
+        Ok(create_object_array(&items, elem_class, env))
     }).unwrap()
 }

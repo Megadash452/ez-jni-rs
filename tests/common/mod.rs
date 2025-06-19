@@ -7,7 +7,7 @@ use utils::CLASS_DIR;
 
 static JVM: LazyLock<JavaVM> = LazyLock::new(|| {
     compile_java()
-        .unwrap_or_else(|err| panic!("Error compiling Java file: {err}"));
+        .unwrap_or_else(|err| panic!("Error compiling Java file:\n{err}"));
     JavaVM::new(jni::InitArgsBuilder::new()
         .option(format!("-Djava.class.path={CLASS_DIR}"))
         .build()

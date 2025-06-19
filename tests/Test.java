@@ -32,20 +32,22 @@ public final class Test {
     public static char getMember3() { return _member3; }
     public static void setMember3(char val) { _member3 = val; }
 
-    public static void    getVoid()    { return; }
-    public static boolean getBoolean() { return true; }
-    public static char    getChar()    { return 'a'; }
-    public static byte    getByte()    { return 3; }
-    public static short   getShort()   { return 3; }
-    public static int     getInt()     { return 3; }
-    public static long    getLong()    { return 3; }
-    public static float   getFloat()   { return 3.3f; }
-    public static double  getDouble()  { return 3.3d; }
-    public static Object  getObject()  { return new Object(); }
-    public static String  getString()  { return "Hello, World"; }
-    public static Object  nullable()   { return null; }
-    public static boolean throwPrim() throws Exception { throw new Exception("exception"); }
-    public static Object  throwObj()  throws Exception { throw new Exception("exception"); }
+    public static void      getVoid()      { return; }
+    public static boolean   getBoolean()   { return true; }
+    public static char      getChar()      { return 'a'; }
+    public static byte      getByte()      { return 3; }
+    public static short     getShort()     { return 3; }
+    public static int       getInt()       { return 3; }
+    public static long      getLong()      { return 3; }
+    public static float     getFloat()     { return 3.3f; }
+    public static double    getDouble()    { return 3.3d; }
+    public static Object    getObject()    { return new Object(); }
+    public static String    getString()    { return "Hello, World"; }
+    public static Class     getMyClass()     { return Test.class; }
+    public static Exception getException() { return new Exception("hi"); }
+    public static Object    nullable()     { return null; }
+    public static boolean   throwPrim() throws Exception { throw new Exception("exception"); }
+    public static Object    throwObj()  throws Exception { throw new Exception("exception"); }
 
     public static boolean[] getBooleanArray() { return new boolean[] {true, false}; }
     public static char[]    getCharArray()    { return new char[]    {'a', 'b', 'c'}; }
@@ -69,6 +71,7 @@ public final class Test {
     
     public static void primArgs(boolean z, char c, byte b, short s, int i, long j, float f, double d) { }
     public static void objArgs(Object l, String s) { }
+    public static void otherArgs(Class c, Exception e) {  }
     public static void primArrayArgs(boolean[] z, char[] c, byte[] b, short[] s, int[] i, long[] j, float[] f, double[] d) { }
     public static void objArrayArgs(Object[] l, String[] s) { }
     public static void prim2DArrayArgs(boolean[][] z, char[][] c, int[][] i) { }

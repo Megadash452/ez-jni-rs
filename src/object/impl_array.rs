@@ -9,7 +9,7 @@ where T: ToObject {
         .collect::<Box<_>>();
 
     create_object_array(
-        obj_slice.iter(),
+        &obj_slice,
         elem_class,
     env)
 }
@@ -47,17 +47,14 @@ macro_rules! impl_paired_obj_slice {
     (ref $($impl_decl:tt)*) => {
         $($impl_decl)* {
             fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-                create_object_array(
-                    self.1.iter(),
-                    self.0,
-                env)
+                create_object_array(&self.1, self.0, env)
             }
         }
     };
     ($($impl_decl:tt)*) => {
         $($impl_decl)* {
             fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-                create_object_array(self.1.iter(), self.0, env)
+                create_object_array(&self.1, self.0, env)
             }
         }
     };
