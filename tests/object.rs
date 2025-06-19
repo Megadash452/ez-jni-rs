@@ -1,12 +1,13 @@
 mod common;
 
-use common::get_env;
 use ez_jni::{call, new, FromException, FromObject, ToObject};
 use jni::objects::JObject;
 
+use crate::common::run_with_jnienv;
+
 /// Tests the implementations of FromObject, etc. for *standard library* types.
 #[test]
-fn implementations() { ez_jni::__throw::run_with_jnienv(get_env(), |_| {
+fn implementations() { run_with_jnienv(|_| {
     static S: &str = "Hello, World!";
     static N: i8 = -3;
     static UN: i8 = 3;
@@ -202,7 +203,7 @@ enum MyEnumClass2 {
 }
 
 #[test]
-fn from_object() { ez_jni::__throw::run_with_jnienv(get_env(), |_| {
+fn from_object() { run_with_jnienv(|_| {
     const VAL: i32 = 3;
     const ARRAY_VAL: &[&'static str] = &["Hello", "World"];
     let mut object = new!(me.test.Test(int(VAL)));
@@ -281,7 +282,7 @@ impl Exception {
 }
 
 #[test]
-fn from_exception() { ez_jni::__throw::run_with_jnienv(get_env(), |_| {
+fn from_exception() { run_with_jnienv(|_| {
     assert_eq!(
         call!(static me.test.Test.throwObj() -> Result<java.lang.Object, MyErr1>)
             .unwrap_err()

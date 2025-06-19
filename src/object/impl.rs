@@ -66,6 +66,15 @@ where T: ToObject {
         }
     }
 }
+impl<T> ToObject for &Option<&T>
+where T: ToObject {
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        match self {
+            Some(t) => t.to_object_env(env),
+            None => JObject::null()
+        }
+    }
+}
 
 // Implementation for String types
 

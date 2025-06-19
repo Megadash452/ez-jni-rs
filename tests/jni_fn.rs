@@ -4,6 +4,8 @@ use std::{path::PathBuf, process::Command, sync::LazyLock};
 use utils::{CLASS_DIR, run, absolute_path};
 use common::get_env;
 
+use crate::common::run_with_jnienv;
+
 static NATIVE_TEST_DIR: LazyLock<PathBuf> = LazyLock::new(|| absolute_path("./tests/native_test"));
 
 /// Tests building a binary library (`/tests/native_test`) that exports Rust functions to be called from Java.
@@ -40,7 +42,7 @@ fn throw_panic() {
     let exception = ez_jni::__throw::try_catch::<String>(&mut get_env()).unwrap();
     assert_eq!(exception, "me.marti.ezjni.RustPanic: Release me!");
 
-    ez_jni::__throw::run_with_jnienv::<()>(get_env(), |_| {
+    run_with_jnienv(|_| {
         let err = std::panic::catch_unwind(|| {
             panic!("Release me!")
         }).unwrap_err();

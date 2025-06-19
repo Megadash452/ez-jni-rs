@@ -169,17 +169,19 @@ pub fn get_object_array_converted<'local, T>(
 /// If the *Rust Type* should be converted before being added to the *Java Array*
 /// (e.g. the slice is `String`, so it must be converted to `JObject`),
 /// then use [`create_object_array_converted()`] instead.
-pub fn create_object_array<'local, 'other>(slice: &[impl AsRef<JObject<'other>>], elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
+pub fn create_object_array<'local, 'other, I, O>(items: I, elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local>
+where I: ExactSizeIterator<Item = O>,
+      O: AsRef<JObject<'other>> {
     // Allocate the array
     let array = env.new_object_array(
-        slice.len() as jsize,
+        items.len() as jsize,
         elem_class,
         JObject::null()
     )
         .unwrap_or_else(|err| panic!("Failed to create Java Object \"{elem_class}\" array: {err}"));
 
     // Fill the array
-    for (i, element) in slice.iter().enumerate() {
+    for (i, element) in items.enumerate() {
         env.set_object_array_element(&array, i as jsize, element)
             .unwrap_or_else(|err| panic!("Failed to set the value of Object array at index {i}: {err}"));
     }
@@ -188,6 +190,10 @@ pub fn create_object_array<'local, 'other>(slice: &[impl AsRef<JObject<'other>>]
 }
 /// Like [`create_object_array()`], but performs **conversion** on each element of the **slice*
 /// before they are added to the *Java Array*.
+/// 
+/// This function also creates a new local frame, which will delete any newly created references.
+/// This means the called can call [`.to_object()`][crate::ToObject::to_object()],
+/// which allocates new object references, without unnecessary leakage.
 pub fn create_object_array_converted<'local, T>(
     slice: &[T],
     elem_class: &str,
@@ -196,9 +202,9 @@ pub fn create_object_array_converted<'local, T>(
 ) -> JObject<'local> {
     // Push a new Local Frame because the elem_conversion will need to create new Objects that should be dropped when this call finishes.
     env.with_local_frame_returning_local(slice.len() as i32, |env| -> Result<JObject, jni::errors::Error> {
-        let slice = slice.iter()
+        let items = slice.iter()
             .map(#[inline] |t| elem_conversion(t, env))
-            .collect::<Box<[_]>>();
-        Ok(create_object_array(&slice, elem_class, env))
+            .collect::<Box<[_]>>(); // Must collect in box to consume iterator, which holds a refernce to env
+        Ok(create_object_array(items.iter(), elem_class, env))
     }).unwrap()
 }

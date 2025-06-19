@@ -96,7 +96,7 @@ pub fn convert_exception<'local, E: FromException<'local>>(exception: JThrowable
 ///
 /// NOTICE: Can't call any function (including print) between the time when the exception is thrown and when `JNIEnv::exception_clear()` is called.
 /// This means that if a method call could throw, the checks (call, type, and null) should be done AFTER the exception is caught.
-fn catch_exception<'local>(env: &mut JNIEnv<'local>) -> Option<JThrowable<'local>> {
+pub fn catch_exception<'local>(env: &mut JNIEnv<'local>) -> Option<JThrowable<'local>> {
     env.exception_occurred().ok().and_then(|ex| {
         if !ex.is_null() {
             env.exception_clear().unwrap();

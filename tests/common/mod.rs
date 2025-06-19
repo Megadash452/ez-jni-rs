@@ -1,7 +1,7 @@
 #![allow(unused)]
 pub mod compile_fail;
 
-use std::{process::Command, sync::LazyLock};
+use std::{panic::UnwindSafe, process::Command, sync::LazyLock};
 use jni::{JNIEnv, JavaVM};
 use utils::CLASS_DIR;
 
@@ -32,6 +32,20 @@ static JVM: LazyLock<JavaVM> = LazyLock::new(|| {
 pub fn get_env<'local>() -> JNIEnv<'local> {
     JVM.attach_current_thread_permanently()
         .unwrap_or_else(|err| panic!("Error attaching current thread to JavaVM: {err}"))
+}
+
+/// Set up the [`JNIEnv`] from the test [`JVM`][JavaVM] and run some test code `f`.
+/// 
+/// This function negates the `catch_unwind` set by the original, allowing a `panic!`.
+/// 
+/// This is NOT the same [`run_with_jnienv`][ez_jni::__throw::run_with_jnienv()] from the library.
+/// It operates completely differently and is only for running tests.
+pub fn run_with_jnienv<'local>(f: impl FnOnce(&mut JNIEnv<'local>) + UnwindSafe) {
+    ez_jni::__throw::run_with_jnienv(get_env(), f);
+    let env = &mut get_env();
+    if let Some(ex) = ez_jni::__throw::catch_exception(env) {
+        ez_jni::__throw::panic_exception(ex, env)
+    }
 }
 
 fn compile_java() -> Result<(), Box<dyn std::error::Error>> {

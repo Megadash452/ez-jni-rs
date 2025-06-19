@@ -9,8 +9,7 @@ where T: ToObject {
         .collect::<Box<_>>();
 
     create_object_array(
-        &obj_slice.iter()
-            .collect::<Box<_>>(),
+        obj_slice.iter(),
         elem_class,
     env)
 }
@@ -25,10 +24,21 @@ where Box<[T]>: FromObject<'a, 'obj, 'local> {
     }
 }
 
+impl<const N: usize, T> ToObject for [T; N]
+where [T]: ToObject {
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        <[T] as ToObject>::to_object_env(self, env)
+    }
+}
+
 
 impl<'local> FromObject<'_, '_, 'local> for Box<[JObject<'local>]> {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
-        get_object_array(object, None, env)
+        crate::utils::get_object_array_converted(
+            object,
+            None,
+            JObject::from_object_owned_env,
+        env)
     }
 }
 
@@ -38,8 +48,7 @@ macro_rules! impl_paired_obj_slice {
         $($impl_decl)* {
             fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
                 create_object_array(
-                    &self.1.iter()
-                        .collect::<Box<_>>(),
+                    self.1.iter(),
                     self.0,
                 env)
             }
@@ -48,7 +57,7 @@ macro_rules! impl_paired_obj_slice {
     ($($impl_decl:tt)*) => {
         $($impl_decl)* {
             fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-                create_object_array(&self.1, self.0, env)
+                create_object_array(self.1.iter(), self.0, env)
             }
         }
     };
@@ -65,7 +74,7 @@ impl<'local> FromObject<'_, '_, 'local> for Box<[JClass<'local>]> {
         crate::utils::get_object_array_converted(
             object,
             Some("[Ljava/lang/Class;"),
-            |obj, _| JClass::from(obj),
+            JClass::from_object_owned_env,
         env)
     }
 }
@@ -75,7 +84,17 @@ impl ToObject for [JClass<'_>] {
             self,
             "java/lang/Class",
             // Can allocate without worry because the function creates a new local frame
-            |class, env| <&JObject>::from(class).to_object_env(env),
+            |obj, env| obj.to_object_env(env),
+        env)
+    }
+}
+impl ToObject for [&JClass<'_>] {
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        crate::utils::create_object_array_converted(
+            self,
+            "java/lang/Class",
+            // Can allocate without worry because the function creates a new local frame
+            |obj, env| obj.to_object_env(env),
         env)
     }
 }
@@ -95,7 +114,18 @@ impl ToObject for [JThrowable<'_>] {
             self,
             "java/lang/Exception",
             // Can allocate without worry because the function creates a new local frame
-            |class, env| <&JObject>::from(class).to_object_env(env),
+            |obj, env| obj.to_object_env(env),
+            env
+        )
+    }
+}
+impl ToObject for [&JThrowable<'_>] {
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        crate::utils::create_object_array_converted(
+            self,
+            "java/lang/Exception",
+            // Can allocate without worry because the function creates a new local frame
+            |obj, env| obj.to_object_env(env),
             env
         )
     }
@@ -105,12 +135,10 @@ impl ToObject for [JThrowable<'_>] {
 
 impl FromObject<'_, '_, '_> for Box<[String]> {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        get_object_array(object, Some("[Ljava/lang/String;"), env)
-            .and_then(|array|
-                array.into_iter()
-                    .map(|obj| String::from_object_env(&obj, env))
-                    .collect::<Result<Box<[_]>, _>>()
-            )
+        get_object_array(object, Some("[Ljava/lang/String;"), env)?
+            .into_iter()
+            .map(|obj| String::from_object_env(&obj, env))
+            .collect::<Result<Box<[_]>, _>>()
     }
 }
 impl ToObject for [String] {
@@ -128,39 +156,94 @@ impl ToObject for [&str] {
 
 impl<'local> FromObject<'_, '_, 'local> for Box<[Option<JObject<'local>>]> {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
-        get_object_array(object, None, env)
-            .map(|array|
-                array.into_iter()
-                    .map(|obj| if obj.is_null() { None } else { Some(obj) })
-                    .collect()
-            )
+        Ok(get_object_array(object, None, env)?
+            .into_iter()
+            .map(|obj| Option::from_object_owned_env(obj, env))
+            .collect()
+        )
     }
 }
 impl ToObject for (&str, &[Option<JObject<'_>>]) {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        create_object_array(
-            &self.1.iter()
-                .map(|opt| opt.as_ref()
-                    // Copy the Object pointer. Reference should be valid throuhgout the whole function call
-                    .map(|o| unsafe { JObject::from_raw(o.as_raw()) })
-                        .unwrap_or(JObject::null())
-                )
-                .collect::<Box<[_]>>(),
+        crate::utils::create_object_array_converted(
+            &self.1,
             self.0,
+            |opt, env| opt.to_object_env(env),
         env)
     }
 }
 impl ToObject for (&str, &[Option<&JObject<'_>>]) {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        create_object_array(
-            &self.1.iter()
-                .map(|opt| opt.as_ref()
-                    // Copy the Object pointer. Reference should be valid throuhgout the whole function call
-                    .map(|&o| unsafe { JObject::from_raw(o.as_raw()) })
-                        .unwrap_or(JObject::null())
-                )
-                .collect::<Box<[_]>>(),
+        crate::utils::create_object_array_converted(
+            &self.1,
             self.0,
+            |opt, env| opt.to_object_env(env),
+        env)
+    }
+}
+impl<const N: usize> ToObject for (&str, [Option<JObject<'_>>; N]) {
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        <(&str, &[Option<JObject<'_>>]) as ToObject>::to_object_env(&(self.0, self.1.as_slice()), env)
+    }
+}
+impl<const N: usize> ToObject for (&str, [Option<&JObject<'_>>; N]) {
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        <(&str, &[Option<&JObject<'_>>]) as ToObject>::to_object_env(&(self.0, self.1.as_slice()), env)
+    }
+}
+
+impl<'local> FromObject<'_, '_, 'local> for Box<[Option<JClass<'local>>]> {
+    fn from_object_env(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+        Ok(get_object_array(object, None, env)?
+            .into_iter()
+            .map(|obj| Option::from_object_owned_env(obj, env))
+            .collect()
+        )
+    }
+}
+impl ToObject for [Option<JClass<'_>>] {
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        crate::utils::create_object_array_converted(
+            self,
+            "java/lang/Class",
+            |opt, env| opt.to_object_env(env),
+        env)
+    }
+}
+impl ToObject for [Option<&JClass<'_>>] {
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        crate::utils::create_object_array_converted(
+            self,
+            "java/lang/Class",
+            |opt, env| opt.to_object_env(env),
+        env)
+    }
+}
+
+impl<'local> FromObject<'_, '_, 'local> for Box<[Option<JThrowable<'local>>]> {
+    fn from_object_env(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+        Ok(get_object_array(object, None, env)?
+            .into_iter()
+            .map(|obj| Option::from_object_owned_env(obj, env))
+            .collect()
+        )
+    }
+}
+impl ToObject for [Option<JThrowable<'_>>] {
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        crate::utils::create_object_array_converted(
+            self,
+            "java/lang/Exception",
+            |opt, env| opt.to_object_env(env),
+        env)
+    }
+}
+impl ToObject for [Option<&JThrowable<'_>>] {
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        crate::utils::create_object_array_converted(
+            self,
+            "java/lang/Exception",
+            |opt, env| opt.to_object_env(env),
         env)
     }
 }
