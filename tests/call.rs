@@ -7,7 +7,7 @@ use ez_jni::{call, class, eprintln, field, new, println, singleton};
 use jni::objects::{JClass, JObject, JThrowable};
 
 #[test]
-fn return_primitives() { run_with_jnienv(|_| {
+fn return_primitives() { run_with_jnienv(|| {
     // Java primitive return types
     let _: () = call!(static me.test.Test.getVoid() -> void);
     let _: bool = call!(static me.test.Test.getBoolean() -> boolean);
@@ -46,7 +46,7 @@ fn return_primitives() { run_with_jnienv(|_| {
 }) }
 
 #[test]
-fn return_object() { run_with_jnienv(|_| {
+fn return_object() { run_with_jnienv(|| {
     // Object
     let _: JObject = call!(static me.test.Test.getObject() -> java.lang.Object);
     let _: JObject = call!(static me.test.Test.getString() -> java.lang.String);
@@ -59,11 +59,9 @@ fn return_object() { run_with_jnienv(|_| {
     let r: Result<bool, String> = call!(static me.test.Test.throwPrim() -> Result<bool, String>);
     r.unwrap_err();
     // Result Object
-    let r: Result<JObject, String> =
-        call!(static me.test.Test.getObject() -> Result<java.lang.Object, String>);
+    let r: Result<JObject, String> = call!(static me.test.Test.getObject() -> Result<java.lang.Object, String>);
     r.unwrap();
-    let r: Result<JObject, String> =
-        call!(static me.test.Test.throwObj() -> Result<java.lang.Object, String>);
+    let r: Result<JObject, String> = call!(static me.test.Test.throwObj() -> Result<java.lang.Object, String>);
     r.unwrap_err();
     // Option
     let r: Option<JObject> = call!(static me.test.Test.getObject() -> Option<java.lang.Object>);
@@ -71,16 +69,14 @@ fn return_object() { run_with_jnienv(|_| {
     let r: Option<JObject> = call!(static me.test.Test.nullable() -> Option<java.lang.Object>);
     assert!(r.is_none());
     // Result<Option<_>, _>
-    let r: Result<Option<JObject>, String> =
-        call!(static me.test.Test.getObject() -> Result<Option<java.lang.Object>, String>);
+    let r: Result<Option<JObject>, String> = call!(static me.test.Test.getObject() -> Result<Option<java.lang.Object>, String>);
     r.unwrap().unwrap();
-    let r: Result<Option<JObject>, String> =
-        call!(static me.test.Test.nullable() -> Result<Option<java.lang.Object>, String>);
+    let r: Result<Option<JObject>, String> = call!(static me.test.Test.nullable() -> Result<Option<java.lang.Object>, String>);
     assert!(r.unwrap().is_none());
 }) }
 
 #[test]
-fn return_arrays() { run_with_jnienv(|_| {
+fn return_arrays() { run_with_jnienv(|| {
     // Java primitives
     let _: Box<[bool]> = call!(static me.test.Test.getBooleanArray() -> [boolean]);
     let _: Box<[char]> = call!(static me.test.Test.getCharArray() -> [char]);
@@ -122,7 +118,7 @@ fn return_arrays() { run_with_jnienv(|_| {
 }) }
 
 #[test]
-fn return_arrays_other() { run_with_jnienv(|_| {
+fn return_arrays_other() { run_with_jnienv(|| {
     // Object
     let _: Box<[JObject]> = call!(static me.test.Test.getObjectArray() -> [java.lang.Object]);
     let _: Box<[JObject]> = call!(static me.test.Test.getStringArray() -> [java.lang.String]);
@@ -199,7 +195,7 @@ fn return_arrays_other() { run_with_jnienv(|_| {
 }) }
 
 #[test]
-fn return_fail() { run_with_jnienv(|_| {
+fn return_fail() { run_with_jnienv(|| {
     // Returned Object should NOT be NULL
     catch_unwind(AssertUnwindSafe(
         || call!(static me.test.Test.nullable() -> java.lang.Object),
@@ -227,7 +223,7 @@ fn return_fail() { run_with_jnienv(|_| {
 }) }
 
 #[test]
-fn arguments() { run_with_jnienv(|_| {
+fn arguments() { run_with_jnienv(|| {
     // -- Non-Array Arguments
     call!(static me.test.Test.primArgs(boolean(true), char('a'), byte(1i8), short(1i16), int(1i32), long(1i64), float(1f32), double(1f64)) -> void);
     call!(static me.test.Test.objArgs(java.lang.Object(new!(java.lang.Object())), String("hi")) -> void);
@@ -311,7 +307,7 @@ fn arguments() { run_with_jnienv(|_| {
 }) }
 
 #[test]
-fn constructor() { run_with_jnienv(|_| {
+fn constructor() { run_with_jnienv(|| {
     new!(me.test.Test());
     new!(me.test.Test(int(3)));
     new!(me.test.Test(String("Hello, World!")));
@@ -330,7 +326,7 @@ fn constructor() { run_with_jnienv(|_| {
     new!(java.lang.Object());
 }) }
 #[test]
-fn constructor_fail() { run_with_jnienv(|_| {
+fn constructor_fail() { run_with_jnienv(|| {
     // Should panic if the constructor throws, but user did not indicate that the constructor could throw
     catch_unwind(AssertUnwindSafe(|| {
         new!(me.test.Test(java.lang.String(null)))
@@ -340,7 +336,7 @@ fn constructor_fail() { run_with_jnienv(|_| {
 }) }
 
 #[test]
-fn obj_method() { run_with_jnienv(|_| {
+fn obj_method() { run_with_jnienv(|| {
     let obj: JObject<'_> = new!(me.test.Test$Instanced());
     call!(obj.getBoolean() -> boolean);
     call!(obj.getObject() -> java.lang.Object);
@@ -358,7 +354,7 @@ fn obj_method() { run_with_jnienv(|_| {
 }) }
 
 #[test]
-fn field() { run_with_jnienv(|_| {
+fn field() { run_with_jnienv(|| {
     assert_eq!(field!(static me.test.Test.member1: u32), 3);
     assert_eq!(field!(static me.test.Test.member2: String), "Hello, World!");
     assert_eq!(field!(static me.test.Test.member3: char), 'a');
@@ -382,7 +378,7 @@ fn field() { run_with_jnienv(|_| {
 }) }
 
 #[test]
-fn class() { run_with_jnienv(|_| {
+fn class() { run_with_jnienv(|| {
     let mut class: JClass<'_>;
 
     class = class!(me.test.Test);
@@ -392,7 +388,7 @@ fn class() { run_with_jnienv(|_| {
 }) }
 
 #[test]
-fn singleton() { run_with_jnienv(|_| {
+fn singleton() { run_with_jnienv(|| {
     let obj = singleton!(me.test.Test$Singleton);
     assert_eq!(call!(obj.method() -> int), 3);
     assert_eq!(field!(obj.member: int), 3);

@@ -36,16 +36,20 @@ pub fn get_env<'local>() -> JNIEnv<'local> {
 
 /// Set up the [`JNIEnv`] from the test [`JVM`][JavaVM] and run some test code `f`.
 /// 
-/// This function negates the `catch_unwind` set by the original, allowing a `panic!`.
+/// The funciton `f` is allowed to `panic!`.
 /// 
 /// This is NOT the same [`run_with_jnienv`][ez_jni::__throw::run_with_jnienv()] from the library.
 /// It operates completely differently and is only for running tests.
-pub fn run_with_jnienv<'local>(f: impl FnOnce(&mut JNIEnv<'local>) + UnwindSafe) {
-    ez_jni::__throw::run_with_jnienv(get_env(), f);
-    let env = &mut get_env();
-    if let Some(ex) = ez_jni::__throw::catch_exception(env) {
-        ez_jni::__throw::panic_exception(ex, env)
-    }
+pub fn run_with_jnienv<'local>(f: impl FnOnce() + UnwindSafe) {
+    // Assign the JNIEnv used for this jni call
+    let stack_env = ::ez_jni::__throw::StackEnv::push(get_env());
+
+    // Run the function
+    // Pass a reference of the JNIEnv that was just pushed; for conversions
+    let result = f();
+
+    // Remove the JNIEnv when the function finishes running
+    stack_env.pop();
 }
 
 fn compile_java() -> Result<(), Box<dyn std::error::Error>> {

@@ -367,7 +367,13 @@ impl<'obj> FromJValueOwned<'obj> for JThrowable<'obj> {
 impl<'obj, T> FromJValueOwned<'obj> for Option<T>
 where T: FromObjectOwned<'obj> {
     fn from_jvalue_owned_env(val: JValueOwned<'obj>, env: &mut JNIEnv<'_>) -> Self {
-        let object = JObject::from_jvalue_owned_env(val, env);
+        let object = match val {
+            ::jni::objects::JValueGen::Object(object) => object,
+            val => panic!("{}", FromJValueError::IncorrectType {
+                actual: jvalue_to_str(val.borrow()),
+                expected: JTYPE_OBJECT,
+            })
+        };
         if object.is_null() {
             None
         } else {

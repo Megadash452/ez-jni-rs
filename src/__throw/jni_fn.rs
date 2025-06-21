@@ -40,21 +40,7 @@ pub fn run_with_jnienv_map<'local, R: UnwindSafe, J: Sized>(
 /// Unwind panicking accross language barriers is undefined behavior, so it MUST NOT happen in this function.
 #[allow(unused_must_use)]
 fn run_with_jnienv_main<'local, R: Sized>(mut env: JNIEnv<'local>, f: impl FnOnce(&mut JNIEnv<'local>) -> std::thread::Result<R>) -> R {
-    // Helper to catch unwinding panics of regular rust functions
-    fn my_catch<'local, R>(f: impl FnOnce() -> R) -> Result<R, String> {
-        std::panic::catch_unwind(AssertUnwindSafe(|| f()))
-            .map_err(|payload| {
-                match payload.downcast::<&'static str>() {
-                    Ok(msg) => msg.as_ref().to_string(),
-                    Err(payload) => match payload.downcast::<String>() {
-                        Ok(msg) => *msg,
-                        // Unexpected panic type
-                        Err(_) => "Rust panicked!; Unable to obtain panic message".to_string(),
-                    },
-                }
-            })
-    }
-
+    // TODO: Investigate bug that doesn't set PANIC_LOCATION sometimes
     // Set panic hook to grab [`PANIC_LOCATION`] data.
     std::panic::set_hook(Box::new(|info| {
         PANIC_LOCATION.set(Some(info.location().unwrap().into()));
@@ -64,46 +50,14 @@ fn run_with_jnienv_main<'local, R: Sized>(mut env: JNIEnv<'local>, f: impl FnOnc
     PANIC_HOOK_SET.set(true);
 
     // Assign the JNIEnv used for this jni call
-    let pushed_env = env.get_raw();
-    let pushed_idx = my_catch(|| {
-        LOCAL_JNIENV_STACK.with_borrow_mut(|stack| {
-            let idx = stack.len();
-            stack.push_back(unsafe { std::mem::transmute::<JNIEnv<'local>, JNIEnv<'static>>(env) });
-            idx
-        })
-    })
-        .unwrap_or_else(|panic_msg| {
-            eprintln!("Aborting due to error in ez_jni::__throw::jni_fn::run_with_jnienv_main():\n{panic_msg}\n");
-            std::process::abort();
-        });
+    let stack_env = StackEnv::push(env);
 
     // Run the function
     // Pass a reference of the JNIEnv that was just pushed; for conversions
     let result = f(crate::utils::get_env::<'_, 'local>());
 
     // Remove the JNIEnv when the function finishes running
-    let (env_r, popped_idx) = my_catch(|| {
-        LOCAL_JNIENV_STACK.with_borrow_mut(|stack| {(
-            stack.pop_back()
-                .expect("JNIEnv stack is empty, can't pop_back"),
-            stack.len()
-        )})
-    })
-        .unwrap_or_else(|panic_msg| {
-            eprintln!("Aborting due to error in ez_jni::__throw::jni_fn::run_with_jnienv_main():\n{panic_msg}\n");
-            std::process::abort();
-        });
-    env = unsafe { std::mem::transmute::<JNIEnv<'static>, JNIEnv<'local>>(env_r) };
-
-    // Check sanity
-    if popped_idx != pushed_idx {
-        eprintln!("The index of the JNIEnv that was pushed ({pushed_idx}) to the stack is different from the index of the one that was popped ({popped_idx}); Aborting.");
-        std::process::abort();
-    }
-    if env.get_raw() != pushed_env {
-        eprintln!("The JNIEnv that was pushed to the stack is different from the one that was popped; Aborting.");
-        std::process::abort();
-    }
+    env = stack_env.pop();
 
     // Reset panic hook so that rust behaves normally after this,
     // though this is only considered for tests.
@@ -113,13 +67,74 @@ fn run_with_jnienv_main<'local, R: Sized>(mut env: JNIEnv<'local>, f: impl FnOnc
     match result {
         Ok(r) => r,
         Err(payload) => {
-            my_catch(|| throw_panic(&mut env, payload))
-                .unwrap_or_else(|panic_msg| {
-                    eprintln!("Aborting due to error in ez_jni::__throw::jni_fn::throw_panic():\n{panic_msg}\n");
-                    std::process::abort();
-                });
+            my_catch(|| throw_panic(&mut env, payload));
             unsafe { std::mem::zeroed() }
         }
+    }
+}
+
+/// Helper to catch unwinding panics of regular rust functions.
+/// Aborts if a panic occurs.
+fn my_catch<'local, R>(f: impl FnOnce() -> R) -> R {
+    std::panic::catch_unwind(AssertUnwindSafe(|| f()))
+        .map_err(|payload| {
+            match payload.downcast::<&'static str>() {
+                Ok(msg) => msg.as_ref().to_string(),
+                Err(payload) => match payload.downcast::<String>() {
+                    Ok(msg) => *msg,
+                    // Unexpected panic type
+                    Err(_) => "Rust panicked!; Unable to obtain panic message".to_string(),
+                },
+            }
+        })
+        .unwrap_or_else(|panic_msg| {
+            eprintln!("Aborting due to error in ez_jni::__throw::jni_fn::run_with_jnienv_main():\n{panic_msg}\n");
+            std::process::abort();
+        })
+}
+
+/// Represents a [`JNIEnv`] that currently lives in the [`LOCAL_JNIENV_STACK`].
+/// That is to say that during the *lifetime* of this object,
+/// the [`JNIEnv`] that this object points to is owned by the [`LOCAL_JNIENV_STACK`].
+#[doc(hidden)]
+pub struct StackEnv {
+    env: *mut jni::sys::JNIEnv,
+    /// The actual index of the [`JNIEnv`] in the stack.
+    idx: usize,
+}
+impl StackEnv {
+    pub fn push(env: JNIEnv<'_>) -> Self {
+        Self {
+            env: env.get_raw(),
+            idx: my_catch(|| {
+                LOCAL_JNIENV_STACK.with_borrow_mut(|stack| {
+                    let idx = stack.len();
+                    stack.push_back(unsafe { std::mem::transmute::<JNIEnv<'_>, JNIEnv<'static>>(env) });
+                    idx
+                })
+            })
+        }
+    }
+    pub fn pop<'local>(self) -> JNIEnv<'local> {
+        let (popped_env, popped_idx) = my_catch(|| {
+            LOCAL_JNIENV_STACK.with_borrow_mut(|stack| {(
+                stack.pop_back()
+                    .expect("JNIEnv stack is empty, can't pop_back"),
+                stack.len()
+            )})
+        });
+
+        // Check sanity
+        if popped_idx != self.idx {
+            eprintln!("The index of the JNIEnv that was pushed ({}) to the stack is different from the index of the one that was popped ({popped_idx}); Aborting.", self.idx);
+            std::process::abort();
+        }
+        if popped_env.get_raw() != self.env {
+            eprintln!("The JNIEnv that was pushed to the stack is different from the one that was popped; Aborting.");
+            std::process::abort();
+        }
+
+        unsafe { std::mem::transmute::<JNIEnv<'static>, JNIEnv<'local>>(popped_env) }
     }
 }
 
@@ -148,15 +163,18 @@ fn throw_panic(env: &mut JNIEnv, payload: Box<dyn Any + Send>) {
             },
         },
     };
-    let location = PANIC_LOCATION.try_with(|loc| {
+    let location = match PANIC_LOCATION.try_with(|loc| {
         loc.try_borrow()
-            .ok()
-            .as_deref()
-            .map(|loc| loc.as_ref().map(|loc| loc.clone()))
-    }).ok()
-        .flatten()
-        .flatten()
-        .expect("Failed to get panic location");
+            .map_err(|err| format!("Error borrowing PANIC_LOCATION: {err}"))?
+            .as_ref()
+            .map(|loc| loc.clone())
+            .ok_or("value is None".to_string())
+    })
+    .map_err(|err| err.to_string()) {
+        // Result::flatten() is not stable :(
+        Ok(Ok(loc)) => loc,
+        Ok(Err(err)) | Err(err) => panic!("Failed to get panic location: {err}")
+    };
 
     env.exception_clear().unwrap();
 

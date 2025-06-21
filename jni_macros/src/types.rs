@@ -89,7 +89,7 @@ impl Type {
             Self::Assertive(InnerType::Object(class))
             | Self::Option { ty: OptionType::Object(class), .. } if class.is_jobject() => {
                 let ty = self.ty_tokens(false, None);
-                return quote_spanned! {value.span()=> <#ty as ::ez_jni::FromJValueOwned>::from_jvalue_owned_env((#value), env) }
+                return quote_spanned! {value.span()=> <#ty as ::ez_jni::FromJValueOwned>::from_jvalue_owned_env(#value, env) }
             },
             _ => self.ty_tokens(false, None),
         };
@@ -938,13 +938,13 @@ impl Conversion for Class {
         // Also checks object's class
         match self.rust_type() {
             ClassRustType::JObject => Some(quote_spanned! {self.span()=>
-                <::jni::objects::JObject::<'_> as ::ez_jni::FromObjectOwned>::from_object_owned_env((#value), env)
+                <::jni::objects::JObject::<'_> as ::ez_jni::FromObjectOwned>::from_object_owned_env(#value, env)
             }),
             ClassRustType::JClass => Some(quote_spanned! {self.span()=>
-                <::jni::objects::JClass::<'_> as ::ez_jni::FromObjectOwned>::from_object_owned_env((#value), env)
+                <::jni::objects::JClass::<'_> as ::ez_jni::FromObjectOwned>::from_object_owned_env(#value, env)
             }),
             ClassRustType::JThrowable => Some(quote_spanned! {self.span()=>
-                <::jni::objects::JThrowable::<'_> as ::ez_jni::FromObjectOwned>::from_object_owned_env((#value), env)
+                <::jni::objects::JThrowable::<'_> as ::ez_jni::FromObjectOwned>::from_object_owned_env(#value, env)
             }),
             ClassRustType::String => Some(quote_spanned! {self.span()=>
                 <String as ::ez_jni::FromObject>::from_object_env(&(#value), env).unwrap()
