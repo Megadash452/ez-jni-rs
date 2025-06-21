@@ -115,6 +115,12 @@ public final class Native {
                 {"From", "Java"},
             }
         });
+
+        try {
+            native_test_panic();
+        } catch (Exception e) {
+            assert e.getMessage().equals("LALALA");
+        }
     }
 
     public native boolean native_test_bool(boolean z);
@@ -144,7 +150,7 @@ public final class Native {
     // public native u64[] native_test_ulong_array(u64[]);
 
     public native void native_test_void();
-    public native void native_test_recursion(byte);
+    public native void native_test_recursion(byte b);
     public static native int native_test_static(String t);
     public native String native_test_str(String t);
     public native Object native_test_obj(Object l);
@@ -157,4 +163,6 @@ public final class Native {
     public native String[][][] native_test_3d_str_arr(String[][][] t);
     public native String[][] native_test_2d_str_null_arr(String[][] t);
     public native String[][][] native_test_3d_null_str_arr(String[][][] t);
+
+    public native void native_test_panic();
 }

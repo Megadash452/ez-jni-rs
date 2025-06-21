@@ -143,6 +143,10 @@ jni_fn! { me.test.Native =>
 }
 
 jni_fn! { me.test.Native =>
+    pub fn native_test_panic<'local>() {
+        panic!("LALALA")
+    }
+
     // pub fn test_jni_fn_10<'local>() -> Result<String, java.lang.Exception> {
     //
     // }
