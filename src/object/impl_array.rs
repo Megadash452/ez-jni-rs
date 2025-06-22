@@ -16,7 +16,6 @@ where T: ToObject {
 
 // -- Arrays --
 
-// TODO: Ignore 'a and 'obj because the resulting object will always be JObject<'local>
 impl<'a, 'obj, 'local, T> FromObject<'a, 'obj, 'local> for Vec<T>
 where Box<[T]>: FromObject<'a, 'obj, 'local> {
     fn from_object_env(object: &'a JObject<'obj>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {

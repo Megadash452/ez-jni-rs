@@ -8,8 +8,6 @@ use std::{io::Write as _, path::PathBuf, sync::LazyLock};
 use trybuild::TestCases;
 use utils::absolute_path;
 
-static DIR: LazyLock<PathBuf> = LazyLock::new(|| absolute_path("./target/tmp/compile_fail"));
-
 #[macro_export]
 macro_rules! assert_compile_fail {
     ($t:ident, $name:literal, $input:literal) => {
@@ -33,10 +31,11 @@ pub struct ErrorContent {
 
 /// Attempts to compile the Rust code passed in as a `.rs` file and `panic!`s if compilation succeeds.
 pub fn assert_compile_fail(t: &TestCases, name: &str, input: &str, error: Option<ErrorContent>) {
+    let dir = PathBuf::from("./target/tmp/compile_fail");
     // Gather resources
-    std::fs::create_dir_all(&*DIR).unwrap();
-    let file_path = DIR.join(format!("{name}.rs"));
-    let error_path = DIR.join(format!("{name}.stderr"));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file_path = dir.join(format!("{name}.rs"));
+    let error_path = dir.join(format!("{name}.stderr"));
     // Write Rust file content
     std::fs::File::create(&file_path)
         .unwrap_or_else(|err| panic!("Error opeining compile_fail file: {err}"))
@@ -46,7 +45,7 @@ pub fn assert_compile_fail(t: &TestCases, name: &str, input: &str, error: Option
     if let Some(error) = &error {
         std::fs::File::create(&error_path)
             .unwrap_or_else(|err| panic!("Error opening error file: {err}"))
-            .write_all(format!("error: {}\n --> {}:{}\n{}", error.msg, file_path.display(), error.loc, error.preview).as_bytes())
+            .write_all(format!("error: {}\n --> {}:{}\n{}", error.msg, absolute_path(&file_path).display(), error.loc, error.preview).as_bytes())
             .unwrap_or_else(|err| panic!("Error writing to error file: {err}"));
     }
     // Run test

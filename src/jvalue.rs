@@ -289,7 +289,6 @@ map_to_object_impl!(ToJValue for &str);
 
 // -- Arrays
 
-// TODO: Ignore 'a and 'obj because the resulting object will always be JObject<'local>
 impl<'a, 'obj, 'local, T> FromJValue<'a, 'obj,  'local> for Vec<T>
 where Box<[T]>: FromObject<'a, 'obj, 'local> {
     fn from_jvalue_env(val: JValue<'obj, 'a>, env: &mut JNIEnv<'local>) -> Result<Self, FromJValueError> {
@@ -303,7 +302,6 @@ where Box<[T]>: FromObject<'a, 'obj, 'local> {
     }
 }
 
-// TODO: Ignore 'a and 'obj because the resulting object will always be JObject<'local>
 impl<'a, 'obj, 'local, T> FromJValue<'a, 'obj, 'local> for Box<[T]>
 where Self: FromObject<'a, 'obj, 'local> {
     fn from_jvalue_env(val: JValue<'obj, 'a>, env: &mut JNIEnv<'local>) -> Result<Self, FromJValueError> {

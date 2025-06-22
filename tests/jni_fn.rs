@@ -1,10 +1,8 @@
 mod common;
 
 use std::{path::PathBuf, process::Command, sync::LazyLock};
-use utils::{CLASS_DIR, run, absolute_path};
-use common::get_env;
-
-use crate::common::run_with_jnienv;
+use utils::{CLASS_DIR, absolute_path, run};
+use common::{get_env, run_with_jnienv};
 
 static NATIVE_TEST_DIR: LazyLock<PathBuf> = LazyLock::new(|| absolute_path("./tests/native_test"));
 

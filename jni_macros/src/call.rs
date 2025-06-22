@@ -191,7 +191,6 @@ pub struct MethodCall {
     pub parameters: Punctuated<Parameter, Token![,]>,
     pub return_type: Return,
 }
-// TODO: modify inner macro calls to use this JNIEnv.
 impl Parse for MethodCall {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         // This parse implementation is complicated to allow parsing arbitrary Expressions as the callee.

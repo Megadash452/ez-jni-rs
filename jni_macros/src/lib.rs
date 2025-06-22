@@ -25,8 +25,8 @@ use utils::item_from_derive_input;
 /// Requires that the function
 /// 1. be defined with `pub` visibility,
 /// 2. have exactly *one lifetime* (named `local`),
-/// 3. no generic constants or types,
-/// 4. and no argument named `this` (or `class` if it is *static*.).
+/// 3. have no generic constants or types,
+/// 4. and have no argument named `this` (or `class` if it is *static*.).
 ///
 /// All *jni_fn*s must belong to a *Java Class* where the native function is declared.
 /// The class must be the full class path (e.g. `java.lang.String`).
@@ -60,23 +60,28 @@ use utils::item_from_derive_input;
 /// # use ez_jni_macros::jni_fn;
 /// jni_fn! { me.author.MyClass =>
 ///     // or with attribute: #[class(me.author.MyClass)]
-///     pub static fn hello_world<'local>(s: java.lang.String) -> int {
+///     pub static fn hello_world<'local>(s: String) -> int {
 ///         3
 ///     }
 /// }
 /// ```
-/// expands to
+/// roughly expands to
 ///
 /// ```
-/// # use jni::{JNIEnv, objects::{JClass, JString}};
+/// # use jni::{JNIEnv, objects::{JClass, JObject}};
+/// # use ez_jni::FromObject;
+/// ///
 /// /// (Ljava/lang/String;)I
 /// #[unsafe(no_mangle)]
 /// pub extern "system" fn Java_me_author_MyClass_hello_1world<'local>(
-///     #[allow(unused_variables)] class: JClass<'local>, s: JString<'local>,
+///     env: JNIEnv<'local>, class: JClass<'local>, s: JObject<'local>,
 /// ) -> jni::sys::jint {
-///     ez_jni::__throw::catch_throw(&mut env, move |#[allow(unused_variables)] env| -> i32 {
-///         let s = ez_jni::utils::get_string(s, env);
+///     fn f<'local>(class: JClass<'local>, s: String) -> i32 {
 ///         3
+///     }
+///     ez_jni::__throw::run_with_jnienv(env, move |env| {
+///         let s = <String as FromObject>::from_object_env(&s, env).unwrap();
+///         f(class, s)
 ///     })
 /// }
 /// ```
@@ -87,7 +92,6 @@ use utils::item_from_derive_input;
 /// > Also, ez_jni is not designed for linking Java to native Rust with multiple sources.
 #[proc_macro]
 pub fn jni_fn(input: TokenStream) -> TokenStream {
-    // TODO: Don't include the JNIEnv as an implicit parameter so that the user has to call get_env
     match syn::parse::Parser::parse(jni_fn::jni_fn, input) {
         Ok(output) => output
             .into_iter()
