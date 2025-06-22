@@ -28,21 +28,20 @@ pub use android::*;
 
 #[cfg(target_os = "android")]
 mod android {
-    use jni::JNIEnv;
     use ez_jni::call;
     
     #[doc(hidden)]
     /// Does the printing for [`jni_macros::println!`].
     pub fn __println(s: String) {
         // TODO: use NDK instead
-        call!(static android.util.Log.i(java.lang.String("Rust"), java.lang.String(s)) -> int);
+        call!(static android.util.Log.i(String("Rust"), String(s)) -> int);
     }
     
     #[doc(hidden)]
     /// Does the printing for [`jni_macros::eprintln!`].
     pub fn __eprintln(s: String) {
         // TODO: use NDK instead
-        call!(static android.util.Log.e(java.lang.String("Rust"), java.lang.String(s)) -> int);
+        call!(static android.util.Log.e(String("Rust"), String(s)) -> int);
     }
 
     // This test will NOT run because it only exists in Android build,
@@ -51,6 +50,7 @@ mod android {
     // However, it will be built with Android compiler by github workflows,
     // so it is able to test if the macro outputs correct tokens.
     #[doc(hidden)]
+    #[allow(unused)]
     fn print() {
         use ez_jni::{println, eprintln};
         println!("Hello, World!");

@@ -362,7 +362,9 @@ pub fn from_exception(input: TokenStream) -> TokenStream {
 /// In Android, printing to `STDOUT` does not work because apparently it redirects to `/dev/null`.
 /// This macro will instead crate a String and send it to `android.util.Log`.
 /// 
-/// Requires the [`env`][jni::JNIEnv] argument be present in the calling function.
+/// The caller must use this macro from a JNI context.
+/// That is, this must be called from a [`jni_fn!`],
+/// or a function called from a [`jni_fn!`].
 /// 
 /// Use this macro instead of [`std::println!`] everywhere.
 /// 
@@ -390,7 +392,9 @@ pub fn println(input: TokenStream) -> TokenStream {
 /// In Android, printing to `STDERR` does not work because apparently it redirects to `/dev/null`.
 /// This macro will instead crate a String and send it to `android.util.Log`.
 /// 
-/// Requires the [`env`][jni::JNIEnv] argument be present in the calling function.
+/// The caller must use this macro from a JNI context.
+/// That is, this must be called from a [`jni_fn!`],
+/// or a function called from a [`jni_fn!`].
 /// 
 /// Use this macro instead of [`std::eprintln!`] everywhere.
 /// 
