@@ -49,11 +49,13 @@ pub mod utils;
 mod object;
 mod jvalue;
 mod hints;
+mod types;
 extern crate self as ez_jni;
 
 pub use ez_jni_macros::*;
 pub use object::*;
 pub use jvalue::*;
+pub use types::*;
 
 use std::{cell::RefCell, collections::LinkedList};
 use jni::JNIEnv;

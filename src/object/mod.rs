@@ -155,38 +155,38 @@ where Self: Sized {
 /// Hidden trait for a macro to use to convert a java value.
 /// Only used in the macros, so this will `panic!` on error.
 #[doc(hidden)]
-pub trait FromObjectOwned<'obj> {
-    fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Self;
+pub trait FromObjectOwned<'obj>: Sized {
+    fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError>;
 }
 impl<'obj> FromObjectOwned<'obj> for JObject<'obj> {
     #[inline]
-    fn from_object_owned_env(object: JObject<'obj>, _: &mut JNIEnv<'_>) -> Self {
+    fn from_object_owned_env(object: JObject<'obj>, _: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         // Call from_object() to perform checks
-        <&Self>::from_object(&object).unwrap();
-        object
+        <&Self>::from_object(&object)?;
+        Ok(object)
     }
 }
 impl<'obj> FromObjectOwned<'obj> for JClass<'obj> {
-    fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Self {
+    fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         // Call from_object() to perform checks
-        <&Self>::from_object_env(&object, env).unwrap();
-        Self::from(object)
+        <&Self>::from_object_env(&object, env)?;
+        Ok(Self::from(object))
     }
 }
 impl<'obj> FromObjectOwned<'obj> for JThrowable<'obj> {
-    fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Self {
+    fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         // Call from_object() to perform checks
-        <&Self>::from_object_env(&object, env).unwrap();
-        Self::from(object)
+        <&Self>::from_object_env(&object, env)?;
+        Ok(Self::from(object))
     }
 }
 impl<'obj, T> FromObjectOwned<'obj> for Option<T>
 where T: FromObjectOwned<'obj> {
-    fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Self {
-        if object.is_null() {
+    fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
+        Ok(if object.is_null() {
             None
         } else {
-            Some(T::from_object_owned_env(object, env))
-        }
+            Some(T::from_object_owned_env(object, env)?)
+        })
     }
 }

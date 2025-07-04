@@ -1,108 +1,83 @@
 //! Contains helper functions for the To/FromObject implementatios in `/src/object/impl_array.rs`.
 use jni::{objects::{JObject, JObjectArray, JPrimitiveArray}, sys::jsize, JNIEnv};
 use utils::java_path_to_dot_notation;
-use crate::{FromObjectError, call};
+use crate::{call, FromObject, FromObjectError, Primitive};
 
 
 /// Create a Java **Array** from a Rust [slice](https://doc.rust-lang.org/std/primitive.slice.html),
-/// where the element `T` is a *primitive*.
+/// where the element `T` is a [`Primitive`].
 /// 
-/// **alloc** is the function that creates/*allocates* the new Java Array.
-/// This should be one of `JNIEnv::new_{prim}_array`.
-/// 
-/// **filler** is the function that copies the elements from the Rust *slice* to the Java *Array*.
-/// This should be one of `JNIEnv::set_{prim}_array_region`.
-/// 
-/// ## Example
-/// 
-/// ```ignore
-/// ez_jni::utils::crate_java_prim_array(&[1, 2, 3],
-///     JNIEnv::new_byte_array,
-///     JNIEnv::set_byte_array_region,
-/// env);
-/// ```
-/// 
-/// If the primitive should be converted before being added to the *Java Array*
-/// (e.g. the slice is `u8`, so it must be transmuted to `i8`),
-/// then use [`create_java_prim_array_converted()`] instead.
-pub fn create_java_prim_array<'local, 'a, T>(
-    slice: &[T],
-    alloc: fn(&JNIEnv<'local>, jsize) -> jni::errors::Result<JPrimitiveArray<'local, T>>,
-    filler: fn(&JNIEnv<'local>, JPrimitiveArray<'local, T>, jsize, &[T]) -> jni::errors::Result<()>,
-    env: &JNIEnv<'local>
-) -> JObject<'local>
-    where T: jni::objects::TypeArray,
-{
+/// This funciton automatically handles the conversion between the *Rust type* and the *Java type* (e.g. bool -> u8).
+pub(crate) fn create_java_prim_array<'local, T>(slice: &[T], env: &JNIEnv<'local>) -> JObject<'local>
+where T: Primitive {
+    let slice = match T::CONVERT_RUST_TO_JAVA {
+        // If the type declares that it requires a conversion between itself and its Java Type,
+        // convert each element in the slice and put them in a Boxed slice.
+        Some(elem_conversion) => &slice.iter()
+            .map(#[inline] |&t| elem_conversion(t))
+            .collect::<Box<[_]>>(),
+        // If the type requires no conversion, then T and T::JType are the same and are safe to transmute.
+        None => unsafe { std::mem::transmute::<&[T], &[T::JType]>(slice) }
+    };
+
     // Allocate the array
-    let array = alloc(env, slice.len() as jsize)
-        .unwrap_or_else(|err| panic!("Failed to create Array: {err}"));
+    let array = T::array_alloc(slice.len() as jsize, env)
+        .unwrap_or_else(|err| panic!("Failed to create {} Array: {err}", T::JNAME));
     // Fill the Array
-    filler(env, unsafe { JPrimitiveArray::from_raw(array.as_raw()) }, 0, slice)
-        .unwrap_or_else(|err| panic!("Error filling Array: {err}"));
+    T::array_filler(&array, slice, env)
+        .unwrap_or_else(|err| panic!("Error filling {} Array: {err}", T::JNAME));
 
     array.into()
-}
-/// Like [`create_java_prim_array()`], but performs **conversion** on each element of the **slice*
-/// before they are added to the *Java Array*.
-pub fn create_java_prim_array_converted<'local, 'a, T, J>(
-    slice: &[T],
-    alloc: fn(&JNIEnv<'local>, jsize) -> jni::errors::Result<JPrimitiveArray<'local, J>>,
-    filler: fn(&JNIEnv<'local>, JPrimitiveArray<'local, J>, jsize, &[J]) -> jni::errors::Result<()>,
-    elem_conversion: fn(T) -> J,
-    env: &JNIEnv<'local>
-) -> JObject<'local>
-    where T: Copy,
-          J: jni::objects::TypeArray,
-{
-    let slice = slice.iter()
-        .map(#[inline] |&t| elem_conversion(t))
-        .collect::<Box<[_]>>();
-    create_java_prim_array(&slice, alloc, filler, env)
 }
 
 /// Get a Rust [`Vec`] from a Java **Array**, where the element `T` is a *primitive*.
 /// 
 /// **obj** is the Java Array.
 /// 
-/// **filler** is the function that copies the elements from the Java *Array* to the *Vec*.
-/// This should be one of `JNIEnv::get_{prim}_array_region`.
-/// 
-/// ## Example
-/// 
-/// ```ignore
-/// ez_jni::utils::get_java_prim_array(object, JNIEnv::get_byte_array_region, env);
-/// ```
-pub fn get_java_prim_array<'local, 'other, 'a, T>(
-    obj: &'a JObject<'other>,
-    filler: fn(&JNIEnv<'local>, &'a JPrimitiveArray<'other, T>, jsize, &mut [T]) -> jni::errors::Result<()>,
-    env: &mut JNIEnv<'local>
-) -> Result<Box<[T]>, FromObjectError>
-    where T: jni::objects::TypeArray
-{
+/// This funciton automatically handles the conversion between the *Rust type* and the *Java type* (e.g. u8 -> bool).
+pub(crate) fn get_java_prim_array<T>(obj: &JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Box<[T]>, FromObjectError>
+where T: Primitive + for<'a, 'obj, 'local> FromObject<'a, 'obj, 'local> {
     if obj.is_null() {
         return Err(FromObjectError::Null);
     }
 
-    let array = <&'a JPrimitiveArray<'other, T>>::from(obj);
-    // Check object's type
-    // let class = env.get_object_class(obj)
-    //     .unwrap_or_else(|err| panic!("Failed to get Object's class: {err}"));
-    // let ty = call!(env=> class.getName() -> String);
-    // if ty != T::PATH {
-    //     panic!("Expected object's type to be \"{}\", but is actually \"{ty}\"", T::PATH)
-    // }
+    let array = <&JPrimitiveArray<'_, T::JType>>::from(obj);
+    let array_class = call!(env=> call!(env=> obj.getClass() -> Class).getName() -> String);
 
-    let len = env.get_array_length(array)
-        .map_err(|err| FromObjectError::Other(format!("Failed to check Array's length: {err}")))?
-        as usize;
-    // Allocate array
-    let mut vec = vec![unsafe { std::mem::zeroed() }; len].into_boxed_slice();
+    // Check if array contains primitives or Objects of primitives.
+    if array_class == format!("[L{};", T::JNAME) {
+        // Array contains primitives
+        let len = env.get_array_length(array)
+            .map_err(|err| FromObjectError::Other(format!("Failed to check Array's length: {err}")))?
+            as usize;
+        // Allocate boxed slice
+        let mut vec = vec![unsafe { std::mem::zeroed() }; len].into_boxed_slice();
 
-    // Fill array
-    filler(env, array, 0, &mut vec)
-        .map_err(|err| FromObjectError::Other(format!("Failed to read Array elements: {err}")))?;
+        // Fill slice
+        T::slice_filler(&array, &mut vec, env)
+            .map_err(|err| FromObjectError::Other(format!("Failed to read Array elements: {err}")))?;
 
-    Ok(vec)
+        Ok(match T::CONVERT_JAVA_TO_RUST {
+            Some(elem_conversion) => vec.into_iter()
+                .map(#[inline] |t| elem_conversion(t))
+                .collect::<Box<[_]>>(),
+            // If the type requires no conversion, then T and T::JType are the same and are safe to transmute.
+            None => unsafe { std::mem::transmute::<Box<[T::JType]>, Box<[T]>>(vec) }
+        })
+    } else if array_class == format!("[L{};", T::CLASS_PATH) {
+        // Array contains Objects of primitives (e.g. java/lang/Integer).
+        // Must convert each object to the primitive
+        let array = get_object_array(obj, None, env)?;
+        Result::from_iter(array.iter()
+            .map(|object| T::from_object_env(&object, env))
+            .collect::<Box<[_]>>()
+        )
+    } else {
+        Err(FromObjectError::ClassMismatch {
+            obj_class: array_class,
+            target_class: Some(format!("[L{};", T::JNAME))
+        })
+    }
 }
 
 /// Creates a Rust [`Vec`] of [`JObject`]s by reading elements from a **Java Array** (**obj**).
@@ -112,27 +87,25 @@ pub fn get_java_prim_array<'local, 'other, 'a, T>(
 /// 
 /// If the Object should be converted to a *Rust Type* (e.g. `String`),
 /// then use [`get_object_array_converted()`] instead.
-pub fn get_object_array<'local>(obj: &JObject<'_>, array_class: Option<&'static str>, env: &mut JNIEnv<'local>) -> Result<Box<[JObject<'local>]>, FromObjectError> {
+pub fn get_object_array<'local>(obj: &JObject<'_>, elem_class: Option<&str>, env: &mut JNIEnv<'local>) -> Result<Box<[JObject<'local>]>, FromObjectError> {
     if obj.is_null() {
         return Err(FromObjectError::Null);
     }
 
     let array = <&JObjectArray>::from(obj);
     // Check object's type
-    if let Some(class) = array_class {
+    if let Some(class) = elem_class {
         // For some reason, class.getName() returns a ClassPath with .dots. instead of /slashes/, so the sig_type needs to be transformed.
         // This is the only place where this happens. why??
-        let class = java_path_to_dot_notation(class);
-        let obj_class = env.get_object_class(obj)
-            .unwrap_or_else(|err| panic!("Failed to get Object's class: {err}"));
-        let obj_class = call!(env=> obj_class.getName() -> String);
+        let class = format!("[L{};", java_path_to_dot_notation(class));
+        let obj_class = call!(env=> call!(env=> obj.getClass() -> Class).getName() -> String);
         if obj_class != class {
             return Err(FromObjectError::ClassMismatch { obj_class, target_class: Some(class) })
         }
     }
 
     let len = env.get_array_length(array)
-        .unwrap_or_else(|err| panic!("Failed to check Array's length: {err}"))
+        .map_err(|err| FromObjectError::Other(format!("Failed to check Array's length: {err}")))?
         as usize;
     // Allocate array
     let mut vec = Vec::with_capacity(len);
@@ -140,23 +113,24 @@ pub fn get_object_array<'local>(obj: &JObject<'_>, array_class: Option<&'static 
     // Fill array
     for i in 0..len {
         vec.push(env.get_object_array_element(array, i as jsize)
-            .unwrap_or_else(|err| panic!("Failed to read Array elements: {err}"))
+            .map_err(|err| FromObjectError::Other(format!("Failed to read Array elements: {err}")))?
         );
     }
 
     Ok(vec.into_boxed_slice())
 }
-/// Like [`create_object_array()`], but performs **conversion** on each element of the returned array.
+/// Like [`get_object_array()`], but allows passing a function to convert the each [`JObject`] to a *Rust type*.
 pub fn get_object_array_converted<'local, T>(
     obj: &JObject<'_>,
-    array_class: Option<&'static str>,
-    elem_conversion: fn(JObject<'local>, &mut JNIEnv<'local>) -> T,
+    elem_class: Option<&str>,
+    elem_conversion: fn(&JObject<'_>, &mut JNIEnv<'local>) -> T,
     env: &mut JNIEnv<'local>
-) -> Result<Box<[T]>, FromObjectError> {
-    Ok(::ez_jni::utils::get_object_array(obj, array_class, env)?
+) -> Result<Box<[T]>, FromObjectError>
+where T: 'local {
+    Ok(get_object_array(obj, elem_class, env)?
         .into_iter()
-        .map(|t| elem_conversion(t, env))
-        .collect::<Box<[_]>>()
+        .map(|obj| elem_conversion(&obj, env))
+        .collect()
     )
 }
 

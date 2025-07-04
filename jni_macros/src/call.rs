@@ -40,6 +40,7 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
         // For return types that are not Result
         Return::Assertive(_) => quote! {
             .unwrap_or_else(|exception| {
+                // TODO: Throwing the exception to catch it again is redundant. Just pass it in directly
                 env.throw(exception).unwrap();
                 ::ez_jni::__throw::handle_jni_call_error(::jni::errors::Error::JavaException, env)
             })

@@ -95,7 +95,11 @@ pub fn get_env<'a, 'local>() -> &'a mut JNIEnv<'local> {
 }
 
 #[doc(hidden)]
+#[inline(always)]
 pub fn jboolean_to_bool(b: jni::sys::jboolean) -> bool { b != 0 }
+#[doc(hidden)]
+#[inline(always)]
+pub fn bool_to_jboolean(b:bool) ->  jni::sys::jboolean { b as _ }
 #[doc(hidden)]
 pub fn jchar_to_char(c: jni::sys::jchar) -> char {
     char::decode_utf16(Some(c))

@@ -1,6 +1,6 @@
 use ez_jni_macros::new;
 use jni::objects::JClass;
-use crate::utils::check_object_class;
+use crate::{utils::check_object_class, Class};
 use super::*;
 
 impl<'a, 'obj, 'local> FromObject<'a, 'obj, 'local> for &'a JObject<'obj> {
@@ -23,7 +23,7 @@ impl ToObject for JObject<'_> {
 }
 impl<'a, 'obj, 'local> FromObject<'a, 'obj, 'local> for &'a JClass<'obj> {
     fn from_object_env(object: &'a JObject<'obj>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
-        check_object_class(object, "java/lang/Class", env)?;
+        check_object_class(object, JClass::CLASS_PATH, env)?;
         Ok(<&JClass>::from(object))
     }
 }
@@ -34,7 +34,7 @@ impl ToObject for JClass<'_> {
 }
 impl<'a, 'obj, 'local> FromObject<'a, 'obj, 'local> for &'a JThrowable<'obj> {
     fn from_object_env(object: &'a JObject<'obj>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
-        check_object_class(object, "java/lang/Exception", env)?;
+        check_object_class(object, JThrowable::CLASS_PATH, env)?;
         Ok(<&JThrowable>::from(object))
     }
 }
@@ -84,7 +84,7 @@ impl FromObject<'_, '_, '_> for String {
     /// Don't use this function, it only exist for compatibility.
     /// Use [`get_string()`][crate::utils::get_string] instead because you will mostly be using it with [`JString`][jni::objects::JString].
     fn from_object_env(object: &JObject, env: &mut JNIEnv) -> Result<Self, FromObjectError> {
-        check_object_class(object, "java/lang/String", env)?;
+        check_object_class(object, String::CLASS_PATH, env)?;
         // Already checked that it is java.lang.String and is not NULL
         Ok(unsafe {
             env.get_string_unchecked(object.into())
@@ -115,7 +115,7 @@ impl ToObject for &str {
 
 impl FromObject<'_, '_, '_> for i8 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        check_object_class(object, "java/lang/Byte", env)?;
+        check_object_class(object, Self::CLASS_PATH, env)?;
         Ok(call!(env=> object.byteValue() -> byte))
     }
 }
@@ -126,7 +126,7 @@ impl ToObject for i8 {
 }
 impl FromObject<'_, '_, '_> for i16 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        check_object_class(object, "java/lang/Short", env)?;
+        check_object_class(object, Self::CLASS_PATH, env)?;
         Ok(call!(env=> object.shortValue() -> short))
     }
 }
@@ -137,7 +137,7 @@ impl ToObject for i16 {
 }
 impl FromObject<'_, '_, '_> for i32 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        check_object_class(object, "java/lang/Integer", env)?;
+        check_object_class(object, Self::CLASS_PATH, env)?;
         Ok(call!(env=> object.intValue() -> int))
     }
 }
@@ -148,7 +148,7 @@ impl ToObject for i32 {
 }
 impl FromObject<'_, '_, '_> for i64 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        check_object_class(object, "java/lang/Long", env)?;
+        check_object_class(object, Self::CLASS_PATH, env)?;
         Ok(call!(env=> object.longValue() -> long))
     }
 }
@@ -159,7 +159,7 @@ impl ToObject for i64 {
 }
 impl FromObject<'_, '_, '_> for f32 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        check_object_class(object, "java/lang/Float", env)?;
+        check_object_class(object, Self::CLASS_PATH, env)?;
         Ok(call!(env=> object.floatValue() -> float))
     }
 }
@@ -170,7 +170,7 @@ impl ToObject for f32 {
 }
 impl FromObject<'_, '_, '_> for f64 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        check_object_class(object, "java/lang/Double", env)?;
+        check_object_class(object, Self::CLASS_PATH, env)?;
         Ok(call!(env=> object.doubleValue() -> double))
     }
 }
@@ -183,7 +183,7 @@ impl ToObject for f64 {
 // Implementation for unsigned number types
 impl FromObject<'_, '_, '_> for u8 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        check_object_class(object, "java/lang/Byte", env)?;
+        check_object_class(object, Self::CLASS_PATH, env)?;
         Ok(call!(env=> object.byteValue() -> u8))
     }
 }
@@ -194,7 +194,7 @@ impl ToObject for u8 {
 }
 impl FromObject<'_, '_, '_> for u16 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        check_object_class(object, "java/lang/Short", env)?;
+        check_object_class(object, Self::CLASS_PATH, env)?;
         Ok(call!(env=> object.shortValue() -> u16))
     }
 }
@@ -205,7 +205,7 @@ impl ToObject for u16 {
 }
 impl FromObject<'_, '_, '_> for u32 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        check_object_class(object, "java/lang/Integer", env)?;
+        check_object_class(object, Self::CLASS_PATH, env)?;
         Ok(call!(env=> object.intValue() -> u32))
     }
 }
@@ -216,7 +216,7 @@ impl ToObject for u32 {
 }
 impl FromObject<'_, '_, '_> for u64 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        check_object_class(object, "java/lang/Long", env)?;
+        check_object_class(object, Self::CLASS_PATH, env)?;
         Ok(call!(env=> object.longValue() -> u64))
     }
 }
@@ -230,7 +230,7 @@ impl ToObject for u64 {
 
 impl FromObject<'_, '_, '_> for bool {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        check_object_class(object, "java/lang/Boolean", env)?;
+        check_object_class(object, Self::CLASS_PATH, env)?;
         Ok(call!(env=> object.booleanValue() -> boolean))
     }
 }
@@ -242,7 +242,7 @@ impl ToObject for bool {
 
 impl FromObject<'_, '_, '_> for char {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        check_object_class(object, "java/lang/Character", env)?;
+        check_object_class(object, Self::CLASS_PATH, env)?;
         Ok(call!(env=> object.charValue() -> char))
     }
 }
