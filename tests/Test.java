@@ -43,7 +43,7 @@ public final class Test {
     public static double    getDouble()    { return 3.3d; }
     public static Object    getObject()    { return new Object(); }
     public static String    getString()    { return "Hello, World"; }
-    public static Class     getMyClass()     { return Test.class; }
+    public static Class     getMyClass()   { return Test.class; }
     public static Exception getException() { return new Exception("hi"); }
     public static Object    nullable()     { return null; }
     public static boolean   throwPrim() throws Exception { throw new Exception("exception"); }
@@ -75,6 +75,7 @@ public final class Test {
     public static void primArrayArgs(boolean[] z, char[] c, byte[] b, short[] s, int[] i, long[] j, float[] f, double[] d) { }
     public static void objArrayArgs(Object[] l, String[] s) { }
     public static void prim2DArrayArgs(boolean[][] z, char[][] c, int[][] i) { }
+    public static void prim3DArrayArgs(int[][][] i, float[][][] f) { }
     public static void obj2DArrayArgs(Object[][] l, String[][] s) { }
 
     // Test methods and fields on an Object rather than on a Class

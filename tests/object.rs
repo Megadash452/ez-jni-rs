@@ -1,6 +1,6 @@
 mod common;
 
-use ez_jni::{call, new, FromException, FromObject, ToObject};
+use ez_jni::{call, new, utils::create_object_array_converted, FromException, FromObject, ToObject};
 use jni::objects::JObject;
 
 use crate::common::run_with_jnienv;
@@ -152,9 +152,16 @@ fn implementations() { run_with_jnienv(|| {
         ['a', 'b', 'c'],
         Box::<[char]>::from_object(&obj).unwrap().as_ref()
     );
+
+    // Multi-dimensional Arrays
+    obj = [["Hello"], ["World"]].to_object();
+    assert_eq!(
+        [["Hello"], ["World"]],
+        Box::<[Box::<[String]>]>::from_object(&obj).unwrap().as_ref()
+    );
 }) }
 
-#[derive(FromObject)]
+#[derive(Debug, FromObject, PartialEq, Eq)]
 #[class(me.test.Test)]
 struct MyClass {
     member_field: i32,
@@ -255,6 +262,54 @@ fn from_object() { run_with_jnienv(|| {
     assert_eq!(
         MyEnumClass::from_object(&object).unwrap(),
         MyEnumClass::Variant2 { str: S.to_string() }
+    );
+
+    // -- Other implementations for user-defined types
+    // Option
+    object = Some(new!(me.test.Test(int(VAL)))).to_object();
+    assert_eq!(
+        Option::<MyClass>::from_object(&object).unwrap(),
+        Some(MyClass { member_field: VAL })
+    );
+    // Array
+    object = create_object_array_converted(
+        &[new!(me.test.Test(int(1))), new!(me.test.Test(int(2))), new!(me.test.Test(int(3)))],
+        MyClass::CLASS_PATH,
+        |obj, env| obj.to_object_env(env),
+    ez_jni::utils::get_env());
+    assert_eq!(
+        Box::<[MyClass]>::from_object(&object).unwrap(),
+        [MyClass { member_field: 1 }, MyClass { member_field: 2 }, MyClass { member_field:3 }]
+    );
+    // Array Option
+    object = create_object_array_converted(
+        &[None, Some(new!(me.test.Test(int(1)))), None],
+        MyClass::CLASS_PATH,
+        |obj, env| obj.to_object_env(env),
+    ez_jni::utils::get_env());
+    assert_eq!(
+        Box::<[Option<MyClass>]>::from_object(&object).unwrap(),
+        [None, Some(MyClass { member_field: 1 }), None]
+    );
+    // Option Array
+    object = Some(create_object_array_converted(
+        &[new!(me.test.Test(int(1))), new!(me.test.Test(int(2))), new!(me.test.Test(int(3)))],
+        MyClass::CLASS_PATH,
+        |obj, env| obj.to_object_env(env),
+    ez_jni::utils::get_env())).to_object();
+    assert_eq!(
+        Option::<Box<[MyClass]>>::from_object(&object).unwrap(),
+        Some([MyClass { member_field: 1 }, MyClass { member_field: 2 }, MyClass { member_field:3 }])
+    );
+    // Multidimensional Array
+    object = create_object_array_converted(
+        &[None, Some(new!(me.test.Test(int(1)))), None],
+        &format!("[L{};", MyClass::CLASS_PATH),
+        |obj, env| obj.to_object_env(env),
+    ez_jni::utils::get_env());
+    assert_eq!(
+        Box::<[Box<[MyClass]>]>::from_object(&object).unwrap(),
+        [None, Some(MyClass { member_field: 1 }), None]
     );
 }) }
 
