@@ -938,13 +938,13 @@ impl Conversion for Class {
         // Also checks object's class
         match self.rust_type() {
             ClassRustType::JObject => Some(quote_spanned! {self.span()=>
-                <::jni::objects::JObject::<'_> as ::ez_jni::FromObjectOwned>::from_object_owned_env(#value, env)
+                <::jni::objects::JObject::<'_> as ::ez_jni::FromObjectOwned>::from_object_owned_env(#value, env).unwrap()
             }),
             ClassRustType::JClass => Some(quote_spanned! {self.span()=>
-                <::jni::objects::JClass::<'_> as ::ez_jni::FromObjectOwned>::from_object_owned_env(#value, env)
+                <::jni::objects::JClass::<'_> as ::ez_jni::FromObjectOwned>::from_object_owned_env(#value, env).unwrap()
             }),
             ClassRustType::JThrowable => Some(quote_spanned! {self.span()=>
-                <::jni::objects::JThrowable::<'_> as ::ez_jni::FromObjectOwned>::from_object_owned_env(#value, env)
+                <::jni::objects::JThrowable::<'_> as ::ez_jni::FromObjectOwned>::from_object_owned_env(#value, env).unwrap()
             }),
             ClassRustType::String => Some(quote_spanned! {self.span()=>
                 <String as ::ez_jni::FromObject>::from_object_env(&(#value), env).unwrap()

@@ -16,9 +16,9 @@ where T: ToObject {
 
 // -- Arrays --
 
-impl<'a, 'obj, 'local, T> FromObject<'a, 'obj, 'local> for Vec<T>
-where Box<[T]>: FromObject<'a, 'obj, 'local> {
-    fn from_object_env(object: &'a JObject<'obj>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+impl<'local, T> FromObject<'_, '_, 'local> for Vec<T>
+where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local> {
+    fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
         Ok(Box::<[T]>::from_object_env(object, env)?.into_vec())
     }
 }

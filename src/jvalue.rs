@@ -289,9 +289,9 @@ map_to_object_impl!(ToJValue for &str);
 
 // -- Arrays
 
-impl<'a, 'obj, 'local, T> FromJValue<'a, 'obj,  'local> for Vec<T>
-where Box<[T]>: FromObject<'a, 'obj, 'local> {
-    fn from_jvalue_env(val: JValue<'obj, 'a>, env: &mut JNIEnv<'local>) -> Result<Self, FromJValueError> {
+impl<'local, T> FromJValue<'_, '_,  'local> for Vec<T>
+where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local> {
+    fn from_jvalue_env(val: JValue<'_, '_>, env: &mut JNIEnv<'local>) -> Result<Self, FromJValueError> {
         match val {
             JValueGen::Object(object) => Ok(Self::from_object_env(object, env)?),
             val => Err(FromJValueError::IncorrectType {
@@ -339,7 +339,7 @@ pub trait FromJValueOwned<'obj> {
 impl<'obj> FromJValueOwned<'obj> for JObject<'obj> {
     fn from_jvalue_owned_env(val: JValueOwned<'obj>, env: &mut JNIEnv<'_>) -> Self {
         match val {
-            ::jni::objects::JValueGen::Object(object) => Self::from_object_owned_env(object, env),
+            ::jni::objects::JValueGen::Object(object) => Self::from_object_owned_env(object, env).unwrap(),
             val => panic!("{}", FromJValueError::IncorrectType {
                 actual: jvalue_to_str(val.borrow()),
                 expected: JTYPE_OBJECT,
@@ -351,14 +351,14 @@ impl<'obj> FromJValueOwned<'obj> for JObject<'obj> {
 impl<'obj> FromJValueOwned<'obj> for JClass<'obj> {
     fn from_jvalue_owned_env(val: JValueOwned<'obj>, env: &mut JNIEnv<'_>) -> Self {
         let object = JObject::from_jvalue_owned_env(val, env);
-        Self::from_object_owned_env(object, env)
+        Self::from_object_owned_env(object, env).unwrap()
     }
 }
 #[doc(hidden)]
 impl<'obj> FromJValueOwned<'obj> for JThrowable<'obj> {
     fn from_jvalue_owned_env(val: JValueOwned<'obj>, env: &mut JNIEnv<'_>) -> Self {
         let object = JObject::from_jvalue_owned_env(val, env);
-        Self::from_object_owned_env(object, env)
+        Self::from_object_owned_env(object, env).unwrap()
     }
 }
 #[doc(hidden)]
@@ -375,7 +375,7 @@ where T: FromObjectOwned<'obj> {
         if object.is_null() {
             None
         } else {
-            Some(T::from_object_owned_env(object, env))
+            Some(T::from_object_owned_env(object, env).unwrap())
         }
     }
 }

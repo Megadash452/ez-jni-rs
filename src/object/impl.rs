@@ -3,7 +3,7 @@ use jni::objects::JClass;
 use crate::{utils::check_object_class, Class};
 use super::*;
 
-impl<'a, 'obj, 'local> FromObject<'a, 'obj, 'local> for &'a JObject<'obj> {
+impl<'a, 'obj> FromObject<'a, 'obj, '_> for &'a JObject<'obj> {
     // The one case where from_object() is implemented manually to avoid calling get_env(). This happens NOWHERE else.
     // There is no need for a JNIEnv here.
     fn from_object(object: &'a JObject<'obj>) -> Result<Self, FromObjectError> {
@@ -12,7 +12,7 @@ impl<'a, 'obj, 'local> FromObject<'a, 'obj, 'local> for &'a JObject<'obj> {
         }
         Ok(object)
     }
-    fn from_object_env(object: &'a JObject<'obj>, _: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+    fn from_object_env(object: &'a JObject<'obj>, _: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         Self::from_object(object)
     }
 }
@@ -21,8 +21,8 @@ impl ToObject for JObject<'_> {
         env.new_local_ref(self).unwrap()
     }
 }
-impl<'a, 'obj, 'local> FromObject<'a, 'obj, 'local> for &'a JClass<'obj> {
-    fn from_object_env(object: &'a JObject<'obj>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+impl<'a, 'obj> FromObject<'a, 'obj, '_> for &'a JClass<'obj> {
+    fn from_object_env(object: &'a JObject<'obj>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         check_object_class(object, JClass::CLASS_PATH, env)?;
         Ok(<&JClass>::from(object))
     }
@@ -32,8 +32,8 @@ impl ToObject for JClass<'_> {
         <JObject as ToObject>::to_object_env(self, env)
     }
 }
-impl<'a, 'obj, 'local> FromObject<'a, 'obj, 'local> for &'a JThrowable<'obj> {
-    fn from_object_env(object: &'a JObject<'obj>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+impl<'a, 'obj> FromObject<'a, 'obj, '_> for &'a JThrowable<'obj> {
+    fn from_object_env(object: &'a JObject<'obj>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         check_object_class(object, JThrowable::CLASS_PATH, env)?;
         Ok(<&JThrowable>::from(object))
     }
