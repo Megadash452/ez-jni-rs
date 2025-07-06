@@ -5,7 +5,7 @@ use syn::{
     parenthesized, parse::{discouraged::Speculative, Parse, ParseStream, Parser}, punctuated::Punctuated, Expr, Ident, LitStr, Token
 };
 use crate::{
-    types::{ArrayType, Class, InnerType, SigType, Type, NULL_KEYWORD},
+    types::{ArrayType, Class, ClassRustType, InnerType, SigType, Type, NULL_KEYWORD},
     utils::{gen_signature, join_spans, Spanned, StepResult, TokenTreeExt as _}
 };
 
@@ -39,16 +39,10 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
     let error_handler = match &call.return_type {
         // For return types that are not Result
         Return::Assertive(_) => quote! {
-            .unwrap_or_else(|exception| {
-                // TODO: Throwing the exception to catch it again is redundant. Just pass it in directly
-                env.throw(exception).unwrap();
-                ::ez_jni::__throw::handle_jni_call_error(::jni::errors::Error::JavaException, env)
-            })
+            .unwrap_or_else(|exception| ::ez_jni::__throw::panic_exception(exception))
         },
         // Move the result of the method call to a Result if the caller expects that the method could throw.
-        Return::Result { err_ty, ..} =>  quote! {
-            .map_err(|exception| ::ez_jni::__throw::convert_exception::<#err_ty>(exception, env))
-        },
+        Return::Result { err_class, ..} => check_exception_class(err_class),
     };
 
     // Build the macro function call
@@ -82,17 +76,12 @@ pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
     let signature = gen_signature(call.parameters.iter(), &Return::new_void(Span::call_site()));
     let arguments = gen_arguments(call.parameters.iter());
     // Handle call result depending on whether it is expected to throw or not
-    let error_handler = match call.err_type {
+    let error_handler = match call.err_class {
         // Move the result of the method call to a Result if the caller expects that the method could throw.
-        Some(err_ty) => quote! {
-            .map_err(|exception| ::ez_jni::__throw::convert_exception::<#err_ty>(exception, env))
-        },
+        Some(err_class) => check_exception_class(&err_class),
         // For return types that are not Result
         None => quote! {
-            .unwrap_or_else(|exception| {
-                env.throw(exception).unwrap();
-                ::ez_jni::__throw::handle_jni_call_error(::jni::errors::Error::JavaException, env)
-            })
+            .unwrap_or_else(|exception| ::ez_jni::__throw::panic_exception(exception))
         },
     };
 
@@ -387,7 +376,7 @@ pub struct ConstructorCall {
     pub env: Env,
     pub class: ClassRepr,
     pub parameters: Punctuated<Parameter, Token![,]>,
-    pub err_type: Option<syn::Path>
+    pub err_class: Option<Class>
 }
 impl Parse for ConstructorCall {
     fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -440,8 +429,12 @@ impl Parse for ConstructorCall {
             env,
             class,
             parameters: Parser::parse2(Punctuated::parse_terminated, param_tokens)?,
-            err_type: (!input.is_empty())
-                .then(|| input.parse::<syn::Path>())
+            err_class: (!input.is_empty())
+                .then(|| {
+                    let class = input.parse::<Class>()?;
+                    class.is_throwable()?;
+                    Ok::<_, syn::Error>(class)
+                })
                 .transpose()?
         })
     }
@@ -574,8 +567,8 @@ impl Debug for ParamValue {
 /// 1. [`Type`] (or `void`) if the function being called can't return `NULL` or throw an `exception` (e.g. `bool` or `java.lang.String`).
 /// 2. `Option<Class>` if the return type is an [`Object`][Type::Object] that could be **NULL**.
 ///    Java *does not allow* primitive types (i.e. not Object) to be **NULL**, so [Self::Option] can only be used with a [Class].
-/// 3. `Result<Type | void | Option<Class>, E>` if the method call can throw an **Exception**,
-///    where `E` is any Rust type that *implements [`FromException`]*.
+/// 3. `Result<Type | void | Option<Class>, Class>` if the method call can throw an **Exception**,
+///    where the `Err` type is a **Java Class** that extends `java.lang.Throwable`.
 pub enum Return {
     /// The method being called can't throw (will `panic!` if it does).
     Assertive(ReturnableType),
@@ -583,7 +576,7 @@ pub enum Return {
     Result {
         result: Ident,
         ty: ReturnableType,
-        err_ty: syn::Path
+        err_class: Class
     },
 }
 #[derive(Debug)]
@@ -625,8 +618,8 @@ impl Spanned for Return {
         }
         match self {
             Self::Assertive(ty) => inner_ty_span(ty),
-            Self::Result { result, ty, err_ty } => join_spans([
-                result.span(), inner_ty_span(ty), err_ty.span()
+            Self::Result { result, ty, err_class } => join_spans([
+                result.span(), inner_ty_span(ty), err_class.span()
             ]),
         }
     }
@@ -648,6 +641,7 @@ impl Parse for Return {
                     input.parse::<Token![<]>().map_err(|err| {
                         input.error(format!("Result takes generic arguments; {err}"))
                     })?;
+
                     let ty = {
                         let fork = input.fork();
                         match fork.parse::<Ident>() {
@@ -659,12 +653,16 @@ impl Parse for Return {
                             _ => ReturnableType::Type(input.parse()?)
                         }
                     };
+
                     input.parse::<Token![,]>().map_err(|err| {
                         input.error(format!("Result takes 2 generic arguments; {err}"))
                     })?;
-                    let err_ty = input.parse::<syn::Path>()?;
+
+                    let err_class = input.parse::<Class>()?;
+                    err_class.is_throwable()?;
+
                     input.parse::<Token![>]>()?;
-                    Self::Result { result: ident, ty, err_ty }
+                    Self::Result { result: ident, ty, err_class }
                 }
                 // Is probably a primitive or Class
                 _ => Self::Assertive(ReturnableType::Type(input.parse()?)),
@@ -680,10 +678,10 @@ impl Debug for Return {
             Self::Assertive(ty) => f.debug_tuple("Return::Aserrtive")
                 .field(ty)
                 .finish(),
-            Self::Result { result, ty, err_ty } => f.debug_struct("Return::Result")
+            Self::Result { result, ty, err_class } => f.debug_struct("Return::Result")
                 .field("result", result)
                 .field("ty", ty)
-                .field("err_ty", &err_ty.to_token_stream().to_string())
+                .field("err_class", &err_class.to_jni_class_path())
                 .finish()
         }
     }
@@ -752,4 +750,20 @@ fn gen_arguments<'a>(params: impl Iterator<Item = &'a Parameter>) -> TokenStream
             }
         });
     quote! { &[ #( #params ),* ] }
+}
+
+/// Generates code to check if `Exception` Object returned from a `method call` is of an expected [`Class`].
+fn check_exception_class(err_class: &Class) -> TokenStream {
+    if err_class.rust_type() == ClassRustType::JThrowable {
+        // Skip exception class check if user used the shorthand
+        quote!()
+    } else {
+        let class = err_class.to_jni_class_path();
+        quote! {
+            .inspect_err(|exception| {
+                ::ez_jni::utils::check_object_class(exception.as_ref(), #class, env)
+                    .unwrap_or_else(|err| panic!("{err}. Exception message: {}", &exception.message()))
+            })
+        }
+    }
 }

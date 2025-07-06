@@ -1,6 +1,6 @@
 mod common;
 
-use ez_jni::{call, new, utils::create_object_array_converted, FromException, FromObject, ToObject};
+use ez_jni::{call, new, utils::create_object_array_converted, FromObject, ToObject};
 use jni::objects::JObject;
 
 use crate::common::run_with_jnienv;
@@ -310,50 +310,5 @@ fn from_object() { run_with_jnienv(|| {
     assert_eq!(
         Box::<[Box<[MyClass]>]>::from_object(&object).unwrap(),
         [None, Some(MyClass { member_field: 1 }), None]
-    );
-}) }
-
-#[derive(FromException)]
-#[class(java.lang.Exception)]
-struct MyErr1 {
-    // Implicitly calls getMessage()
-    message: String,
-}
-
-#[derive(FromException)]
-#[class(java.lang.Exception)]
-struct MyErr2 {
-    #[field(call = getMessage)]
-    msg: String,
-}
-
-#[derive(FromException)]
-#[class(java.lang.Exception)]
-struct Exception(#[field(call = getMessage, class = java.lang.String)] String);
-impl Exception {
-    fn message(&self) -> &str {
-        &self.0
-    }
-}
-
-#[test]
-fn from_exception() { run_with_jnienv(|| {
-    assert_eq!(
-        call!(static me.test.Test.throwObj() -> Result<java.lang.Object, MyErr1>)
-            .unwrap_err()
-            .message,
-        "exception"
-    );
-    assert_eq!(
-        call!(static me.test.Test.throwObj() -> Result<java.lang.Object, MyErr2>)
-            .unwrap_err()
-            .msg,
-        "exception"
-    );
-    assert_eq!(
-        call!(static me.test.Test.throwObj() -> Result<java.lang.Object, Exception>)
-            .unwrap_err()
-            .message(),
-        "exception"
     );
 }) }

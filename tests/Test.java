@@ -66,8 +66,8 @@ public final class Test {
 
     public static boolean[] nullPrimArray() { return null; }
     public static Object[]  nullObjArray()  { return null; }
-    public static boolean[] throwPrimArray() throws Exception { throw new Exception("exception"); }
-    public static Object[]  throwObjArray()  throws Exception { throw new Exception("exception"); }
+    public static boolean[] throwPrimArray() throws IndexOutOfBoundsException { throw new IndexOutOfBoundsException("exception"); }
+    public static Object[]  throwObjArray()  throws IndexOutOfBoundsException { throw new IndexOutOfBoundsException("exception"); }
     
     public static void primArgs(boolean z, char c, byte b, short s, int i, long j, float f, double d) { }
     public static void objArgs(Object l, String s) { }

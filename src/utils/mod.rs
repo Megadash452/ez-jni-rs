@@ -6,7 +6,7 @@ pub use object::*;
 pub use array::*;
 
 use jni::JNIEnv;
-use crate::{FromException, LOCAL_JNIENV_STACK};
+use crate::{FromObject, LOCAL_JNIENV_STACK};
 
 #[doc(hidden)]
 pub use cfg_if;
@@ -15,11 +15,11 @@ pub use cfg_if;
 /// but no Exception was found.
 pub(crate) static JNI_CALL_GHOST_EXCEPTION: &str = "JNI Call returned with Error::JavaException, but no exception was found.";
 
-#[derive(FromException)]
+#[derive(FromObject)]
 #[class(java.lang.NoSuchFieldError)]
 struct FieldNotFound;
 
-#[derive(FromException)]
+#[derive(FromObject)]
 #[class(java.lang.NoSuchMethodError)]
 struct MethodNotFound;
 

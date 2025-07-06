@@ -3,7 +3,7 @@ mod common;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use common::run_with_jnienv;
-use ez_jni::{call, class, eprintln, field, new, println, singleton};
+use ez_jni::{call, class, eprintln, field, new, println, singleton, JavaException};
 use jni::objects::{JClass, JObject, JThrowable};
 
 #[test]
@@ -54,14 +54,14 @@ fn return_object() { run_with_jnienv(|| {
     let _: JThrowable = call!(static me.test.Test.getException() -> Exception);
     let _: String = call!(static me.test.Test.getString() -> String);
     // Result Primitive
-    let r: Result<bool, String> = call!(static me.test.Test.getBoolean() -> Result<bool, String>);
+    let r: Result<bool, JavaException> = call!(static me.test.Test.getBoolean() -> Result<bool, Exception>);
     r.unwrap();
-    let r: Result<bool, String> = call!(static me.test.Test.throwPrim() -> Result<bool, String>);
+    let r: Result<bool, JavaException> = call!(static me.test.Test.throwPrim() -> Result<bool, Exception>);
     r.unwrap_err();
     // Result Object
-    let r: Result<JObject, String> = call!(static me.test.Test.getObject() -> Result<java.lang.Object, String>);
+    let r: Result<JObject, JavaException> = call!(static me.test.Test.getObject() -> Result<java.lang.Object, Exception>);
     r.unwrap();
-    let r: Result<JObject, String> = call!(static me.test.Test.throwObj() -> Result<java.lang.Object, String>);
+    let r: Result<JObject, JavaException> = call!(static me.test.Test.throwObj() -> Result<java.lang.Object, Exception>);
     r.unwrap_err();
     // Option
     let r: Option<JObject> = call!(static me.test.Test.getObject() -> Option<java.lang.Object>);
@@ -69,9 +69,9 @@ fn return_object() { run_with_jnienv(|| {
     let r: Option<JObject> = call!(static me.test.Test.nullable() -> Option<java.lang.Object>);
     assert!(r.is_none());
     // Result<Option<_>, _>
-    let r: Result<Option<JObject>, String> = call!(static me.test.Test.getObject() -> Result<Option<java.lang.Object>, String>);
+    let r: Result<Option<JObject>, JavaException> = call!(static me.test.Test.getObject() -> Result<Option<java.lang.Object>, Exception>);
     r.unwrap().unwrap();
-    let r: Result<Option<JObject>, String> = call!(static me.test.Test.nullable() -> Result<Option<java.lang.Object>, String>);
+    let r: Result<Option<JObject>, JavaException> = call!(static me.test.Test.nullable() -> Result<Option<java.lang.Object>, Exception>);
     assert!(r.unwrap().is_none());
 }) }
 
@@ -124,18 +124,14 @@ fn return_arrays_other() { run_with_jnienv(|| {
     let _: Box<[JObject]> = call!(static me.test.Test.getStringArray() -> [java.lang.String]);
     let _: Box<[String]> = call!(static me.test.Test.getStringArray() -> [String]);
     // Result Primitive
-    let r: Result<Box<[bool]>, String> =
-        call!(static me.test.Test.getBooleanArray() -> Result<[bool], String>);
+    let r: Result<Box<[bool]>, JavaException> = call!(static me.test.Test.getBooleanArray() -> Result<[bool], java.lang.IndexOutOfBoundsException>);
     r.unwrap();
-    let r: Result<Box<[bool]>, String> =
-        call!(static me.test.Test.throwPrimArray() -> Result<[bool], String>);
+    let r: Result<Box<[bool]>, JavaException> = call!(static me.test.Test.throwPrimArray() -> Result<[bool], java.lang.IndexOutOfBoundsException>);
     r.unwrap_err();
     // Result Object
-    let r: Result<Box<[JObject]>, String> =
-        call!(static me.test.Test.getObjectArray() -> Result<[java.lang.Object], String>);
+    let r: Result<Box<[JObject]>, JavaException> = call!(static me.test.Test.getObjectArray() -> Result<[java.lang.Object], java.lang.IndexOutOfBoundsException>);
     r.unwrap();
-    let r: Result<Box<[JObject]>, String> =
-        call!(static me.test.Test.throwObjArray() -> Result<[java.lang.Object], String>);
+    let r: Result<Box<[JObject]>, JavaException> = call!(static me.test.Test.throwObjArray() -> Result<[java.lang.Object], java.lang.IndexOutOfBoundsException>);
     r.unwrap_err();
     // Option
     let r: Option<Box<[bool]>> = call!(static me.test.Test.getBooleanArray() -> Option<[bool]>);
@@ -180,17 +176,13 @@ fn return_arrays_other() { run_with_jnienv(|| {
     ]);
     assert_eq!(r, expect);
     // Result<Option<_>, _>
-    let r: Result<Option<Box<[bool]>>, String> =
-        call!(static me.test.Test.getBooleanArray() -> Result<Option<[bool]>, String>);
+    let r: Result<Option<Box<[bool]>>, JavaException> = call!(static me.test.Test.getBooleanArray() -> Result<Option<[bool]>, Exception>);
     r.unwrap().unwrap();
-    let r: Result<Option<Box<[bool]>>, String> =
-        call!(static me.test.Test.nullPrimArray() -> Result<Option<[bool]>, String>);
+    let r: Result<Option<Box<[bool]>>, JavaException> = call!(static me.test.Test.nullPrimArray() -> Result<Option<[bool]>, Exception>);
     assert!(r.unwrap().is_none());
-    let r: Result<Option<Box<[JObject]>>, String> =
-        call!(static me.test.Test.getObjectArray() -> Result<Option<[java.lang.Object]>, String>);
+    let r: Result<Option<Box<[JObject]>>, JavaException> = call!(static me.test.Test.getObjectArray() -> Result<Option<[java.lang.Object]>, Exception>);
     r.unwrap().unwrap();
-    let r: Result<Option<Box<[JObject]>>, String> =
-        call!(static me.test.Test.nullObjArray() -> Result<Option<[java.lang.Object]>, String>);
+    let r: Result<Option<Box<[JObject]>>, JavaException> = call!(static me.test.Test.nullObjArray() -> Result<Option<[java.lang.Object]>, Exception>);
     assert!(r.unwrap().is_none());
 }) }
 
@@ -220,6 +212,12 @@ fn return_fail() { run_with_jnienv(|| {
     ))
     .unwrap_err();
     // .map_err(op); // TODO: Ensure error is "called `Result::unwrap()` on an `Err` value: Object(Null)"
+    // Incorrect Error Class
+    // catch_unwind(AssertUnwindSafe(
+    //     || call!(static me.test.Test.throwPrimArray() -> Result<[bool], java.lang.WrongException>)
+    // ))
+    // .unwrap_err();
+    // .map_err(op); // TODO: Ensure error is "Expected the Object to be the Class or a descendant of the Class "java/lang/WrongException", but the actual Class of the Object is "java/lang/IndexOutOfBoundsException""
 }) }
 
 #[test]
@@ -321,8 +319,8 @@ fn constructor() { run_with_jnienv(|| {
     new!(me.test.Test());
     new!(me.test.Test(int(3)));
     new!(me.test.Test(String("Hello, World!")));
-    new!(me.test.Test(String("Hello, World!")) throws String).unwrap();
-    new!(me.test.Test(String(null)) throws String).unwrap_err();
+    new!(me.test.Test(String("Hello, World!")) throws Exception).unwrap();
+    new!(me.test.Test(String(null)) throws Exception).unwrap_err();
 
     let class = class!(me.test.Test);
     new!(class());

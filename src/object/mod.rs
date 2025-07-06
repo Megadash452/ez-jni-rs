@@ -5,8 +5,9 @@ mod impl_exception;
 use jni::{objects::{JClass, JObject, JThrowable}, JNIEnv};
 use thiserror::Error;
 use ez_jni_macros::call;
-
 use crate::utils::get_env;
+
+pub use impl_exception::JavaException;
 
 
 #[derive(Debug, Error)]
@@ -49,6 +50,7 @@ pub enum FromObjectError {
 ///     Mutually exclusive with `call`.
 ///   - **`call`**: Instead of accessing a field, Call a *getter method* with this name.
 ///   - **`class`**: If the struct field's type is [`JObject`] require that it be of a specific Class.
+///                  // TODO: Also do GlobalRef                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 /// 
 /// ```
 /// # use ez_jni::FromObject;
@@ -117,39 +119,6 @@ pub trait ToObject {
     /// 
     /// Only implement *this* method for the trait.
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local>;
-}
-
-
-// TODO: get rid of this trait, use Java classes for error types instead
-/// Allows converting *Java Exceptions* to Rust types that allow for better error handling.
-/// 
-/// # Derive
-/// Uses the same derive syntax as [`FromObject`].
-/// 
-/// ```
-/// # use ez_jni::FromException;
-/// 
-/// #[derive(FromException)]
-/// #[class(java.lang.Exception)]
-/// struct MyStError {
-///     // Implicitly calls gets field or calls getMessage()
-///     message: String
-/// }
-/// 
-/// #[derive(FromException)]
-/// #[class(java.lang.Exception)] // Optional
-/// enum MyEnmError {
-///     #[class(java.lang.NullPointerException)]
-///     Null,
-///     #[class(me.author.ElementExists)]
-///     AlreadyExists(#[field(name = message)] String),
-///     #[class(java.lang.Exception)]
-///     Other(#[field(call = getMessage)] String),
-/// }
-/// ```
-pub trait FromException<'local>
-where Self: Sized {
-    fn from_exception(exception: &JThrowable, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError>;
 }
 
 /// Hidden trait for a macro to use to convert a java value.

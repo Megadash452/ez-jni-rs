@@ -739,15 +739,26 @@ impl Display for InnerType {
 pub enum ClassRustType {
     JObject, JClass, JThrowable, String
 }
+impl Display for ClassRustType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::JObject    => "Object",
+            Self::JClass     => "Class",
+            Self::JThrowable => "Throwable",
+            Self::String     => "String",
+        })
+    }
+}
 impl FromStr for ClassRustType {
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "Object" => Ok(Self::JObject),
-            "Class" => Ok(Self::JClass),
+            "Object"    => Ok(Self::JObject),
+            "Class"     => Ok(Self::JClass),
+            "Throwable" => Ok(Self::JThrowable),
             "Exception" => Ok(Self::JThrowable),
-            "String" => Ok(Self::String),
+            "String"    => Ok(Self::String),
             _ => Err(()),
         }
     }
@@ -799,6 +810,17 @@ impl Class {
         }
     }
     
+    /// Whether the [`Class`] can be used for an `Exception`.
+    /// 
+    /// Returns an [`Error`][syn::Error] if the [`Class`] can't be used.
+    pub fn is_throwable(&self) -> syn::Result<()> {
+        // Error Class has to be Throwable (valid if is JThrowable or a full path)
+        match self {
+            Class::Path { .. } => Ok(()),
+            Class::Short(_) if self.rust_type() == ClassRustType::JThrowable => Ok(()),
+            Class::Short(class) => Err(syn::Error::new(self.span(), format!("{class} does not extend 'java.lang.Throwable'")))
+        }
+    }
 
     /// Converts the [`ClassPath`] to a string used by `JNI`, where each component is separated by a slash.
     /// e.g. `java/lang/String` or `me/author/Class$Nested`.

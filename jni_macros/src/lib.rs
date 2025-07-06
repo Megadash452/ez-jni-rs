@@ -209,22 +209,22 @@ pub fn jni_fn(input: TokenStream) -> TokenStream {
 ///
 /// The arguments are followed by a *return arrow* `->` and the **return type**.
 /// The return type may be `void`, one of the [`Types`](call!#types) above,
-/// or a [`Result<T, E>`] of any of the previous choices.
-///
-/// The real type (`T`) can be wrapped in [`Result`] when the method can return an **Exception**.
-/// Use this when the method is marked with `throws Exception`.
-/// If the method throws, but [`Result`] was not used, a `panic!` will occur.
+/// or a [`Result<T, CLASS>`] (where `T` is `void` or a [`Type`](call!#types),
+/// and `CLASS` is any **Java Class** that extends [`Throwable`](https://docs.oracle.com/javase/8/docs/api/java/lang/Throwable.html)).
 /// 
 /// ### Exceptions
 ///
-/// The **`E`** in the [`Result`] type can be any Rust type that *implements [`FromException`](https://docs.rs/ez_jni/latest/ez_jni/trait.FromException.html)*
-/// (usually an *Error Enum*).
+/// Normally, when a call ***throws*** an `Exception`, the macro will cause a `panic!` with that `Exception`.
+/// But when a *call* is marked to return a [`Result<T, CLASS>`] and the call *throws*,
+/// the `Exception` will be caught and returned in the `Err` variant as a [`JavaException`][https://docs.rs/ez_jni/latest/ez_jni/struct.JavaException.html].
 ///
-/// If the call to [`from_exception`](https://docs.rs/ez_jni/latest/ez_jni/trait.FromException.html#method.from_exception) fails,
-/// the Exception will not be caught and the program will `panic!`.
+/// If the object was not of the *expected Class*, the `Exception` will *not be caught* and the program will `panic!`.
 /// This is similar to how in Java, if the exception is not of any type of the *catch blocks*, the exception will not be caught.
-///
-/// When `E` is [`String`] or , it will catch any Exception.
+/// You can use the *Class shorthands* for `Exception` or `Throwable` to skip the exception Class check.
+/// 
+/// ```ignore
+/// call!(obj.method() -> Result<int, Exception>)
+/// ```
 #[proc_macro]
 pub fn call(input: TokenStream) -> TokenStream {
     let call = syn::parse_macro_input!(input as MethodCall);
@@ -243,13 +243,16 @@ pub fn call(input: TokenStream) -> TokenStream {
 /// 
 /// ### Exceptions
 /// 
-/// The constructor can be followed by **`throws`** with a Rust type that *implements [`FromException`](https://docs.rs/ez_jni/latest/ez_jni/trait.FromException.html)*.
-/// This will make the constructor call return a `Result<JObject, E>` instead,
+/// The constructor can be followed by **`throws`** and a **Java Class**.
+/// This will make the constructor call return a [`Result<JObject, JavaException>`] instead,
 /// and the exception will be caught if it occurs.
+/// This is the same behavior as in [`call!`](call!#exceptions).
 /// 
 /// ```ignore
-/// new!(me.author.ClassName() throws String)
+/// new!(me.author.ClassName() throws Exception)
 /// ```
+/// 
+/// See [`JavaException`][https://docs.rs/ez_jni/latest/ez_jni/struct.JavaException.html].
 #[proc_macro]
 pub fn new(input: TokenStream) -> TokenStream {
     let call = syn::parse_macro_input!(input as ConstructorCall);
@@ -337,22 +340,9 @@ pub fn from_object(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
 
     match item_from_derive_input(input) {
-        Either::Left(st) => object::derive_struct(st, false)
+        Either::Left(st) => object::derive_struct(st)
             .unwrap_or_else(|err| err.to_compile_error()),
-        Either::Right(enm) => object::derive_enum(enm, false)
-            .unwrap_or_else(|err| err.to_compile_error()),
-    }.into()
-}
-
-/// See [`ez_jni::FromException`](https://docs.rs/ez_jni/latest/ez_jni/trait.FromException.html).
-#[proc_macro_derive(FromException, attributes(class, field))]
-pub fn from_exception(input: TokenStream) -> TokenStream {
-    let input = syn::parse_macro_input!(input as syn::DeriveInput);
-
-    match item_from_derive_input(input) {
-        Either::Left(st) => object::derive_struct(st, true)
-            .unwrap_or_else(|err| err.to_compile_error()),
-        Either::Right(enm) => object::derive_enum(enm, true)
+        Either::Right(enm) => object::derive_enum(enm)
             .unwrap_or_else(|err| err.to_compile_error()),
     }.into()
 }

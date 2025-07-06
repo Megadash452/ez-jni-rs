@@ -1,11 +1,11 @@
 //! Contains helper functions for the macros in `/jni_macros/src/call.rs`.
 use jni::{
     errors::{Error as JNIError, Result as JNIResult},
-    objects::{JClass, JObject, JThrowable, JValue, JValueOwned},
+    objects::{JClass, JObject, JValue, JValueOwned},
     JNIEnv
 };
 use utils::first_char_uppercase;
-use crate::{__throw::try_catch, FromException as _};
+use crate::{FromObject, JavaException, __throw::try_catch};
 use super::{JNI_CALL_GHOST_EXCEPTION, MethodNotFound, FieldNotFound};
 
 
@@ -35,13 +35,14 @@ impl ClassRepr<'_, '_> {
 /// The **signature** must be a [*method type signature*](https://docs.oracle.com/javase/8/docs/technotes/guides/jni/spec/types.html#type_signatures) as described in the JNI spec.
 /// The **signature** defines the type of the **arguments** and **return** values.
 /// 
-/// This functions returns the *value returned* by the method, or an [`Exception`][JThrowable] if the method *throws*.
-/// If an error other than an [`Exception`][JThrowable] occurs, the function will `panic!`.
-pub fn call_obj_method<'local>(object: &JObject<'_>, name: &'static str, sig: &'static str, args: &[JValue], env: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, JThrowable<'local>> {
+/// This functions returns the *value returned* by the method, or an [`Exception`][JavaException] if the method *throws*.
+/// If an error other than an [`Exception`][JavaException] occurs (or is [`MethodNotFound`](https://docs.oracle.com/javaee/7/api/javax/el/MethodNotFoundException.html)),
+/// the function will `panic!`.
+pub fn call_obj_method<'local>(object: &JObject<'_>, name: &'static str, sig: &'static str, args: &[JValue], env: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, JavaException> {
     handle_call_error(env.call_method(object, name, sig, args), Callee::Object(object), name, sig, env)
 }
 /// Same as [`call_obj_method()`] but for `static` methods.
-pub fn call_static_method<'local>(class: ClassRepr<'_, '_>, name: &'static str, sig: &'static str, args: &[JValue], env: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, JThrowable<'local>> {
+pub fn call_static_method<'local>(class: ClassRepr<'_, '_>, name: &'static str, sig: &'static str, args: &[JValue], env: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, JavaException> {
     handle_call_error(match class {
         ClassRepr::String(class_path) => {
             let class = env.find_class(class_path)
@@ -55,7 +56,7 @@ pub fn call_static_method<'local>(class: ClassRepr<'_, '_>, name: &'static str, 
 /// Creates a new [`Object`][JObject] by calling a *constructor* of a *class*.
 /// 
 /// This is to [`call_static_method()`], but does not take a *method name* and uses a different **JNI Call** under the hood.
-pub fn create_object<'local>(class: ClassRepr<'_, '_>, sig: &'static str, args: &[JValue], env: &mut JNIEnv<'local>) -> Result<JObject<'local>, JThrowable<'local>> {
+pub fn create_object<'local>(class: ClassRepr<'_, '_>, sig: &'static str, args: &[JValue], env: &mut JNIEnv<'local>) -> Result<JObject<'local>, JavaException> {
     handle_call_error(match class {
         ClassRepr::String(class) => env.new_object(class, sig, args),
         ClassRepr::Object(class) => env.new_object(class, sig, args),
@@ -76,8 +77,8 @@ impl<'a, 'local> From<ClassRepr<'a, 'local>> for Callee<'a, 'local> {
     }
 }
 
-/// Handles a [`JNIError`] resulting from a **call** function by `panic!ing` or converting it to an [`Exception`][JThrowable].
-/// `panic!s` if the [`Exception`][JThrowable] is [`MethodNotFound`](https://docs.oracle.com/javaee/7/api/javax/el/MethodNotFoundException.html).
+/// Handles a [`JNIError`] resulting from a **call** function by `panic!ing` or converting it to an [`Exception`][JavaException].
+/// `panic!s` if the [`Exception`][JavaException] is [`MethodNotFound`](https://docs.oracle.com/javaee/7/api/javax/el/MethodNotFoundException.html).
 /// 
 /// If built in **debug** mode, may also output a hint on why the call *failed* and suggestions to fix it.
 fn handle_call_error<'local, T>(
@@ -86,7 +87,7 @@ fn handle_call_error<'local, T>(
     method_name: &'static str,
     method_sig: &'static str,
     env: &mut JNIEnv<'local>
-) -> Result<T, JThrowable<'local>> {
+) -> Result<T, JavaException> {
     #[cfg(debug_assertions)]
     let check_method_existence = |env: &mut JNIEnv<'local>| {
         let class = match callee {
@@ -112,7 +113,7 @@ fn handle_call_error<'local, T>(
             env.exception_clear().unwrap();
 
             // If Exception is MethodNotFound, panic instead.
-            if let Ok(MethodNotFound) = MethodNotFound::from_exception(&exception, env) {
+            if let Ok(MethodNotFound) = MethodNotFound::from_object_env(&exception, env) {
                 cfg_if::cfg_if! {
                     if #[cfg(debug_assertions)] {
                         check_method_existence(env);
@@ -123,7 +124,8 @@ fn handle_call_error<'local, T>(
                 crate::__throw::handle_jni_call_error(err, env)
             }
 
-            exception
+            JavaException::from_object_env(&exception, env)
+                .unwrap_or_else(|err| panic!("{err}"))
         },
         err => crate::__throw::handle_jni_call_error(err, env)
     })

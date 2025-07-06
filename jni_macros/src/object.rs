@@ -10,9 +10,8 @@ use crate::{
     utils::{merge_errors, take_class_attribute, take_class_attribute_required, Spanned}
 };
 
-/// Outputs the trait Implementation of [`FromObject`][https://docs.rs/ez_jni/0.5.2/ez_jni/trait.FromObject.html]
-/// or [`FromException`][https://docs.rs/ez_jni/0.5.2/ez_jni/trait.FromException.html] for **structs**.
-pub fn derive_struct(mut st: ItemStruct, from_exception: bool) -> syn::Result<TokenStream> {
+/// Outputs the trait Implementation of [`FromObject`][https://docs.rs/ez_jni/0.5.2/ez_jni/trait.FromObject.html] for **structs**.
+pub fn derive_struct(mut st: ItemStruct) -> syn::Result<TokenStream> {
     let class = take_class_attribute_required(&mut st.attrs, st.ident.span())?
         .to_jni_class_path();
     
@@ -22,18 +21,9 @@ pub fn derive_struct(mut st: ItemStruct, from_exception: bool) -> syn::Result<To
     let st_generics = st.generics;
     let st_ctor = struct_constructor(&st.fields)?;
 
-    let (trait_, method, obj_ty) = if from_exception { (
-        quote! { ::ez_jni::FromException<#env_lt> },
-        quote! { from_exception },
-        quote! { ::jni::objects::JThrowable },
-    ) } else { (
-        quote! { ::ez_jni::FromObject<'_, '_, #env_lt> },
-        quote! { from_object_env },
-        quote! { ::jni::objects::JObject },
-    ) };
     Ok(quote! {
-        impl <#st_generic_params> #trait_ for #st_ident #st_generics {
-            fn #method(object: &#obj_ty<'_>, env: &mut ::jni::JNIEnv<#env_lt>) -> Result<Self, ::ez_jni::FromObjectError> {
+        impl <#st_generic_params> ::ez_jni::FromObject<'_, '_, #env_lt> for #st_ident #st_generics {
+            fn from_object_env(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<#env_lt>) -> Result<Self, ::ez_jni::FromObjectError> {
                 ::ez_jni::utils::check_object_class(object, #class, env)?;
                 Ok(Self #st_ctor)
             }
@@ -41,9 +31,8 @@ pub fn derive_struct(mut st: ItemStruct, from_exception: bool) -> syn::Result<To
     })
 }
 
-/// Outputs the trait Implementation of [`FromObject`][https://docs.rs/ez_jni/0.5.2/ez_jni/trait.FromObject.html]
-/// or [`FromException`][https://docs.rs/ez_jni/0.5.2/ez_jni/trait.FromException.html] for **enums**.
-pub fn derive_enum(mut enm: ItemEnum, from_exception: bool) -> syn::Result<TokenStream> {
+/// Outputs the trait Implementation of [`FromObject`][https://docs.rs/ez_jni/0.5.2/ez_jni/trait.FromObject.html] for **enums**.
+pub fn derive_enum(mut enm: ItemEnum) -> syn::Result<TokenStream> {
     let mut errors = Vec::new();
 
     if enm.variants.is_empty() {
@@ -76,18 +65,9 @@ pub fn derive_enum(mut enm: ItemEnum, from_exception: bool) -> syn::Result<Token
     let env_lt = get_local_lifetime(Either::Right(&enm), &mut enm_generic_params);
     let enm_ident = enm.ident;
     let enm_generics = &enm.generics;
-    let (trait_, method, obj_ty) = if from_exception { (
-        quote! { ::ez_jni::FromException<#env_lt> },
-        quote! { from_exception },
-        quote! { ::jni::objects::JThrowable },
-    ) } else { (
-        quote! { ::ez_jni::FromObject<'_, '_, #env_lt> },
-        quote! { from_object_env },
-        quote! { ::jni::objects::JObject },
-    ) };
     Ok(quote! {
-        impl <#enm_generic_params> #trait_ for #enm_ident #enm_generics {
-            fn #method(object: &#obj_ty<'_>, env: &mut ::jni::JNIEnv<#env_lt>) -> Result<Self, ::ez_jni::FromObjectError> {
+        impl <#enm_generic_params> ::ez_jni::FromObject<'_, '_, #env_lt> for #enm_ident #enm_generics {
+            fn from_object_env(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<#env_lt>) -> Result<Self, ::ez_jni::FromObjectError> {
                 if object.is_null() {
                     return Err(::ez_jni::FromObjectError::Null);
                 }
