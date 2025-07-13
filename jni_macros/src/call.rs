@@ -443,6 +443,7 @@ impl Parse for ConstructorCall {
 /// Parameter to a JNI method call, such as `java.lang.String(value)`.
 /// Holds a [`Type`] that can be an [`ArrayType`], or a regular *single* [`InnerType`].
 /// Can accept an **Array Literal** if the [`Type`] is array.
+#[derive(Debug, Clone)]
 pub struct Parameter {
     ty: Type,
     value: ParamValue,
@@ -517,6 +518,7 @@ impl Parse for Parameter {
     }
 }
 
+#[derive(Debug, Clone)]
 pub enum ParamValue {
     /// The value is `JObject::null()`.
     /// 
@@ -548,18 +550,6 @@ impl Parse for ParamValue {
         })
     }
 }
-impl Debug for ParamValue {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Null(null) => f.debug_tuple("ParamValue::Null")
-                .field(&null.to_string())
-                .finish(),
-            Self::Value(value) => f.debug_tuple("ParamValue::Value")
-                .field(&value.to_string())
-                .finish()
-        }
-    }
-}
 
 /// The return type of a JNI method call.
 ///
@@ -584,10 +574,15 @@ pub enum ReturnableType {
     Void(Ident),
     Type(Type)
 }
+#[allow(unused)]
 impl Return {
     /// Create a new [`Return`] Type that is **Void**.
     pub fn new_void(span: Span) -> Self {
         Self::Assertive(ReturnableType::Void(Ident::new("void", span)))
+    }
+    /// Create a new [`Return`] Type that holds a regular [`Type`].
+    pub fn new_type(ty: Type) -> Self {
+        Self::Assertive(ReturnableType::Type(ty))
     }
 }
 impl SigType for Return {
@@ -704,6 +699,22 @@ impl Debug for Return {
 /// ```
 #[derive(Default)]
 pub struct Env(Option<Expr>);
+#[allow(unused)]
+impl Env {
+    /// Create an [`Env`] type that holds the tokens `env` so that it.
+    /// If [`Env`] should hold no tokens, use the [`Default::default()`] implementation instead.
+    /// 
+    /// > Note: When this is used by something that DOES NOT take direct imput from a macro caller
+    /// (e.g. is used to create a method_call internally),
+    /// then [`Env`] MUST be the tokens `env`.
+    pub fn new() -> Self {
+        Self::new_custom(quote!(env))
+    }
+    /// Like [`Self::new()`], but allows changing the `env` tokens to something else.
+    pub fn new_custom(tokens: TokenStream) -> Self {
+        Self(Some(Expr::Verbatim(tokens)))
+    }
+}
 impl Parse for Env {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         use proc_macro2::{TokenTree, Spacing};

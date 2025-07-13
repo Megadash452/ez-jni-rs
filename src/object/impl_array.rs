@@ -2,19 +2,73 @@ use jni::objects::JClass;
 use crate::{utils::{create_java_prim_array, create_object_array, create_object_array_converted, get_java_prim_array, get_object_array}, Class};
 use super::*;
 
-fn create_object_array_from_t<'local, T>(slice: &[T], elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local>
-where T: ToObject {
-    let obj_slice = slice.iter()
-        .map(|t| t.to_object_env(env))
-        .collect::<Box<_>>();
-
-    create_object_array(
-        &obj_slice,
-        elem_class,
-    env)
+/// TODO: doc
+pub trait FromArrayObject<'local>
+where Self: Sized + for<'a, 'obj> FromObject<'a, 'obj, 'local> + 'local {
+    fn from_object_array_helper(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Box<[Self]>, FromObjectError>;
+}
+/// TODO: doc
+pub trait ToArrayObject
+where Self: ToObject + Sized {
+    fn to_object_array_helper<'local>(slice: &[Self], env: &mut JNIEnv<'local>) -> JObject<'local>;
 }
 
-// -- Arrays --
+// -- Blanket Implementations --
+
+impl<'local, T> FromObject<'_, '_, 'local> for Box<[T]>
+where T: FromArrayObject<'local> + 'local {
+    fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+        <T as FromArrayObject>::from_object_array_helper(object, env)
+    }
+}
+impl<T> ToObject for [T]
+where T: ToArrayObject + ToObject {
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        <T as ToArrayObject>::to_object_array_helper(self, env)
+    }
+}
+impl<T> ToObject for &[T]
+where T: ToArrayObject + ToObject {
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        <[T] as ToObject>::to_object_env(self, env)
+    }
+}
+impl<const N: usize, T> ToObject for [T; N]
+where [T]: ToObject {
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        <[T] as ToObject>::to_object_env(self, env)
+    }
+}
+
+impl<'local, T> FromObject<'_, '_, 'local> for Box<[Option<T>]>
+where T: FromArrayObject<'local> + 'local {
+    fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+        get_object_array(object, None, env)? // TODO: Using None for now, try to work something out so that the class is not always None
+            .into_iter()
+            .map(|obj| Option::<T>::from_object_env(&obj, env))
+            .collect::<Result<_, _>>()
+    }
+}
+impl<T> ToObject for [Option<T>]
+where T: ToObject + Class {
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        create_object_array_converted(
+            self,
+            T::CLASS_PATH,
+            |opt, env| opt.to_object_env(env),
+        env)
+    }
+}
+impl<T> ToObject for [&Option<T>]
+where T: ToObject + Class {
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        create_object_array_converted(
+            self,
+            T::CLASS_PATH,
+            |opt, env| opt.to_object_env(env),
+        env)
+    }
+}
 
 impl<'local, T> FromObject<'_, '_, 'local> for Vec<T>
 where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local> {
@@ -23,33 +77,149 @@ where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local> {
     }
 }
 
-// Blanket impls seem impossible :(
-// impl<'local, T> FromObject<'_, '_, 'local> for Box<[T]>
-// where T: for<'a> FromObject<'a, 'local, 'local> + Class + 'local {
-//     fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
-//         get_object_array(object, Some(T::CLASS_PATH), env)?
-//             .into_iter()
-//             .map(|obj| T::from_object_env(&obj, env))
-//             .collect::<Result<Box<[_]>, _>>()
-//     }
-// }
-// impl<T> ToObject for [T]
-// where T: ToObject + Class + 'static {
-//     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-//         create_object_array_converted(
-//             self,
-//             T::CLASS_PATH,
-//             // For JClass and JThroable: Can allocate without worry because the function creates a new local frame
-//             |obj, env| obj.to_object_env(env),
-//         env)
-//     }
-// }
-impl<const N: usize, T> ToObject for [T; N]
-where [T]: ToObject {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        <[T] as ToObject>::to_object_env(self, env)
+// -- --
+
+// -- Implementations --
+
+macro_rules! impl_prim_array {
+    ($prim:ty) => {
+        impl FromArrayObject<'_> for $prim {
+            #[inline(always)]
+            fn from_object_array_helper(object: &JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Box<[Self]>, FromObjectError> {
+                get_java_prim_array(object, env)
+            }
+        }
+        impl ToArrayObject for $prim {
+            #[inline(always)]
+            fn to_object_array_helper<'local>(slice: &[Self], env: &mut JNIEnv<'local>) -> JObject<'local> {
+                create_java_prim_array(slice, env)
+            }
+        }
+    };
+}
+impl_prim_array!(bool);
+impl_prim_array!(char);
+impl_prim_array!(i8);
+impl_prim_array!(i16);
+impl_prim_array!(i32);
+impl_prim_array!(i64);
+impl_prim_array!(f32);
+impl_prim_array!(f64);
+impl_prim_array!(u8);
+impl_prim_array!(u16);
+impl_prim_array!(u32);
+impl_prim_array!(u64);
+
+impl FromArrayObject<'_> for String {
+    #[inline(always)]
+    fn from_object_array_helper(object: &JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Box<[Self]>, FromObjectError> {
+        get_object_array(object, Some(Self::CLASS_PATH), env)?
+            .into_iter()
+            .map(|obj| Self::from_object_env(&obj, env))
+            .collect::<Result<_, _>>()
     }
 }
+impl ToArrayObject for String {
+    #[inline(always)]
+    fn to_object_array_helper<'local>(slice: &[Self], env: &mut JNIEnv<'local>) -> JObject<'local> {
+        create_object_array_converted(slice, Self::CLASS_PATH, |t, env| t.to_object_env(env), env)
+    }
+}
+impl ToArrayObject for &String {
+    #[inline(always)]
+    fn to_object_array_helper<'local>(slice: &[Self], env: &mut JNIEnv<'local>) -> JObject<'local> {
+        create_object_array_converted(slice, Self::CLASS_PATH, |t, env| t.to_object_env(env), env)
+    }
+}
+impl ToArrayObject for &str {
+    #[inline(always)]
+    fn to_object_array_helper<'local>(slice: &[Self], env: &mut JNIEnv<'local>) -> JObject<'local> {
+        create_object_array_converted(slice, Self::CLASS_PATH, |t, env| t.to_object_env(env), env)
+    }
+}
+// For recursive blanket implementation
+impl<'local, T> FromArrayObject<'local> for Box<[T]>
+where T: FromArrayObject<'local> {
+    #[inline(always)]
+    fn from_object_array_helper(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Box<[Self]>, FromObjectError> {
+        get_object_array(object, None, env)? // TODO: Using None for now, try to work something out so that the class is not always None
+            .into_iter()
+            .map(|obj| Self::from_object_env(&obj, env))
+            .collect::<Result<_, _>>()
+    }
+}
+impl<T> ToArrayObject for &[T]
+where T: ToArrayObject + Class {
+    #[inline(always)]
+    fn to_object_array_helper<'local>(slice: &[Self], env: &mut JNIEnv<'local>) -> JObject<'local> {
+        create_object_array_converted(
+            slice,
+            &format!("[L{};", T::CLASS_PATH),
+            |t, env| t.to_object_env(env),
+        env)
+    }
+}
+impl<const N: usize, T> ToArrayObject for [T; N]
+where T: ToArrayObject + Class {
+    #[inline(always)]
+    fn to_object_array_helper<'local>(slice: &[Self], env: &mut JNIEnv<'local>) -> JObject<'local> {
+        create_object_array_converted(
+            slice,
+            &format!("[L{};", T::CLASS_PATH),
+            |t, env| t.to_object_env(env),
+        env)
+    }
+}
+impl<const N: usize, T> ToArrayObject for &[T; N]
+where T: ToArrayObject + Class {
+    #[inline(always)]
+    fn to_object_array_helper<'local>(slice: &[Self], env: &mut JNIEnv<'local>) -> JObject<'local> {
+        create_object_array_converted(
+            slice,
+            &format!("[L{};", T::CLASS_PATH),
+            |t, env| t.to_object_env(env),
+        env)
+    }
+}
+// -- --
+
+// -- Edge cases implementations --
+
+// JClass and JThrowable
+macro_rules! impl_owned_object {
+    ($($ty:tt)*) => {
+        impl<'local> FromObject<'_, '_, 'local> for Box<[$($ty)*<'local>]> {
+            fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+                get_object_array(object, Some(<$($ty)* as crate::Class>::CLASS_PATH), env)?
+                    .into_iter()
+                    .map(|obj| <$($ty)* as crate::FromObjectOwned>::from_object_owned_env(obj, env))
+                    .collect::<Result<_, _>>()
+            }
+        }
+        impl<'local> FromObject<'_, '_, 'local> for Box<[Option<$($ty)*<'local>>]> {
+            fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+                get_object_array(object, Some(<$($ty)* as crate::Class>::CLASS_PATH), env)?
+                    .into_iter()
+                    .map(|obj| <Option::<$($ty)*> as crate::FromObjectOwned>::from_object_owned_env(obj, env))
+                    .collect::<Result<_, _>>()
+            }
+        }
+        impl ToArrayObject for $($ty)*<'_> {
+            #[inline(always)]
+            fn to_object_array_helper<'local>(slice: &[Self], env: &mut JNIEnv<'local>) -> JObject<'local> {
+                create_object_array_converted(slice, Self::CLASS_PATH, |t, env| t.to_object_env(env), env)
+            }
+        }
+        impl ToArrayObject for &$($ty)*<'_> {
+            #[inline(always)]
+            fn to_object_array_helper<'local>(slice: &[Self], env: &mut JNIEnv<'local>) -> JObject<'local> {
+                create_object_array_converted(slice, Self::CLASS_PATH, |t, env| t.to_object_env(env), env)
+            }
+        }
+    };
+}
+impl_owned_object!(JClass);
+impl_owned_object!(JThrowable);
 
 
 impl<'local> FromObject<'_, '_, 'local> for Box<[JObject<'local>]> {
@@ -66,14 +236,14 @@ macro_rules! impl_paired_obj_slice {
     (ref $($impl_decl:tt)*) => {
         $($impl_decl)* {
             fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-                create_object_array(&self.1, self.0, env)
+                create_object_array(self.1.as_ref(), self.0, env)
             }
         }
     };
     ($($impl_decl:tt)*) => {
         $($impl_decl)* {
             fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-                create_object_array(&self.1, self.0, env)
+                create_object_array(self.1.as_ref(), self.0, env)
             }
         }
     };
@@ -84,87 +254,8 @@ impl_paired_obj_slice!(    impl ToObject for (&str, &[JObject<'_>]));
 impl_paired_obj_slice!(ref impl ToObject for (&str, &[&JObject<'_>]));
 impl_paired_obj_slice!(    impl<const N: usize> ToObject for (&str, [JObject<'_>; N]));
 impl_paired_obj_slice!(ref impl<const N: usize> ToObject for (&str, [&JObject<'_>; N]));
-
-impl<'local> FromObject<'_, '_, 'local> for Box<[JClass<'local>]> {
-    fn from_object_env(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
-        get_object_array(object, Some(JClass::CLASS_PATH), env)?
-            .into_iter()
-            .map(|obj| JClass::from_object_owned_env(obj, env))
-            .collect::<Result<Self, _>>()
-    }
-}
-impl ToObject for [JClass<'_>] {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        create_object_array_converted(
-            self,
-            JClass::CLASS_PATH,
-            // Can allocate without worry because the function creates a new local frame
-            |obj, env| obj.to_object_env(env),
-        env)
-    }
-}
-impl ToObject for [&JClass<'_>] {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        create_object_array_converted(
-            self,
-            JClass::CLASS_PATH,
-            // Can allocate without worry because the function creates a new local frame
-            |obj, env| obj.to_object_env(env),
-        env)
-    }
-}
-
-impl<'local> FromObject<'_, '_, 'local> for Box<[JThrowable<'local>]> {
-    fn from_object_env(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
-        get_object_array(object, Some(JThrowable::CLASS_PATH), env)?
-            .into_iter()
-            .map(|obj| JThrowable::from_object_owned_env(obj, env))
-            .collect::<Result<Self, _>>()
-    }
-}
-impl ToObject for [JThrowable<'_>] {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        create_object_array_converted(
-            self,
-            JThrowable::CLASS_PATH,
-            // Can allocate without worry because the function creates a new local frame
-            |obj, env| obj.to_object_env(env),
-            env
-        )
-    }
-}
-impl ToObject for [&JThrowable<'_>] {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        create_object_array_converted(
-            self,
-            JThrowable::CLASS_PATH,
-            // Can allocate without worry because the function creates a new local frame
-            |obj, env| obj.to_object_env(env),
-            env
-        )
-    }
-}
-
-// Implementations for String Array
-
-impl FromObject<'_, '_, '_> for Box<[String]> {
-    fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        get_object_array(object, Some(String::CLASS_PATH), env)?
-            .into_iter()
-            .map(|obj| String::from_object_env(&obj, env))
-            .collect::<Result<Box<[_]>, _>>()
-    }
-}
-impl ToObject for [String] {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        create_object_array_from_t(self, String::CLASS_PATH, env)
-    }
-}
-impl ToObject for [&str] {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        create_object_array_from_t(self, String::CLASS_PATH, env)
-    }
-}
+impl_paired_obj_slice!(    impl<const N: usize> ToObject for (&str, &[JObject<'_>; N]));
+impl_paired_obj_slice!(ref impl<const N: usize> ToObject for (&str, &[&JObject<'_>; N]));
 
 // Implementation for [Option<T>]
 
@@ -205,312 +296,195 @@ impl<const N: usize> ToObject for (&str, [Option<&JObject<'_>>; N]) {
     }
 }
 
-impl<'local> FromObject<'_, '_, 'local> for Box<[Option<JClass<'local>>]> {
-    fn from_object_env(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
-        get_object_array(object, None, env)?
-            .into_iter()
-            .map(|obj| Option::from_object_owned_env(obj, env))
-            .collect::<Result<Self, _>>()
-    }
-}
-impl ToObject for [Option<JClass<'_>>] {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        create_object_array_converted(
-            self,
-            JClass::CLASS_PATH,
-            |opt, env| opt.to_object_env(env),
-        env)
-    }
-}
-impl ToObject for [Option<&JClass<'_>>] {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        create_object_array_converted(
-            self,
-            JClass::CLASS_PATH,
-            |opt, env| opt.to_object_env(env),
-        env)
-    }
-}
 
-impl<'local> FromObject<'_, '_, 'local> for Box<[Option<JThrowable<'local>>]> {
-    fn from_object_env(object: &JObject, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
-        get_object_array(object, None, env)?
-            .into_iter()
-            .map(|obj| Option::from_object_owned_env(obj, env))
-            .collect::<Result<Self, _>>()
-    }
-}
-impl ToObject for [Option<JThrowable<'_>>] {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        create_object_array_converted(
-            self,
-            JThrowable::CLASS_PATH,
-            |opt, env| opt.to_object_env(env),
-        env)
-    }
-}
-impl ToObject for [Option<&JThrowable<'_>>] {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        create_object_array_converted(
-            self,
-            JThrowable::CLASS_PATH,
-            |opt, env| opt.to_object_env(env),
-        env)
-    }
-}
-
-impl FromObject<'_, '_, '_> for Box<[Option<String>]> {
-    fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        get_object_array(object, Some(String::CLASS_PATH), env)
-            .and_then(|array|
-                array.into_iter()
-                    .map(|obj| Option::<String>::from_object_env(&obj, env))
-                    .collect::<Result<Box<[_]>, _>>()
-            )
-    }
-}
-impl ToObject for [Option<String>] {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        create_object_array_from_t(self, String::CLASS_PATH, env)
-    }
-}
-impl ToObject for [Option<&str>] {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        create_object_array_from_t(self, String::CLASS_PATH, env)
-    }
-}
-
-
-// Primitive Arrays
-macro_rules! impl_prim_array {
-    ($prim:ty) => {
-        impl FromObject<'_, '_, '_> for Box<[$prim]> {
-            fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-                get_java_prim_array(object, env)
-            }
-        }
-        impl ToObject for [$prim] {
-            fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-                create_java_prim_array(self, env)
-            }
-        }
-    };
-}
-impl_prim_array!(bool);
-impl_prim_array!(char);
-impl_prim_array!(i8);
-impl_prim_array!(i16);
-impl_prim_array!(i32);
-impl_prim_array!(i64);
-impl_prim_array!(f32);
-impl_prim_array!(f64);
-impl_prim_array!(u8);
-impl_prim_array!(u16);
-impl_prim_array!(u32);
-impl_prim_array!(u64);
-// Blanket impls seem impossible :(
-// impl<T> FromObject<'_, '_, '_> for Box<[T]>
-// where T: Primitive + for<'a, 'obj, 'local> FromObject<'a, 'obj, 'local> {
-//     fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-//         get_java_prim_array(object, env)
-//     }
-// }
-// impl<T> ToObject for [T]
-// where T: Primitive {
-//     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-//         create_java_prim_array(self, env)
-//     }
-// }
-
-
-// Multi-dimensional Arrays (up to 10 dimensions)
-// 2 Dimensions
-impl<'local, T> FromObject<'_, '_, 'local> for Box<[Box<[T]>]>
-where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local>,
-      T: Class
-{
-    fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
-        get_object_array(object, Some(&format!("[[L{};", T::CLASS_PATH)), env)?
-            .into_iter()
-            .map(|obj| Box::<[T]>::from_object_env(&obj, env))
-            .collect()
-    }
-}
-// 3 Dimensions
-impl<'local, T> FromObject<'_, '_, 'local> for Box<[Box<[Box<[T]>]>]>
-where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local>,
-      T: Class
-{
-    fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
-        get_object_array(object, Some(&format!("[[[L{};", T::CLASS_PATH)), env)?
-            .into_iter()
-            .map(|obj| Box::<[Box<[T]>]>::from_object_env(&obj, env))
-            .collect()
-    }
-}
-// 4 Dimensions
-impl<'local, T> FromObject<'_, '_, 'local> for Box<[Box<[Box<[Box<[T]>]>]>]>
-where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local>,
-      T: Class
-{
-    fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
-        get_object_array(object, Some(&format!("[[[[L{};", T::CLASS_PATH)), env)?
-            .into_iter()
-            .map(|obj| Box::<[Box<[Box<[T]>]>]>::from_object_env(&obj, env))
-            .collect()
-    }
-}
-// 5 Dimensions
-impl<'local, T> FromObject<'_, '_, 'local> for Box<[Box<[Box<[Box<[Box<[T]>]>]>]>]>
-where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local>,
-      T: Class
-{
-    fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
-        get_object_array(object, Some(&format!("[[[[[L{};", T::CLASS_PATH)), env)?
-            .into_iter()
-            .map(|obj| Box::<[Box<[Box<[Box<[T]>]>]>]>::from_object_env(&obj, env))
-            .collect()
-    }
-}
-// 6 Dimensions
-impl<'local, T> FromObject<'_, '_, 'local> for Box<[Box<[Box<[Box<[Box<[Box<[T]>]>]>]>]>]>
-where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local>,
-      T: Class
-{
-    fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
-        get_object_array(object, Some(&format!("[[[[[[L{};", T::CLASS_PATH)), env)?
-            .into_iter()
-            .map(|obj| Box::<[Box<[Box<[Box<[Box<[T]>]>]>]>]>::from_object_env(&obj, env))
-            .collect()
-    }
-}
-// 7 Dimensions
-impl<'local, T> FromObject<'_, '_, 'local> for Box<[Box<[Box<[Box<[Box<[Box<[Box<[T]>]>]>]>]>]>]>
-where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local>,
-      T: Class
-{
-    fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
-        get_object_array(object, Some(&format!("[[[[[[[L{};", T::CLASS_PATH)), env)?
-            .into_iter()
-            .map(|obj| Box::<[Box<[Box<[Box<[Box<[Box<[T]>]>]>]>]>]>::from_object_env(&obj, env))
-            .collect()
-    }
-}
-// 8 Dimensions
-impl<'local, T> FromObject<'_, '_, 'local> for Box<[Box<[Box<[Box<[Box<[Box<[Box<[Box<[T]>]>]>]>]>]>]>]>
-where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local>,
-      T: Class
-{
-    fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
-        get_object_array(object, Some(&format!("[[[[[[[[L{};", T::CLASS_PATH)), env)?
-            .into_iter()
-            .map(|obj| Box::<[Box<[Box<[Box<[Box<[Box<[Box<[T]>]>]>]>]>]>]>::from_object_env(&obj, env))
-            .collect()
-    }
-}
-// 9 Dimensions
-impl<'local, T> FromObject<'_, '_, 'local> for Box<[Box<[Box<[Box<[Box<[Box<[Box<[Box<[Box<[T]>]>]>]>]>]>]>]>]>
-where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local>,
-      T: Class
-{
-    fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
-        get_object_array(object, Some(&format!("[[[[[[[[[L{};", T::CLASS_PATH)), env)?
-            .into_iter()
-            .map(|obj| Box::<[Box<[Box<[Box<[Box<[Box<[Box<[Box<[T]>]>]>]>]>]>]>]>::from_object_env(&obj, env))
-            .collect()
-    }
-}
-// 10 Dimensions
-impl<'local, T> FromObject<'_, '_, 'local> for Box<[Box<[Box<[Box<[Box<[Box<[Box<[Box<[Box<[Box<[T]>]>]>]>]>]>]>]>]>]>
-where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local>,
-      T: Class
-{
-    fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
-        get_object_array(object, Some(&format!("[[[[[[[[[[L{};", T::CLASS_PATH)), env)?
-            .into_iter()
-            .map(|obj| Box::<[Box<[Box<[Box<[Box<[Box<[Box<[Box<[Box<[T]>]>]>]>]>]>]>]>]>::from_object_env(&obj, env))
-            .collect()
-    }
-}
-
+// // Multi-dimensional Arrays (up to 10 dimensions)
 // // 2 Dimensions
-// impl<T> ToObject for Box<[Box<[T]>]>
-// where Box<[T]>: ToObject,
+// impl<'local, T> FromObject<'_, '_, 'local> for Box<[Box<[T]>]>
+// where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local>,
 //       T: Class
 // {
-//     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-
+//     fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+//         get_object_array(object, Some(&format!("[[L{};", T::CLASS_PATH)), env)?
+//             .into_iter()
+//             .map(|obj| Box::<[T]>::from_object_env(&obj, env))
+//             .collect()
 //     }
 // }
 // // 3 Dimensions
-// impl<T> ToObject for Box<[Box<[Box<[T]>]>]>
-// where Box<[T]>: ToObject,
+// impl<'local, T> FromObject<'_, '_, 'local> for Box<[Box<[Box<[T]>]>]>
+// where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local>,
 //       T: Class
 // {
-//     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-
+//     fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+//         get_object_array(object, Some(&format!("[[[L{};", T::CLASS_PATH)), env)?
+//             .into_iter()
+//             .map(|obj| Box::<[Box<[T]>]>::from_object_env(&obj, env))
+//             .collect()
 //     }
 // }
 // // 4 Dimensions
-// impl<T> ToObject for Box<[Box<[Box<[Box<[T]>]>]>]>
-// where Box<[T]>: ToObject,
+// impl<'local, T> FromObject<'_, '_, 'local> for Box<[Box<[Box<[Box<[T]>]>]>]>
+// where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local>,
 //       T: Class
 // {
-//     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-
+//     fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+//         get_object_array(object, Some(&format!("[[[[L{};", T::CLASS_PATH)), env)?
+//             .into_iter()
+//             .map(|obj| Box::<[Box<[Box<[T]>]>]>::from_object_env(&obj, env))
+//             .collect()
 //     }
 // }
 // // 5 Dimensions
-// impl<T> ToObject for Box<[Box<[Box<[Box<[Box<[T]>]>]>]>]>
-// where Box<[T]>: ToObject,
+// impl<'local, T> FromObject<'_, '_, 'local> for Box<[Box<[Box<[Box<[Box<[T]>]>]>]>]>
+// where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local>,
 //       T: Class
 // {
-//     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-
+//     fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+//         get_object_array(object, Some(&format!("[[[[[L{};", T::CLASS_PATH)), env)?
+//             .into_iter()
+//             .map(|obj| Box::<[Box<[Box<[Box<[T]>]>]>]>::from_object_env(&obj, env))
+//             .collect()
 //     }
 // }
 // // 6 Dimensions
-// impl<T> ToObject for Box<[Box<[Box<[Box<[Box<[Box<[T]>]>]>]>]>]>
-// where Box<[T]>: ToObject,
+// impl<'local, T> FromObject<'_, '_, 'local> for Box<[Box<[Box<[Box<[Box<[Box<[T]>]>]>]>]>]>
+// where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local>,
 //       T: Class
 // {
-//     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-
+//     fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+//         get_object_array(object, Some(&format!("[[[[[[L{};", T::CLASS_PATH)), env)?
+//             .into_iter()
+//             .map(|obj| Box::<[Box<[Box<[Box<[Box<[T]>]>]>]>]>::from_object_env(&obj, env))
+//             .collect()
 //     }
 // }
 // // 7 Dimensions
-// impl<T> ToObject for Box<[Box<[Box<[Box<[Box<[Box<[Box<[T]>]>]>]>]>]>]>
-// where Box<[T]>: ToObject,
+// impl<'local, T> FromObject<'_, '_, 'local> for Box<[Box<[Box<[Box<[Box<[Box<[Box<[T]>]>]>]>]>]>]>
+// where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local>,
 //       T: Class
 // {
-//     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-
+//     fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+//         get_object_array(object, Some(&format!("[[[[[[[L{};", T::CLASS_PATH)), env)?
+//             .into_iter()
+//             .map(|obj| Box::<[Box<[Box<[Box<[Box<[Box<[T]>]>]>]>]>]>::from_object_env(&obj, env))
+//             .collect()
 //     }
 // }
 // // 8 Dimensions
-// impl<T> ToObject for Box<[Box<[Box<[Box<[Box<[Box<[Box<[Box<[T]>]>]>]>]>]>]>]>
-// where Box<[T]>: ToObject,
+// impl<'local, T> FromObject<'_, '_, 'local> for Box<[Box<[Box<[Box<[Box<[Box<[Box<[Box<[T]>]>]>]>]>]>]>]>
+// where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local>,
 //       T: Class
 // {
-//     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-
+//     fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+//         get_object_array(object, Some(&format!("[[[[[[[[L{};", T::CLASS_PATH)), env)?
+//             .into_iter()
+//             .map(|obj| Box::<[Box<[Box<[Box<[Box<[Box<[Box<[T]>]>]>]>]>]>]>::from_object_env(&obj, env))
+//             .collect()
 //     }
 // }
 // // 9 Dimensions
-// impl<T> ToObject for Box<[Box<[Box<[Box<[Box<[Box<[Box<[Box<[Box<[T]>]>]>]>]>]>]>]>]>
-// where Box<[T]>: ToObject,
+// impl<'local, T> FromObject<'_, '_, 'local> for Box<[Box<[Box<[Box<[Box<[Box<[Box<[Box<[Box<[T]>]>]>]>]>]>]>]>]>
+// where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local>,
 //       T: Class
 // {
-//     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-
+//     fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+//         get_object_array(object, Some(&format!("[[[[[[[[[L{};", T::CLASS_PATH)), env)?
+//             .into_iter()
+//             .map(|obj| Box::<[Box<[Box<[Box<[Box<[Box<[Box<[Box<[T]>]>]>]>]>]>]>]>::from_object_env(&obj, env))
+//             .collect()
 //     }
 // }
 // // 10 Dimensions
-// impl<T> ToObject for Box<[Box<[Box<[Box<[Box<[Box<[Box<[Box<[Box<[Box<[T]>]>]>]>]>]>]>]>]>]>
-// where Box<[T]>: ToObject,
+// impl<'local, T> FromObject<'_, '_, 'local> for Box<[Box<[Box<[Box<[Box<[Box<[Box<[Box<[Box<[Box<[T]>]>]>]>]>]>]>]>]>]>
+// where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local>,
+//       T: Class
+// {
+//     fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+//         get_object_array(object, Some(&format!("[[[[[[[[[[L{};", T::CLASS_PATH)), env)?
+//             .into_iter()
+//             .map(|obj| Box::<[Box<[Box<[Box<[Box<[Box<[Box<[Box<[Box<[T]>]>]>]>]>]>]>]>]>::from_object_env(&obj, env))
+//             .collect()
+//     }
+// }
+
+// // 2 Dimensions
+// impl<T> ToObject for [&[T]]
+// where [T]: ToObject,
 //       T: Class
 // {
 //     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-
+//         todo!();
+//     }
+// }
+// // 3 Dimensions
+// impl<T> ToObject for [&[&[T]]]
+// where [T]: ToObject,
+//       T: Class
+// {
+//     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+//         todo!();
+//     }
+// }
+// // 4 Dimensions
+// impl<T> ToObject for [&[&[&[T]]]]
+// where [T]: ToObject,
+//       T: Class
+// {
+//     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+//         todo!();
+//     }
+// }
+// // 5 Dimensions
+// impl<T> ToObject for [&[&[&[&[T]]]]]
+// where [T]: ToObject,
+//       T: Class
+// {
+//     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+//         todo!();
+//     }
+// }
+// // 6 Dimensions
+// impl<T> ToObject for [&[&[&[&[&[T]]]]]]
+// where [T]: ToObject,
+//       T: Class
+// {
+//     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+//         todo!();
+//     }
+// }
+// // 7 Dimensions
+// impl<T> ToObject for [&[&[&[&[&[&[T]]]]]]]
+// where [T]: ToObject,
+//       T: Class
+// {
+//     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+//         todo!();
+//     }
+// }
+// // 8 Dimensions
+// impl<T> ToObject for [&[&[&[&[&[&[&[T]]]]]]]]
+// where [T]: ToObject,
+//       T: Class
+// {
+//     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+//         todo!();
+//     }
+// }
+// // 9 Dimensions
+// impl<T> ToObject for [&[&[&[&[&[&[&[&[T]]]]]]]]]
+// where [T]: ToObject,
+//       T: Class
+// {
+//     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+//         todo!();
+//     }
+// }
+// // 10 Dimensions
+// impl<T> ToObject for [&[&[&[&[&[&[&[&[&[T]]]]]]]]]]
+// where [T]: ToObject,
+//       T: Class
+// {
+//     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+//         todo!();
 //     }
 // }

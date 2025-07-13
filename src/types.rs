@@ -19,6 +19,12 @@ pub(crate) trait Primitive: Class + Copy + 'static {
 impl Class for String {
     const CLASS_PATH: &'static str = "java/lang/String";
 }
+impl Class for str {
+    const CLASS_PATH: &'static str = String::CLASS_PATH;
+}
+impl Class for &str {
+    const CLASS_PATH: &'static str = String::CLASS_PATH;
+}
 impl Class for JString<'_> {
     const CLASS_PATH: &'static str = String::CLASS_PATH;
 }
@@ -28,10 +34,27 @@ impl Class for JClass<'_> {
 impl Class for JThrowable<'_> {
     const CLASS_PATH: &'static str = "java/lang/Exception";
 }
+impl<T> Class for &T
+where T: Class {
+    const CLASS_PATH: &'static str = T::CLASS_PATH;
+}
 impl<T> Class for Option<T>
 where T: Class {
     const CLASS_PATH: &'static str = T::CLASS_PATH;
 }
+// TODO:
+// impl<T> Class for [T]
+// where T: Class {
+//     const CLASS_PATH: &'static str = formatcp!("[L{};", T::CLASS_PATH);
+// }
+// impl<T> Class for Box<[T]>
+// where T: Class {
+//     const CLASS_PATH: &'static str = [T]::CLASS_PATH;
+// }
+// impl<const N: usize, T> Class for [T; N]
+// where T: Class {
+//     const CLASS_PATH: &'static str = [T]::CLASS_PATH;
+// }
 
 impl Class for bool {
     const CLASS_PATH: &'static str = "java/lang/Boolean";

@@ -6,8 +6,7 @@ use syn::{parse::{Parse, ParseStream, Parser}, punctuated::Punctuated, AngleBrac
 use itertools::Itertools as _;
 use std::{cell::RefCell, collections::{HashMap, HashSet}};
 use crate::{
-    types::{Class, ClassRustType, InnerType, OptionType, SigType, Type},
-    utils::{merge_errors, take_class_attribute, take_class_attribute_required, Spanned}
+    types::{Class, ClassRustType, InnerType, OptionType, SigType, Type}, utils::{merge_errors, take_class_attribute, take_class_attribute_required, Spanned}
 };
 
 /// Outputs the trait Implementation of [`FromObject`][https://docs.rs/ez_jni/0.5.2/ez_jni/trait.FromObject.html] for **structs**.
@@ -24,9 +23,24 @@ pub fn derive_struct(mut st: ItemStruct) -> syn::Result<TokenStream> {
     Ok(quote! {
         impl <#st_generic_params> ::ez_jni::FromObject<'_, '_, #env_lt> for #st_ident #st_generics {
             fn from_object_env(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<#env_lt>) -> Result<Self, ::ez_jni::FromObjectError> {
-                ::ez_jni::utils::check_object_class(object, #class, env)?;
+                #[allow(unused_imports)]
+                use ::std::borrow::Borrow;
+
+                ::ez_jni::utils::check_object_class(object, <Self as ::ez_jni::Class>::CLASS_PATH, env)?;
                 Ok(Self #st_ctor)
             }
+        }
+        impl <#st_generic_params> ::ez_jni::FromArrayObject<#env_lt> for #st_ident #st_generics {
+            #[inline(always)]
+            fn from_object_array_helper(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<'local>) -> ::std::result::Result<::std::boxed::Box<[Self]>, ::ez_jni::FromObjectError> {
+                ::ez_jni::utils::get_object_array(object, Some(<#st_ident as ::ez_jni::Class>::CLASS_PATH), env)?
+                    .into_iter()
+                    .map(|obj| <#st_ident as ::ez_jni::FromObject>::from_object_env(&obj, env))
+                    .collect()
+            }
+        }
+        impl <#st_generic_params> ::ez_jni::Class for #st_ident #st_generics {
+            const CLASS_PATH: &'static str = #class;
         }
     })
 }
@@ -45,15 +59,16 @@ pub fn derive_enum(mut enm: ItemEnum) -> syn::Result<TokenStream> {
         .and_then(|o| o)
         .map(|class| class.to_jni_class_path());
 
-    let base_class_check = base_class.map(|class| quote_spanned! {enm.ident.span()=>
-        static __BASE_CLASS: &str = #class;
-        if !env.is_instance_of(object, __BASE_CLASS).unwrap() {
-            return Err(::ez_jni::FromObjectError::ClassMismatch {
-                obj_class: ::ez_jni::call!(env=> __class.getName() -> String),
-                target_class: Some(__BASE_CLASS.to_string())
-            })
-        }
-    }).unwrap_or(TokenStream::new());
+    let base_class_check = base_class.as_ref()
+        .map(|_| quote_spanned! {enm.ident.span()=>
+            if !env.is_instance_of(object, <Self as ::ez_jni::Class>::CLASS_PATH).unwrap() {
+                return Err(::ez_jni::FromObjectError::ClassMismatch {
+                    obj_class: __class,
+                    target_class: Some(<Self as ::ez_jni::Class>::CLASS_PATH.to_string())
+                })
+            }
+        })
+        .unwrap_or(TokenStream::new());
 
     let class_checks = construct_variants(enm.variants.iter_mut())
         .filter_map(|res| res.map_err(|err| errors.push(err)).ok())
@@ -63,28 +78,56 @@ pub fn derive_enum(mut enm: ItemEnum) -> syn::Result<TokenStream> {
 
     let mut enm_generic_params = enm.generics.params.clone();
     let env_lt = get_local_lifetime(Either::Right(&enm), &mut enm_generic_params);
-    let enm_ident = enm.ident;
+    let enm_ident = &enm.ident;
     let enm_generics = &enm.generics;
+
+    // Types that implement FromObject are also given a Class implementation.
+    // However, for enums this is optional because only the variants need to specify a class.
+    let base_class_impl = base_class.as_ref()
+        .map(|class| quote! {
+            impl <#enm_generic_params> ::ez_jni::Class for #enm_ident #enm_generics {
+                const CLASS_PATH: &'static str = #class;
+            }
+        })
+        .unwrap_or(TokenStream::new());
+    let base_class = if base_class.is_some() {
+        quote_spanned! {enm.ident.span()=> Some(<#enm_ident as ::ez_jni::Class>::CLASS_PATH) }
+    } else {
+        quote_spanned! {enm.ident.span()=> None }
+    };
+
     Ok(quote! {
         impl <#enm_generic_params> ::ez_jni::FromObject<'_, '_, #env_lt> for #enm_ident #enm_generics {
-            fn from_object_env(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<#env_lt>) -> Result<Self, ::ez_jni::FromObjectError> {
+            fn from_object_env(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<#env_lt>) -> ::std::result::Result<Self, ::ez_jni::FromObjectError> {
+                #[allow(unused_imports)]
+                use ::std::borrow::Borrow;
+
                 if object.is_null() {
                     return Err(::ez_jni::FromObjectError::Null);
                 }
 
-                let __class = env.get_object_class(object)
-                    .unwrap_or_else(|err| panic!("Failed to get Object's class: {err}"));
+                let __class = ::ez_jni::call!(env=> call!(env=> object.getClass() -> Class).getName() -> String);
 
                 #base_class_check
 
                 #(#class_checks)* else {
                     Err(::ez_jni::FromObjectError::ClassMismatch {
-                        obj_class: ::ez_jni::call!(env=> __class.getName() -> String),
+                        obj_class: __class,
                         target_class: None
                     })
                 }
             }
         }
+        impl <#enm_generic_params> ::ez_jni::FromArrayObject<#env_lt> for #enm_ident #enm_generics {
+            #[inline(always)]
+            fn from_object_array_helper(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<'local>) -> ::std::result::Result<::std::boxed::Box<[Self]>, ::ez_jni::FromObjectError> {
+                ::ez_jni::utils::get_object_array(object, #base_class, env)?
+                    .into_iter()
+                    .map(|obj| <#enm_ident as ::ez_jni::FromObject>::from_object_env(&obj, env))
+                    .collect()
+            }
+        }
+        #base_class_impl
     })
 }
 
@@ -467,10 +510,7 @@ fn struct_constructor(fields: &Fields) -> syn::Result<TokenStream> {
                 
                 convert_field_value(&ty, attr.class.as_ref(), &quote_spanned! {method.span()=>
                     ::ez_jni::utils::call_obj_method(&object, #method, #sig, &[], env)
-                        .unwrap_or_else(|exception| {
-                            env.throw(exception).unwrap();
-                            ::ez_jni::__throw::handle_jni_call_error(::jni::errors::Error::JavaException, env)
-                        })
+                        .unwrap_or_else(|exception| ::ez_jni::__throw::panic_exception(exception))
                 })?
             } else if let Some(name) = &field.ident {
                 // Convert the Rust field name to camelCase for the Java field

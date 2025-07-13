@@ -44,6 +44,13 @@ impl ToObject for JThrowable<'_> {
     }
 }
 
+impl<T> ToObject for &T
+where T: ToObject {
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        <T as ToObject>::to_object_env(self, env)
+    }
+} 
+
 // Implementation for Option type
 
 impl<'a, 'obj, 'local, T> FromObject<'a, 'obj, 'local> for Option<T>
@@ -58,15 +65,6 @@ where T: FromObject<'a, 'obj, 'local> {
     }
 }
 impl<T> ToObject for Option<T>
-where T: ToObject {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        match self {
-            Some(t) => t.to_object_env(env),
-            None => JObject::null()
-        }
-    }
-}
-impl<T> ToObject for &Option<&T>
 where T: ToObject {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         match self {

@@ -45,7 +45,7 @@ pub trait Conversion {
 }
 
 /// A general `Type` to interface between Java and Rust types.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Type {
     /// Any **primitive** or **Class**.
     /// 
@@ -318,7 +318,7 @@ impl Display for Type {
 
 /// Declares that a Java value can be **null**.
 /// Can't have *primitive* types themselves, but can have *array of primitive*.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum OptionType {
     Object(Class),
     Array(ArrayType)
@@ -419,6 +419,7 @@ impl Parse for OptionType {
     }
 }
 
+#[derive(Clone)]
 pub struct ArrayType {
     pub bracket_token: Bracket,
     /// The type of the **Array**'s elements.

@@ -8,6 +8,7 @@ use ez_jni_macros::call;
 use crate::utils::get_env;
 
 pub use impl_exception::JavaException;
+pub use impl_array::{FromArrayObject, ToArrayObject};
 
 
 #[derive(Debug, Error)]
