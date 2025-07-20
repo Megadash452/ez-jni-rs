@@ -42,7 +42,7 @@ impl<T> Class for Option<T>
 where T: Class {
     const CLASS_PATH: &'static str = T::CLASS_PATH;
 }
-// TODO:
+// TODO: when generic_const_items https://github.com/rust-lang/rust/issues/113521 is stablized, delete DynamicClass trait and use `const_format::formatcp!("[L{};", T::CLASS_PATH)`
 // impl<T> Class for [T]
 // where T: Class {
 //     const CLASS_PATH: &'static str = formatcp!("[L{};", T::CLASS_PATH);
