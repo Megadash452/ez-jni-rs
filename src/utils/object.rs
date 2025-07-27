@@ -1,11 +1,39 @@
 //! Contains helper functions for the macros in `/jni_macros/src/object.rs`.
 use jni::{
-    objects::{JObject, JValueOwned},
+    objects::{JObject, JThrowable, JValueOwned},
     errors::{Error as JNIError},
     JNIEnv
 };
-use crate::{call, FromObjectError, __throw::try_catch};
+use crate::{call, FromJValueOwned, FromObject, FromObjectError, __throw::try_catch};
 use super::{field_helper, getter_name_and_sig, FieldNotFound, MethodNotFound};
+
+/// Trait that allows instantiating an [`Object`][crate::FromObjectOwned] *Rust type* [`From a JValue`][crate::FromJValue] while also
+/// allowing the user to require that the Object is an instance of a specified **Class**.
+/// 
+/// Most types already require the object to be of thier specific **Class** in their [`FromObject`] implementations.
+/// However, for [`JObject`] and [`JThrowable`] it's vague and they can be almost any **Class**,
+/// so only these 2 types implement this trait.
+#[doc(hidden)]
+pub trait FromJValueClass<'obj>: FromJValueOwned<'obj> {
+    /// Same as [`from_jvalue_owned_env`][FromJValueOwned::from_jvalue_owned_env()], but also checks that the object is an instance of a specified **Class**.
+    fn from_jvalue_class(val: JValueOwned<'obj>, class: &'static str, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError>;
+}
+impl<'obj> FromJValueClass<'obj> for JObject<'obj> {
+    fn from_jvalue_class(val: JValueOwned<'obj>, class: &'static str, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
+        let object = JObject::from_jvalue_owned_env(val, env);
+        check_object_class(&object, class, env)?;
+        Ok(object)
+    }
+}
+impl<'obj> FromJValueClass<'obj> for JThrowable<'obj> {
+    fn from_jvalue_class(val: JValueOwned<'obj>, class: &'static str, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
+        let object = JObject::from_jvalue_owned_env(val, env);
+        // Call from_object() to perform checks
+        <&Self as FromObject>::from_object(&object)?;
+        check_object_class(&object, class, env)?;
+        Ok(Self::from(object))
+    }
+}
 
 /// Get the value of a **field** from an Object.
 /// 

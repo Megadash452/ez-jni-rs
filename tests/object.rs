@@ -205,6 +205,20 @@ enum MyEnumClass {
     Variant2 { str: String },
 }
 
+/// Test field FromObject for custom structs
+#[derive(Debug)]
+struct IntWrapper(i32);
+#[derive(Debug, FromObject)]
+#[class(me.test.Test)]
+struct MyWrapperClass {
+    member: IntWrapper
+}
+impl FromObject<'_, '_, '_> for IntWrapper {
+    fn from_object_env(object: &'_ JObject<'_>, env: &mut jni::JNIEnv<'_>) -> Result<Self, ez_jni::FromObjectError> {
+        Self(i32::from_object_env(object, env)?)
+    }
+}
+
 /// This one is not tested at runtime, as it is identical to [`MyEnumClass`].
 #[allow(dead_code)]
 #[derive(Debug, FromObject)]

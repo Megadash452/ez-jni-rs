@@ -50,8 +50,13 @@ pub enum FromObjectError {
 ///   - **`name`**: Use a different name for the Object's field lookup instead of the field's name.
 ///     Mutually exclusive with `call`.
 ///   - **`call`**: Instead of accessing a field, Call a *getter method* with this name.
-///   - **`class`**: If the struct field's type is [`JObject`] require that it be of a specific Class.
-///                  // TODO: Also do GlobalRef                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/// // TODO: Also do GlobalRef                     vvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+///   - **`class`**: If the struct field's type is [`JObject`] or [`JThrowable`] require that it be of a specific Class.
+///                  The class can also be wrapped in *square brackets* if the [`JObject`] or [`JThrowable`] is in a `Boxed Slice` or [`Vec`],
+///                  with support for multiple dimensions.
+///                  <br><br>
+///                  the **class** attribute also affects the call's *type signature* under the hood.
+///                     
 /// 
 /// ```
 /// # use ez_jni::FromObject;
@@ -65,13 +70,16 @@ pub enum FromObjectError {
 /// 
 /// #[derive(FromObject)]
 /// #[class(me.author.MyClass)] // Optional
-/// enum MyClasses {
+/// enum MyClasses<'local> {
 ///     #[class(me.author.MyClassDescendant)]
 ///     Descendant { message: String },
-///     #[class(me.author.MyOtherClass)]
-///     Other(#[field(name = message)] String),
 ///     #[class(me.author.MyFinalClass)]
 ///     Final(#[field(call = getMessage)] String),
+///     #[class(me.author.MyOtherClass)]
+///     Others {
+///         #[field(class = [[me.author.MyClass]])]
+///         instances: Box<[Box<[JObject<'local>]>]>
+///     },
 /// }
 /// ```
 pub trait FromObject<'a, 'obj, 'local>

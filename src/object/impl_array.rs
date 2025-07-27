@@ -58,6 +58,7 @@ where Self: ToObject + Sized {
 
 // -- Blanket Implementations --
 
+// TODO: implement FromObject for [T; N]
 impl<'local, T> FromObject<'_, '_, 'local> for Box<[T]>
 where T: FromArrayObject<'local> + 'local {
     fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
