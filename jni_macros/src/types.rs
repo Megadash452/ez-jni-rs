@@ -57,6 +57,7 @@ pub enum Type {
     Option {
         /// The `"Option"` token.
         ident: Ident,
+        // TODO: Remove OptionType and use Type to allow Option<primitive>
         ty: OptionType,
     },
     // Might also add generics
@@ -112,19 +113,6 @@ impl Type {
                     // Wrap the conversion code in a JValue so it can be passed to the arguments
                     let conversion = array.convert_rust_to_java(&value);
                     return quote_spanned! {array.span()=> ::jni::objects::JValue::Object(&(#conversion)) }
-                }
-                // Converting a JObject slice to a Java Array requires explicitly passing the element class
-                Type::Assertive(InnerType::Object(class))
-                | Type::Option { ty: OptionType::Object(class) , .. }
-                if class.rust_type() == ClassRustType::JObject => {
-                    // The JObject type must be coupled with the Class, so put it in a tuple (there are implementations for this)
-                    let elem_class = class.to_jni_class_path();
-                    let inner_ty = array.ty.ty_tokens(true, None);
-                    return quote_spanned! {array.span()=>
-                        ::jni::objects::JValueGen::borrow(&<(&'static str, &[#inner_ty]) as ::ez_jni::ToJValue>::to_jvalue_env(
-                            &(#elem_class, ::std::convert::AsRef::<_>::as_ref(&(#value))),
-                        env))
-                    };
                 },
                 _ => self.ty_tokens(true, None),
             },
@@ -140,7 +128,7 @@ impl Type {
                 // JClass or JThrowable can be converted to JObject, which is converted to JValue
                 let converted = class.convert_rust_to_java(value);
                 let converted = converted.as_ref().unwrap_or(value);
-                return quote_spanned! {class.span()=> ::jni::objects::JValue::Object((#converted).borrow()) };
+                return quote_spanned! {class.span()=> ::jni::objects::JValue::Object(&(#converted)) };
             },
             _ => self.ty_tokens(true, None),
         };
@@ -152,7 +140,7 @@ impl Type {
     /// 
     /// Even though `void` and `()` are the same, it must still be *unwrapped* from the [`JValue`][::jni::objects::JValueGen].
     pub fn convert_void_to_unit(value: &TokenStream) -> TokenStream {
-        quote_spanned! {value.span()=> <() as ::ez_jni::FromJValue>::from_jvalue_env((#value).borrow(), env).unwrap()}
+        quote_spanned! {value.span()=> <() as ::ez_jni::FromJValue>::from_jvalue_env((#value).borrow(), env).unwrap() }
     }
 
     /// Gets the **Rust** type *name/path* of a [`Type`].
@@ -428,6 +416,22 @@ pub struct ArrayType {
     pub ty: Box<Type>,
 }
 impl ArrayType {
+    #[allow(unused)]
+    pub fn new(inner_ty: Type) -> Self {
+        Self::new_spanned(Span::call_site(), Span::call_site(), inner_ty)
+    }
+    /// Create a new [`ArrayType`] with custom span for the *opening* and *closing* **brackets**.
+    pub fn new_spanned(open_span: Span, close_span: Span, inner_ty: Type) -> Self {
+        let span = proc_macro2::Group::new(
+            proc_macro2::Delimiter::Bracket,
+            quote_spanned!(join_spans([open_span, close_span])=> [])
+        ).delim_span();
+        Self {
+            bracket_token: Bracket { span },
+            ty: Box::new(inner_ty),
+        }
+    }
+
     /// Returns the number of **dimensions** this [`ArrayType`] has.
     /// 
     /// E.g. `[char]` has *1 dimension*, `[[char]]` has *2 dimensions*, and so on...
@@ -460,7 +464,7 @@ impl ArrayType {
         /// **ty** is a Rust type, the type of the elements of the slice.
         fn from_object(ty: TokenStream, value: &TokenStream) -> TokenStream {
             quote_spanned! {ty.span()=>
-                <Box<[#ty]> as ::ez_jni::FromObject>::from_object_env((#value).borrow(), env).unwrap()
+                <Box<[#ty]> as ::ez_jni::FromObject>::from_object_env(&(#value), env).unwrap()
             }
         }
 
@@ -473,11 +477,8 @@ impl ArrayType {
         // class.convert_java_to_rust(&quote!(_element))
         // ```
         let get_object_arr = |elem_conversion: TokenStream| -> TokenStream {
-            // Must be the full Array Type. E.g. "[Ljava/lang/String;"
-            let array_ty = self.sig_type();
-
             quote_spanned! {value.span() => 
-                ::ez_jni::utils::get_object_array_converted(&(#value), Some(#array_ty), |_element, #[allow(unused_variables)] env| #elem_conversion, env).unwrap()
+                ::ez_jni::utils::get_object_array_converted(&(#value), |_element, #[allow(unused_variables)] env| Ok(#elem_conversion), env).unwrap()
             }
         };
 
@@ -520,11 +521,10 @@ impl ArrayType {
         /// ```ignore
         /// class.convert_rust_to_java(&quote!(_element))
         /// ```
-        fn create_obj_array(elem_class: LitStr, elem_conversion: TokenStream, value: &TokenStream) -> TokenStream {
+        fn create_obj_array(elem_conversion: TokenStream, value: &TokenStream) -> TokenStream {
             quote_spanned! {value.span()=>
                 ::ez_jni::utils::create_object_array_converted(
                     ::std::convert::AsRef::<[_]>::as_ref(&(#value)),
-                    #elem_class,
                     |_element, #[allow(unused_variables)] env| #elem_conversion,
                 env)
             }
@@ -544,24 +544,19 @@ impl ArrayType {
                     ClassRustType::String
                     | ClassRustType::JClass
                     | ClassRustType::JThrowable => to_object(quote_spanned! {ty.span()=> _ }, value),
-                    ClassRustType::JObject => {
-                        let elem_class = class.sig_type();
-                        quote_spanned! {value.span()=>
-                            ::ez_jni::utils::create_object_array(
-                                ::std::convert::AsRef::<[_]>::as_ref(&(#value)),
-                                #elem_class,
-                            env)
-                        }
+                    ClassRustType::JObject => quote_spanned! {value.span()=>
+                        ::ez_jni::utils::create_object_array(
+                            ::std::convert::AsRef::<[_]>::as_ref(&(#value)),
+                        env)
                     }
                 },
             },
             // Recursion occurs on these 2 variants
             Type::Option { ty, .. } => match ty.convert_rust_to_java(&quote_spanned! {value.span()=> _element}) {
-                Some(conversion) => create_obj_array(ty.sig_type(), conversion, value),
+                Some(conversion) => create_obj_array(conversion, value),
                 None => to_object(quote_spanned! {ty.span()=> _ }, value)
             },
             Type::Array(array) => create_obj_array(
-                array.sig_type(),
                 array.convert_rust_to_java(&quote_spanned! {value.span()=> _element}),
                 value
             ),
@@ -788,6 +783,11 @@ pub struct NestedPath {
     pub final_class: Ident
 }
 impl Class {
+    /// Creates a [`Class`] from a known *Rust Type* that can represent an object Class.
+    pub fn from_rust_type(ty: ClassRustType, span: Span) -> Self {
+        Self::Short(Ident::new(&ty.to_string(), span))
+    }
+
     /// Get the final *Rust type* that will be used for a value with this [`Class`].
     /// 
     /// Will only return something other than [`JObject`][ClassRustType::JObject] if the [`Class`] is a [shorthand][Class::Short].

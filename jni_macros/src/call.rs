@@ -52,10 +52,10 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
         quote!(::ez_jni::utils::call_obj_method)
     };
     quote! { {
-        // #![allow(noop_method_call)]
         #[allow(unused_imports)]
         use ::std::borrow::Borrow;
         let env: &mut ::jni::JNIEnv = #env;
+        #[allow(noop_method_call)]
         #jni_method(#callee, #name, #signature, #arguments, env)
             .map(|v| #return_conversion)
             #error_handler
@@ -86,10 +86,10 @@ pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
     };
 
     quote! { {
-        // #![allow(noop_method_call)]
         #[allow(unused_imports)]
         use ::std::borrow::Borrow;
         let env: &mut ::jni::JNIEnv = #env;
+        #[allow(noop_method_call)]
         ::ez_jni::utils::create_object(#callee, #signature, #arguments, env)
             #error_handler
     } }
@@ -121,10 +121,10 @@ pub fn field(call: FieldCall) -> TokenStream {
             // Convert Rust value to JValue for argument
             let val = call.ty.convert_rvalue_to_jvalue(&val.to_token_stream());
             quote! { {
-                // #![allow(noop_method_call)]
                 #[allow(unused_imports)]
                 use ::std::borrow::Borrow;
                 let env: &mut ::jni::JNIEnv = #env;
+                #[allow(noop_method_call)]
                 #jni_method(#callee, #name, #ty_sig, #val, env)
             } }
         },
@@ -137,10 +137,10 @@ pub fn field(call: FieldCall) -> TokenStream {
             // Convert jvalue returned from call
             let call = call.ty.convert_jvalue_to_rvalue(&quote! { #jni_method(#callee, #name, #ty_sig, env) });
             quote! { {
-                // #![allow(noop_method_call)]
                 #[allow(unused_imports)]
                 use ::std::borrow::Borrow;
                 let env: &mut ::jni::JNIEnv = #env;
+                #[allow(noop_method_call)]
                 #call
             } }
         }
@@ -151,10 +151,10 @@ pub fn field(call: FieldCall) -> TokenStream {
 pub fn get_class(env: Env, class: Class) -> TokenStream {
     let class = class.to_jni_class_path();
     quote! { {
-        // #![allow(noop_method_call)]
         #[allow(unused_imports)]
         use ::std::borrow::Borrow;
         let env: &mut ::jni::JNIEnv = #env;
+        #[allow(noop_method_call)]
         env.find_class(#class)
             .unwrap_or_else(|err| ::ez_jni::__throw::handle_jni_call_error(err, env))
     } }

@@ -1,5 +1,6 @@
 use jni::{errors::Result as JniResult, objects::{JClass, JPrimitiveArray, JString, JThrowable}, sys::{jboolean, jbyte, jchar, jdouble, jfloat, jint, jlong, jshort, jsize}, JNIEnv};
 
+// TODO: doc
 pub trait Class {
     const CLASS_PATH: &'static str;
 }
@@ -42,6 +43,22 @@ impl<T> Class for Option<T>
 where T: Class {
     const CLASS_PATH: &'static str = T::CLASS_PATH;
 }
+
+// impl ClassCheck for JObject<'_> {
+//     fn type_class() -> Option<&'static str> { None }
+//     fn array_elem_class(slice: &[impl AsRef<Self>]) -> Cow<str> {
+//         for obj in slice {
+//             let obj = obj.as_ref();
+
+//             todo!()
+//         }
+
+//         // Could not determine the class of the elements
+//         Cow::Borrowed("java/lang/Object")
+//     }
+// }
+
+
 // TODO: when generic_const_items https://github.com/rust-lang/rust/issues/113521 is stablized, delete DynamicClass trait and use `const_format::formatcp!("[L{};", T::CLASS_PATH)`
 // impl<T> Class for [T]
 // where T: Class {

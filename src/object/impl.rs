@@ -110,7 +110,7 @@ impl ToObject for &str {
 }
 
 // Implementation for number types
-
+// Can't put condense this with macro_rules for some reason (???)
 impl FromObject<'_, '_, '_> for i8 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         check_object_class(object, Self::CLASS_PATH, env)?;

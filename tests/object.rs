@@ -72,13 +72,13 @@ fn implementations() { run_with_jnienv(|| {
         Box::<[Option<String>]>::from_object(&obj).unwrap().as_ref()
     );
     // Object Array
-    obj = ("java/lang/String", ["Hello".to_object(), "World".to_object()]).to_object();
+    obj = ["Hello".to_object(), "World".to_object()].to_object();
     assert_eq!(
         ["Hello", "World"],
         Box::<[String]>::from_object(&obj).unwrap().as_ref()
     );
     let _ = Box::<[JObject]>::from_object(&obj).unwrap();
-    obj = ("java/lang/String", ["Hello".to_object(), JObject::null()]).to_object();
+    obj = ["Hello".to_object(), JObject::null()].to_object();
     assert_eq!(
         [Some("Hello".to_string()), None],
         Box::<[Option<String>]>::from_object(&obj).unwrap().as_ref()
