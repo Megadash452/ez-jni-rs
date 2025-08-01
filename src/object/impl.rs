@@ -23,7 +23,7 @@ impl ToObject for JObject<'_> {
 }
 impl<'a, 'obj> FromObject<'a, 'obj, '_> for &'a JClass<'obj> {
     fn from_object_env(object: &'a JObject<'obj>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        check_object_class(object, JClass::CLASS_PATH, env)?;
+        check_object_class(object, &Self::class(), env)?;
         Ok(<&JClass>::from(object))
     }
 }
@@ -34,7 +34,7 @@ impl ToObject for JClass<'_> {
 }
 impl<'a, 'obj> FromObject<'a, 'obj, '_> for &'a JThrowable<'obj> {
     fn from_object_env(object: &'a JObject<'obj>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        check_object_class(object, JThrowable::CLASS_PATH, env)?;
+        check_object_class(object, &Self::class(), env)?;
         Ok(<&JThrowable>::from(object))
     }
 }
@@ -82,7 +82,7 @@ impl FromObject<'_, '_, '_> for String {
     /// Don't use this function, it only exist for compatibility.
     /// Use [`get_string()`][crate::utils::get_string] instead because you will mostly be using it with [`JString`][jni::objects::JString].
     fn from_object_env(object: &JObject, env: &mut JNIEnv) -> Result<Self, FromObjectError> {
-        check_object_class(object, String::CLASS_PATH, env)?;
+        check_object_class(object, &Self::class(), env)?;
         // Already checked that it is java.lang.String and is not NULL
         Ok(unsafe {
             env.get_string_unchecked(object.into())
@@ -113,7 +113,7 @@ impl ToObject for &str {
 // Can't put condense this with macro_rules for some reason (???)
 impl FromObject<'_, '_, '_> for i8 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        check_object_class(object, Self::CLASS_PATH, env)?;
+        check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.byteValue() -> byte))
     }
 }
@@ -124,7 +124,7 @@ impl ToObject for i8 {
 }
 impl FromObject<'_, '_, '_> for i16 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        check_object_class(object, Self::CLASS_PATH, env)?;
+        check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.shortValue() -> short))
     }
 }
@@ -135,7 +135,7 @@ impl ToObject for i16 {
 }
 impl FromObject<'_, '_, '_> for i32 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        check_object_class(object, Self::CLASS_PATH, env)?;
+        check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.intValue() -> int))
     }
 }
@@ -146,7 +146,7 @@ impl ToObject for i32 {
 }
 impl FromObject<'_, '_, '_> for i64 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        check_object_class(object, Self::CLASS_PATH, env)?;
+        check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.longValue() -> long))
     }
 }
@@ -157,7 +157,7 @@ impl ToObject for i64 {
 }
 impl FromObject<'_, '_, '_> for f32 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        check_object_class(object, Self::CLASS_PATH, env)?;
+        check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.floatValue() -> float))
     }
 }
@@ -168,7 +168,7 @@ impl ToObject for f32 {
 }
 impl FromObject<'_, '_, '_> for f64 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        check_object_class(object, Self::CLASS_PATH, env)?;
+        check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.doubleValue() -> double))
     }
 }
@@ -181,7 +181,7 @@ impl ToObject for f64 {
 // Implementation for unsigned number types
 impl FromObject<'_, '_, '_> for u8 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        check_object_class(object, Self::CLASS_PATH, env)?;
+        check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.byteValue() -> u8))
     }
 }
@@ -192,7 +192,7 @@ impl ToObject for u8 {
 }
 impl FromObject<'_, '_, '_> for u16 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        check_object_class(object, Self::CLASS_PATH, env)?;
+        check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.shortValue() -> u16))
     }
 }
@@ -203,7 +203,7 @@ impl ToObject for u16 {
 }
 impl FromObject<'_, '_, '_> for u32 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        check_object_class(object, Self::CLASS_PATH, env)?;
+        check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.intValue() -> u32))
     }
 }
@@ -214,7 +214,7 @@ impl ToObject for u32 {
 }
 impl FromObject<'_, '_, '_> for u64 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        check_object_class(object, Self::CLASS_PATH, env)?;
+        check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.longValue() -> u64))
     }
 }
@@ -228,7 +228,7 @@ impl ToObject for u64 {
 
 impl FromObject<'_, '_, '_> for bool {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        check_object_class(object, Self::CLASS_PATH, env)?;
+        check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.booleanValue() -> boolean))
     }
 }
@@ -240,7 +240,7 @@ impl ToObject for bool {
 
 impl FromObject<'_, '_, '_> for char {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        check_object_class(object, Self::CLASS_PATH, env)?;
+        check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.charValue() -> char))
     }
 }

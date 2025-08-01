@@ -498,6 +498,9 @@ fn struct_constructor(fields: &Fields) -> syn::Result<TokenStream> {
             Ok(if let Some(name) = attr.name {
                 // Use the "name" of the field attribute
                 get_field(name.to_string())?
+            } else if let Some(name) = &field.ident {
+                // Get name from Rust field convert it to camelCase for the Java field
+                get_field(name.to_string().to_case(Case::Camel))?
             } else if let Some(call) = attr.call {
                 // Call the Java method
                 let method = LitStr::new(&call.to_string(), call.span());
@@ -512,9 +515,6 @@ fn struct_constructor(fields: &Fields) -> syn::Result<TokenStream> {
                     ::ez_jni::utils::call_obj_method(&object, #method, #sig, &[], env)
                         .unwrap_or_else(|exception| ::ez_jni::__throw::panic_exception(exception))
                 })?
-            } else if let Some(name) = &field.ident {
-                // Convert the Rust field name to camelCase for the Java field
-                get_field(name.to_string().to_case(Case::Camel))?
             } else {
                 return Err(syn::Error::new(field.span(), "Field must have \"name\" or \"call\" properties if it is unnamed. See the 'field' attribute."))
             })

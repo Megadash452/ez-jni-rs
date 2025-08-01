@@ -63,7 +63,7 @@ where T: Primitive + for<'a, 'obj, 'local> FromObject<'a, 'obj, 'local> {
             // If the type requires no conversion, then T and T::JType are the same and are safe to transmute.
             None => unsafe { std::mem::transmute::<Box<[T::JType]>, Box<[T]>>(vec) }
         })
-    } else if array_class == format!("[L{};", T::CLASS_PATH) {
+    } else if array_class == format!("[L{};", T::class()) {
         // Array contains Objects of primitives (e.g. java/lang/Integer).
         // Must convert each object to the primitive
         get_object_array(obj, env)?

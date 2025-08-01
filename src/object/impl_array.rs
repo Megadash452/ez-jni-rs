@@ -26,7 +26,7 @@ use super::*;
 /// }
 /// ```
 pub trait FromArrayObject<'local>
-where Self: Sized + 'local {
+where Self: Class + Sized + 'local {
     /// Creates a `boxed slice` of a Type that can be created [from a Java Object][FromObject].
     /// 
     /// Users should NOT use this trait method.
@@ -103,7 +103,8 @@ where T: ToObject {
 }
 
 impl<'local, T> FromObject<'_, '_, 'local> for Vec<T>
-where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local> {
+where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local>,
+      T: Class {
     fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
         Ok(Box::<[T]>::from_object_env(object, env)?.into_vec())
     }

@@ -1,8 +1,15 @@
-use jni::{errors::Result as JniResult, objects::{JClass, JPrimitiveArray, JString, JThrowable}, sys::{jboolean, jbyte, jchar, jdouble, jfloat, jint, jlong, jshort, jsize}, JNIEnv};
+use std::borrow::Cow;
+use jni::{
+    errors::Result as JniResult, objects::{JClass, JObject, JPrimitiveArray, JString, JThrowable}, sys::{jboolean, jbyte, jchar, jdouble, jfloat, jint, jlong, jshort, jsize}, JNIEnv
+};
 
-// TODO: doc
+/// A trait that allows a *base* **Java Class** to be assigned to a *Rust Type*.
+/// 
+/// When converting [from an object][crate::FromObject],
+/// the *Rust Type* will expect the *Java Object* to be an instance of the **Class**.
 pub trait Class {
-    const CLASS_PATH: &'static str;
+    /// Returns the **Class** assigned to this *Type*.
+    fn class() -> Cow<'static, str>;
 }
 
 pub(crate) trait Primitive: Class + Copy + 'static {
@@ -17,32 +24,71 @@ pub(crate) trait Primitive: Class + Copy + 'static {
     const CONVERT_RUST_TO_JAVA: Option<fn(Self) -> Self::JType> = None;
 }
 
-impl Class for String {
-    const CLASS_PATH: &'static str = "java/lang/String";
+macro_rules! impl_class {
+    // Assign an UNIQUE Class
+    (for $ty:ty => $class:literal) => {
+        impl Class for $ty {
+            fn class() -> Cow<'static, str> {
+                Cow::Borrowed($class)
+            }
+        }
+    };
+    // Derive Class from another type
+    (for $ty:ty => $other:ty) => {
+        impl Class for $ty {
+            #[inline(always)]
+            fn class() -> Cow<'static, str> {
+                <$other as Class>::class()
+            }
+        }
+    };
+    // Same as Derive but with a generic
+    (<T> for $ty:ty => $other:ty) => {
+        impl<T> Class for $ty
+        where T: Class {
+            #[inline(always)]
+            fn class() -> Cow<'static, str> {
+                <$other as Class>::class()
+            }
+        }
+    };
 }
-impl Class for str {
-    const CLASS_PATH: &'static str = String::CLASS_PATH;
-}
-impl Class for &str {
-    const CLASS_PATH: &'static str = String::CLASS_PATH;
-}
-impl Class for JString<'_> {
-    const CLASS_PATH: &'static str = String::CLASS_PATH;
-}
-impl Class for JClass<'_> {
-    const CLASS_PATH: &'static str = "java/lang/Class";
-}
-impl Class for JThrowable<'_> {
-    const CLASS_PATH: &'static str = "java/lang/Exception";
-}
-impl<T> Class for &T
+
+impl_class!(for String => "java/lang/String");
+impl_class!(for str => String);
+impl_class!(for &str => String);
+impl_class!(for JString<'_> => String);
+impl_class!(for JObject<'_> => "java/lang/Object");
+impl_class!(for JClass<'_> => "java/lang/Class");
+impl_class!(for crate::JavaException => "java/lang/Throwable");
+impl_class!(for JThrowable<'_> => crate::JavaException);
+impl_class!(for std::io::Error => crate::JavaException);
+impl_class!(for dyn std::error::Error => crate::JavaException);
+impl_class!(for Box<dyn std::error::Error> => crate::JavaException);
+impl_class!(<T> for &T => T);
+impl_class!(<T> for Option<T> => T);
+
+impl<T> Class for [T]
 where T: Class {
-    const CLASS_PATH: &'static str = T::CLASS_PATH;
+    fn class() -> Cow<'static, str> {
+        let elem_class = T::class();
+        // If T is also an array, simply add a dimension.
+        Cow::Owned(if elem_class.contains('[') {
+            format!("[{elem_class}")
+        } else {
+            format!("[L{elem_class};")
+        })
+    }
 }
-impl<T> Class for Option<T>
+impl<const N: usize, T> Class for [T; N]
 where T: Class {
-    const CLASS_PATH: &'static str = T::CLASS_PATH;
+    #[inline(always)]
+    fn class() -> Cow<'static, str> {
+        <[T] as Class>::class()
+    }
 }
+impl_class!(<T> for Box<[T]> => [T]);
+impl_class!(<T> for Vec<T> => [T]);
 
 // impl ClassCheck for JObject<'_> {
 //     fn type_class() -> Option<&'static str> { None }
@@ -58,7 +104,6 @@ where T: Class {
 //     }
 // }
 
-
 // TODO: when generic_const_items https://github.com/rust-lang/rust/issues/113521 is stablized, delete DynamicClass trait and use `const_format::formatcp!("[L{};", T::CLASS_PATH)`
 // impl<T> Class for [T]
 // where T: Class {
@@ -73,42 +118,19 @@ where T: Class {
 //     const CLASS_PATH: &'static str = [T]::CLASS_PATH;
 // }
 
-impl Class for bool {
-    const CLASS_PATH: &'static str = "java/lang/Boolean";
-}
-impl Class for char {
-    const CLASS_PATH: &'static str = "java/lang/Character";
-}
-impl Class for i8 {
-    const CLASS_PATH: &'static str = "java/lang/Byte";
-}
-impl Class for i16 {
-    const CLASS_PATH: &'static str = "java/lang/Short";
-}
-impl Class for i32 {
-    const CLASS_PATH: &'static str = "java/lang/Integer";
-}
-impl Class for i64 {
-    const CLASS_PATH: &'static str = "java/lang/Long";
-}
-impl Class for f32 {
-    const CLASS_PATH: &'static str = "java/lang/Float";
-}
-impl Class for f64 {
-    const CLASS_PATH: &'static str = "java/lang/Double";
-}
-impl Class for u8 {
-    const CLASS_PATH: &'static str = i8::CLASS_PATH;
-}
-impl Class for u16 {
-    const CLASS_PATH: &'static str = i16::CLASS_PATH;
-}
-impl Class for u32 {
-    const CLASS_PATH: &'static str = i32::CLASS_PATH;
-}
-impl Class for u64 {
-    const CLASS_PATH: &'static str = i64::CLASS_PATH;
-}
+impl_class!(for bool => "java/lang/Boolean");
+impl_class!(for char => "java/lang/Character");
+
+impl_class!(for i8 => "java/lang/Byte");
+impl_class!(for i16 => "java/lang/Short");
+impl_class!(for i32 => "java/lang/Integer");
+impl_class!(for i64 => "java/lang/Long");
+impl_class!(for f32 => "java/lang/Float");
+impl_class!(for f64 => "java/lang/Double");
+impl_class!(for u8 => i8);
+impl_class!(for u16 => i16);
+impl_class!(for u32 => i32);
+impl_class!(for u64 => i64);
 
 impl Primitive for bool {
     const JNAME: &'static str = "boolean";
