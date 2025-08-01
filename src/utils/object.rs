@@ -78,7 +78,7 @@ pub fn from_object_get_field<'local>(object: &JObject<'_>, name: &'static str, t
 
 /// Helper function for the [`FromObject`][ez_jni::FromObject] [derive macro][ez_jni_macros::from_object] to check whether the *object*'s Class matches the struct's *target Class*.
 #[doc(hidden)]
-pub fn check_object_class(object: &JObject, target_class: &'static str, env: &mut JNIEnv<'_>) -> Result<(), FromObjectError> {
+pub fn check_object_class(object: &JObject, target_class: &str, env: &mut JNIEnv<'_>) -> Result<(), FromObjectError> {
     if object.is_null() {
         return Err(FromObjectError::Null);
     }

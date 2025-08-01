@@ -601,6 +601,9 @@ fn struct_constructor(fields: &Fields) -> syn::Result<TokenStream> {
         .map(|field| {
             let attr = FieldAttr::get_from_attrs(field)?;
             let field_ty = FieldType::new(field.ty.clone())?;
+            let class_attr = attr.class
+                .as_ref()
+                .map(|attr| &attr.class);
             // The type signature of the Java field.
             // Is determined by either the class attribute or the field_ty (in that order).
             let sig_ty = match &attr.class {
@@ -611,33 +614,33 @@ fn struct_constructor(fields: &Fields) -> syn::Result<TokenStream> {
                     }
                     class_attr.sig_type()
                 },
-                None => todo!(),
+                None => todo!("use guess_jvalue_type()"),
             };
 
             let get_field = |name: String| {
-                quote_spanned! {field.span()=>
+                convert_field_value(&field_ty, class_attr, &quote_spanned! {field.span()=>
                     ::ez_jni::utils::from_object_get_field(&object, #name, #sig_ty, env)?
-                }
+                })
             };
             
-            Ok(if let Some(name) = attr.name {
+            if let Some(name) = attr.name {
                 // Use the "name" of the field attribute
                 get_field(name.to_string())
+            } else if let Some(name) = &field.ident {
+                // Get name from Rust field convert it to camelCase for the Java field
+                get_field(name.to_string().to_case(Case::Camel))
             } else if let Some(call) = attr.call {
                 // Call the Java method
                 let method = LitStr::new(&call.to_string(), call.span());
                 let sig = format!("(){}", sig_ty.value());
                 
-                convert_field_value(&field_ty, attr.class.as_ref().map(|c| &c.class), &quote_spanned! {method.span()=>
+                convert_field_value(&field_ty, class_attr, &quote_spanned! {method.span()=>
                     ::ez_jni::utils::call_obj_method(&object, #method, #sig, &[], env)
                         .unwrap_or_else(|exception| ::ez_jni::__throw::panic_exception(exception))
-                })?
-            } else if let Some(name) = &field.ident {
-                // Convert the Rust field name to camelCase for the Java field
-                get_field(name.to_string().to_case(Case::Camel))
+                })
             } else {
-                return Err(syn::Error::new(field.span(), "Field must have \"name\" or \"call\" properties if it is unnamed. See the 'field' attribute."))
-            })
+                Err(syn::Error::new(field.span(), "Field must have \"name\" or \"call\" properties if it is unnamed. See the 'field' attribute."))
+            }
         })
         .filter_map(|res| res.map_err(|err| errors.push(err)).ok())
         .collect::<Box<[_]>>();

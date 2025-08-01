@@ -1,6 +1,7 @@
+use std::fmt::Display;
 use jni::{objects::{JClass, JObject, JThrowable, JValue, JValueGen, JValueOwned}, JNIEnv};
 use thiserror::Error;
-use crate::{utils::get_env, FromObject, FromObjectError, FromObjectOwned, ToObject};
+use crate::{utils::get_env, FromObject, FromObjectError, FromObjectOwned, Primitive, ToObject};
 
 /// Get a **Rust** value from a **Java** value.
 /// 
@@ -66,37 +67,55 @@ pub trait ToJValue {
 pub enum FromJValueError {
     #[error("Expected java type '{expected}', found java type '{actual}'")]
     IncorrectType {
-        actual: &'static str,
-        expected: &'static str,
+        actual: JValueType,
+        expected: JValueType,
     },
     #[error("{0}")]
     Object(#[from] FromObjectError)
 }
 
-static JTYPE_VOID:   &'static str = "void";
-static JTYPE_BOOL:   &'static str = "boolean";
-static JTYPE_CHAR:   &'static str = "char";
-static JTYPE_BYTE:   &'static str = "byte";
-static JTYPE_SHORT:  &'static str = "short";
-static JTYPE_INT:    &'static str = "int";
-static JTYPE_LONG:   &'static str = "long";
-static JTYPE_FLOAT:  &'static str = "float";
-static JTYPE_DOUBLE: &'static str = "double";
-static JTYPE_OBJECT: &'static str = "Object";
-
-/// Gets the [`JValue`] as a string (e.g. `"boolean"`).
-fn jvalue_to_str(val: JValue<'_, '_>) -> &'static str {
-    match val {
-        JValueGen::Void      => JTYPE_VOID,
-        JValueGen::Bool(_)   => JTYPE_BOOL,
-        JValueGen::Char(_)   => JTYPE_CHAR,
-        JValueGen::Byte(_)   => JTYPE_BYTE,
-        JValueGen::Short(_)  => JTYPE_SHORT,
-        JValueGen::Int(_)    => JTYPE_INT,
-        JValueGen::Long(_)   => JTYPE_LONG,
-        JValueGen::Float(_)  => JTYPE_FLOAT,
-        JValueGen::Double(_) => JTYPE_DOUBLE,
-        JValueGen::Object(_) => JTYPE_OBJECT,
+#[derive(Debug)]
+pub enum JValueType {
+    Void, Bool, Char, Byte, Short, Int, Long, Float, Double, Object
+}
+impl JValueType {
+    pub const fn from_jvalue(val: JValue<'_, '_>) -> Self {
+        match val {
+            JValue::Void      => Self::Void,
+            JValue::Bool(_)   => Self::Bool,
+            JValue::Char(_)   => Self::Char,
+            JValue::Byte(_)   => Self::Byte,
+            JValue::Short(_)  => Self::Short,
+            JValue::Int(_)    => Self::Int,
+            JValue::Long(_)   => Self::Long,
+            JValue::Float(_)  => Self::Float,
+            JValue::Double(_) => Self::Double,
+            JValue::Object(_) => Self::Object,
+        }
+    }
+    pub const fn to_str(&self) -> &'static str {
+        match self {
+            Self::Void   => "void",
+            Self::Bool   => <bool as Primitive>::JNAME,
+            Self::Char   => <char as Primitive>::JNAME,
+            Self::Byte   => <i8 as Primitive>::JNAME,
+            Self::Short  => <i16 as Primitive>::JNAME,
+            Self::Int    => <i32 as Primitive>::JNAME,
+            Self::Long   => <i64 as Primitive>::JNAME,
+            Self::Float  => <f32 as Primitive>::JNAME,
+            Self::Double => <f64 as Primitive>::JNAME,
+            Self::Object => "object",
+        }
+    }
+}
+impl From<JValue<'_, '_>> for JValueType {
+    fn from(val: JValue<'_, '_>) -> Self {
+        Self::from_jvalue(val)
+    }
+}
+impl Display for JValueType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.to_str())
     }
 }
 
@@ -110,8 +129,8 @@ impl FromJValue<'_, '_, '_> for () {
         match val {
             JValueGen::Void => Ok(()),
             val => Err(FromJValueError::IncorrectType {
-                actual: jvalue_to_str(val),
-                expected: JTYPE_VOID,
+                actual: JValueType::from(val),
+                expected: JValueType::Void,
             })
         }
     }
@@ -132,8 +151,8 @@ impl FromJValue<'_, '_, '_> for bool {
             JValueGen::Bool(b) => Ok(crate::utils::jboolean_to_bool(b)),
             JValueGen::Object(object) => Ok(Self::from_object_env(object, env)?),
             val => Err(FromJValueError::IncorrectType {
-                actual: jvalue_to_str(val),
-                expected: JTYPE_BOOL,
+                actual: JValueType::from(val),
+                expected: JValueType::Bool,
             })
         }
     }
@@ -152,8 +171,8 @@ impl FromJValue<'_, '_, '_> for char {
             JValueGen::Char(c) => Ok(crate::utils::jchar_to_char(c)),
             JValueGen::Object(object) => Ok(Self::from_object_env(object, env)?),
             val => Err(FromJValueError::IncorrectType {
-                actual: jvalue_to_str(val),
-                expected: JTYPE_CHAR,
+                actual: JValueType::from(val),
+                expected: JValueType::Char,
             })
         }
     }
@@ -167,15 +186,15 @@ impl ToJValue for char {
 /// Implements the [`FromJValue`] and [`ToJValue`] traits with simple primitive conversion.
 /// If value was [`JObject`] in [`FromJValue`], this calls the [`FromObject`] implementation.
 macro_rules! map_primitive_impl {
-    (for $ty:ty, $jvariant:ident, $jty:ident, expected $expected:ident) => {
+    (for $ty:ty, $jvariant:ident, $jty:ident) => {
         impl FromJValue<'_, '_, '_> for $ty {
             fn from_jvalue_env(val: ::jni::objects::JValue<'_, '_>, env: &mut ::jni::JNIEnv<'_>) -> Result<Self, FromJValueError> {
                 match val {
                     ::jni::objects::JValueGen::$jvariant(val) => Ok(val as Self),
                     ::jni::objects::JValueGen::Object(object) => Ok(Self::from_object_env(object, env)?),
                     val => Err(FromJValueError::IncorrectType {
-                        actual: jvalue_to_str(val),
-                        expected: $expected,
+                        actual: JValueType::from(val),
+                        expected: JValueType::$jvariant,
                     })
                 }
             }
@@ -189,16 +208,16 @@ macro_rules! map_primitive_impl {
     };
 }
 
-map_primitive_impl!(for i8,  Byte,   jbyte,   expected JTYPE_BYTE);
-map_primitive_impl!(for i16, Short,  jshort,  expected JTYPE_SHORT);
-map_primitive_impl!(for i32, Int,    jint,    expected JTYPE_INT);
-map_primitive_impl!(for i64, Long,   jlong,   expected JTYPE_LONG);
-map_primitive_impl!(for u8,  Byte,   jbyte,   expected JTYPE_BYTE);
-map_primitive_impl!(for u16, Short,  jshort,  expected JTYPE_SHORT);
-map_primitive_impl!(for u32, Int,    jint,    expected JTYPE_INT);
-map_primitive_impl!(for u64, Long,   jlong,   expected JTYPE_LONG);
-map_primitive_impl!(for f32, Float,  jfloat,  expected JTYPE_FLOAT);
-map_primitive_impl!(for f64, Double, jdouble, expected JTYPE_DOUBLE);
+map_primitive_impl!(for i8,  Byte,   jbyte);
+map_primitive_impl!(for i16, Short,  jshort);
+map_primitive_impl!(for i32, Int,    jint);
+map_primitive_impl!(for i64, Long,   jlong);
+map_primitive_impl!(for u8,  Byte,   jbyte);
+map_primitive_impl!(for u16, Short,  jshort);
+map_primitive_impl!(for u32, Int,    jint);
+map_primitive_impl!(for u64, Long,   jlong);
+map_primitive_impl!(for f32, Float,  jfloat);
+map_primitive_impl!(for f64, Double, jdouble);
 
 //  -- Objects
 
@@ -209,8 +228,8 @@ macro_rules! impl_from_jvalue_env {
             match val {
                 ::jni::objects::JValue::Object(object) => <Self as crate::FromObject>::from_object_env(object, env).map_err(|e| e.into()),
                 val => Err(FromJValueError::IncorrectType {
-                    actual: jvalue_to_str(val),
-                    expected: JTYPE_OBJECT,
+                    actual: JValueType::from(val),
+                    expected: JValueType::Object,
                 })
             }
         }
@@ -274,8 +293,8 @@ impl<'obj> FromJValueOwned<'obj> for JObject<'obj> {
         match val {
             ::jni::objects::JValueGen::Object(object) => Self::from_object_owned_env(object, env).unwrap(),
             val => panic!("{}", FromJValueError::IncorrectType {
-                actual: jvalue_to_str(val.borrow()),
-                expected: JTYPE_OBJECT,
+                actual: JValueType::from(val.borrow()),
+                expected: JValueType::Object,
             })
         }
     }
@@ -301,8 +320,8 @@ where T: FromJValueOwned<'obj> {
         let object = match val {
             ::jni::objects::JValueGen::Object(object) => object,
             val => panic!("{}", FromJValueError::IncorrectType {
-                actual: jvalue_to_str(val.borrow()),
-                expected: JTYPE_OBJECT,
+                actual: JValueType::from(val.borrow()),
+                expected: JValueType::Object,
             })
         };
         if object.is_null() {

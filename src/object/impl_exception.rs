@@ -1,4 +1,4 @@
-use crate::{__throw::get_jni_error_msg, Class as _};
+use crate::{__throw::get_jni_error_msg};
 use ez_jni_macros::new;
 use jni::objects::GlobalRef;
 use std::{io, fmt::{Debug, Display}};
@@ -47,19 +47,16 @@ impl Debug for JavaException {
     }
 }
 impl<'local> FromObject<'_, '_, '_> for JavaException {
-    fn from_object_env(
-        object: &'_ JObject<'_>,
-        env: &mut JNIEnv<'_>,
-    ) -> Result<Self, FromObjectError> {
+    fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         let class = call!(env=> call!(env=> object.getClass() -> Class).getName() -> String);
 
         // Check that Object is an Exception
-        if !env.is_instance_of(object, JThrowable::CLASS_PATH)
+        if !env.is_instance_of(object, <Self as Class>::class())
             .map_err(|err| FromObjectError::Other(format!("Error calling 'instanceof': {}", get_jni_error_msg(err, env))))?
         {
             return Err(FromObjectError::ClassMismatch {
                 obj_class: class,
-                target_class: Some(JThrowable::CLASS_PATH.to_string()),
+                target_class: Some(<Self as Class>::class().to_string()),
             });
         }
 

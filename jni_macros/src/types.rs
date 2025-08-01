@@ -783,6 +783,7 @@ pub struct NestedPath {
     pub final_class: Ident
 }
 impl Class {
+    #[allow(unused)]
     /// Creates a [`Class`] from a known *Rust Type* that can represent an object Class.
     pub fn from_rust_type(ty: ClassRustType, span: Span) -> Self {
         Self::Short(Ident::new(&ty.to_string(), span))

@@ -5,7 +5,7 @@ mod impl_exception;
 use jni::{objects::{JClass, JObject, JThrowable}, JNIEnv};
 use thiserror::Error;
 use ez_jni_macros::call;
-use crate::utils::get_env;
+use crate::{utils::get_env, Class};
 
 pub use impl_exception::JavaException;
 pub use impl_array::{FromArrayObject, ToArrayObject};
@@ -83,7 +83,7 @@ pub enum FromObjectError {
 /// }
 /// ```
 pub trait FromObject<'a, 'obj, 'local>
-where Self: Sized {
+where Self: Class + Sized {
     /// Construct a [`Self`] by reading data from a *Java Object*.
     /// 
     /// Will [`panic!`] if any of the underlying JNI calls fail.
