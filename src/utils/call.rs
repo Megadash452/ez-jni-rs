@@ -38,11 +38,11 @@ impl ClassRepr<'_, '_> {
 /// This functions returns the *value returned* by the method, or an [`Exception`][JavaException] if the method *throws*.
 /// If an error other than an [`Exception`][JavaException] occurs (or is [`MethodNotFound`](https://docs.oracle.com/javaee/7/api/javax/el/MethodNotFoundException.html)),
 /// the function will `panic!`.
-pub fn call_obj_method<'local>(object: &JObject<'_>, name: &'static str, sig: &'static str, args: &[JValue], env: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, JavaException> {
+pub fn call_obj_method<'local>(object: &JObject<'_>, name: &'static str, sig: &str, args: &[JValue], env: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, JavaException> {
     handle_call_error(env.call_method(object, name, sig, args), Callee::Object(object), name, sig, env)
 }
 /// Same as [`call_obj_method()`] but for `static` methods.
-pub fn call_static_method<'local>(class: ClassRepr<'_, '_>, name: &'static str, sig: &'static str, args: &[JValue], env: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, JavaException> {
+pub fn call_static_method<'local>(class: ClassRepr<'_, '_>, name: &'static str, sig: &str, args: &[JValue], env: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, JavaException> {
     handle_call_error(match class {
         ClassRepr::String(class_path) => {
             let class = env.find_class(class_path)
@@ -56,7 +56,7 @@ pub fn call_static_method<'local>(class: ClassRepr<'_, '_>, name: &'static str, 
 /// Creates a new [`Object`][JObject] by calling a *constructor* of a *class*.
 /// 
 /// This is to [`call_static_method()`], but does not take a *method name* and uses a different **JNI Call** under the hood.
-pub fn create_object<'local>(class: ClassRepr<'_, '_>, sig: &'static str, args: &[JValue], env: &mut JNIEnv<'local>) -> Result<JObject<'local>, JavaException> {
+pub fn create_object<'local>(class: ClassRepr<'_, '_>, sig: &str, args: &[JValue], env: &mut JNIEnv<'local>) -> Result<JObject<'local>, JavaException> {
     handle_call_error(match class {
         ClassRepr::String(class) => env.new_object(class, sig, args),
         ClassRepr::Object(class) => env.new_object(class, sig, args),
@@ -85,7 +85,7 @@ fn handle_call_error<'local, T>(
     call_result: JNIResult<T>,
     callee: Callee<'_, '_>,
     method_name: &'static str,
-    method_sig: &'static str,
+    method_sig: &str,
     env: &mut JNIEnv<'local>
 ) -> Result<T, JavaException> {
     #[cfg(debug_assertions)]
@@ -132,12 +132,12 @@ fn handle_call_error<'local, T>(
 }
 
 /// Generates the **name** and **signature** of the *Getter Method* that is called if a Field was not found.
-pub(super) fn getter_name_and_sig(field_name: &'static str, ty: &'static str) -> (String, String) { (
+pub fn getter_name_and_sig(field_name: &'static str, ty: &str) -> (String, String) { (
     format!("get{}", first_char_uppercase(field_name)),
     format!("(){ty}")
 ) }
 /// Generates the **name** and **signature** of the *Setter Method* that is called if a Field was not found.
-fn setter_name_and_sig(field_name: &'static str, ty: &'static str) -> (String, String) { (
+fn setter_name_and_sig(field_name: &'static str, ty: &str) -> (String, String) { (
     format!("set{}", first_char_uppercase(field_name)),
     format!("({ty})V")
 ) }
@@ -241,7 +241,7 @@ pub fn set_static_field<'local>(class: ClassRepr<'_, '_>, name: &'static str, ty
 /// However, this only happens when building in DEBUG mode because this involves *A LOT* of Java calls.
 pub(super) fn field_helper<'local>(
     name: &'static str,
-    ty: &'static str,
+    ty: &str,
     field_op: impl FnOnce(&mut JNIEnv<'local>) -> JNIResult<JValueOwned<'local>>,
     method_op: impl FnOnce(&mut JNIEnv<'local>) -> JNIResult<JValueOwned<'local>>,
     get_class: impl FnOnce(&mut JNIEnv<'local>) -> JNIResult<JClass<'local>>,

@@ -83,7 +83,7 @@ pub enum FromObjectError {
 /// }
 /// ```
 pub trait FromObject<'a, 'obj, 'local>
-where Self: Class + Sized {
+where Self: Sized {
     /// Construct a [`Self`] by reading data from a *Java Object*.
     /// 
     /// Will [`panic!`] if any of the underlying JNI calls fail.

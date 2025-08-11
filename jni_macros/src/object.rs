@@ -21,12 +21,15 @@ pub fn derive_struct(mut st: ItemStruct) -> syn::Result<TokenStream> {
     let st_ctor = struct_constructor(&st.fields)?;
 
     Ok(quote! {
+        impl <#st_generic_params> ::ez_jni::FromJValue<'_, '_, #env_lt> for #st_ident #st_generics {
+            ::ez_jni::impl_from_jvalue_env!(<'_, '_, #env_lt>);
+        }
         impl <#st_generic_params> ::ez_jni::FromObject<'_, '_, #env_lt> for #st_ident #st_generics {
             fn from_object_env(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<#env_lt>) -> ::std::result::Result<Self, ::ez_jni::FromObjectError> {
                 #[allow(unused_imports)]
                 use ::std::borrow::Borrow;
 
-                ::ez_jni::utils::check_object_class(object, <Self as ::ez_jni::Class>::CLASS_PATH, env)?;
+                ::ez_jni::utils::check_object_class(object, &<Self as ::ez_jni::Class>::class(), env)?;
                 Ok(Self #st_ctor)
             }
         }
@@ -41,7 +44,9 @@ pub fn derive_struct(mut st: ItemStruct) -> syn::Result<TokenStream> {
             }
         }
         impl <#st_generic_params> ::ez_jni::Class for #st_ident #st_generics {
-            const CLASS_PATH: &'static str = #class;
+            fn class() -> ::std::borrow::Cow<'static, str> {
+                ::std::borrow::Cow::Borrowed(#class)
+            }
         }
     })
 }
@@ -61,14 +66,15 @@ pub fn derive_enum(mut enm: ItemEnum) -> syn::Result<TokenStream> {
         .map(|class| class.to_jni_class_path());
 
     let base_class_check = base_class.as_ref()
-        .map(|_| quote_spanned! {enm.ident.span()=>
-            if !env.is_instance_of(object, <Self as ::ez_jni::Class>::CLASS_PATH).unwrap() {
+        .map(|_| quote_spanned! {enm.ident.span()=> {
+            let class = <Self as ::ez_jni::Class>::class();
+            if !env.is_instance_of(object, &class).unwrap() {
                 return Err(::ez_jni::FromObjectError::ClassMismatch {
                     obj_class: __class,
-                    target_class: Some(<Self as ::ez_jni::Class>::CLASS_PATH.to_string())
+                    target_class: Some(::std::borrow::Cow::into_owned(class))
                 })
             }
-        })
+        } })
         .unwrap_or(TokenStream::new());
 
     let class_checks = construct_variants(enm.variants.iter_mut())
@@ -87,15 +93,12 @@ pub fn derive_enum(mut enm: ItemEnum) -> syn::Result<TokenStream> {
     let base_class_impl = base_class.as_ref()
         .map(|class| quote! {
             impl <#enm_generic_params> ::ez_jni::Class for #enm_ident #enm_generics {
-                const CLASS_PATH: &'static str = #class;
+                fn class() -> ::std::borrow::Cow<'static, str> {
+                    ::std::borrow::Cow::Borrowed(#class)
+                }
             }
         })
         .unwrap_or(TokenStream::new());
-    let base_class = if base_class.is_some() {
-        quote_spanned! {enm.ident.span()=> Some(<#enm_ident as ::ez_jni::Class>::CLASS_PATH) }
-    } else {
-        quote_spanned! {enm.ident.span()=> None }
-    };
 
     Ok(quote! {
         impl <#enm_generic_params> ::ez_jni::FromObject<'_, '_, #env_lt> for #enm_ident #enm_generics {
@@ -121,11 +124,12 @@ pub fn derive_enum(mut enm: ItemEnum) -> syn::Result<TokenStream> {
         }
         impl <#enm_generic_params> ::ez_jni::FromArrayObject<#env_lt> for #enm_ident #enm_generics {
             #[inline(always)]
-            fn from_object_array_helper(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<'local>) -> ::std::result::Result<::std::boxed::Box<[Self]>, ::ez_jni::FromObjectError> {
-                ::ez_jni::utils::get_object_array(object, #base_class, env)?
-                    .into_iter()
-                    .map(|obj| <#enm_ident as ::ez_jni::FromObject>::from_object_env(&obj, env))
-                    .collect()
+            fn from_array_object(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<'local>) -> ::std::result::Result<::std::boxed::Box<[Self]>, ::ez_jni::FromObjectError> {
+                ::ez_jni::utils::get_object_array_converted(object, |obj, env| <Self as ::ez_jni::FromObject>::from_object_env(&obj, env), env)
+            }
+            #[inline(always)]
+            fn from_array_object_nullable(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<'local>) -> ::std::result::Result<::std::boxed::Box<[::std::option::Option<Self>]>, ::ez_jni::FromObjectError> {
+                ::ez_jni::utils::get_object_array_converted(object, |obj, env| <::std::option::Option::<Self> as ::ez_jni::FromObject>::from_object_env(&obj, env), env)
             }
         }
         #base_class_impl
@@ -275,6 +279,7 @@ impl Parse for AttributeProps {
 ///
 /// `P` is just the punctuation type; don't worry about it.
 fn get_local_lifetime<P: Default>(item: Either<&ItemStruct, &ItemEnum>, generics: &mut Punctuated<GenericParam, P>) -> Lifetime {
+    // TODO: return ellided lifetime ('_) instead if not found
     static DEFAULT: &str = "local";
     /// Find the lifetiem in the struct/enum's generics
     fn find_local(generics: &Generics) -> Option<Lifetime> {
@@ -553,19 +558,17 @@ fn convert_field_value(ty: &FieldType, class_attr: Option<&Class>, value: &Token
         Some(Type::Assertive(InnerType::Object(class)))
         | Some(Type::Option { ty: OptionType::Object(class), .. })
         if class.is_jobject() => {
-            let rust_type = class.rust_type();
-            let rust_type_tokens = Ident::new(&rust_type.to_string(), class.span());
             match class.rust_type() {
                 // JObject and JThrowable must use the *field::class* attribute
                 ClassRustType::JObject | ClassRustType::JThrowable => match class_attr {
                     // Use FromObjectClass for JObject and JThrowable
                     Some(class) => Ok({
                         let class = class.to_jni_class_path();
-                        quote_spanned! {value.span()=> <#rust_type_tokens ::ez_jni::utils::FromJValueClass>::from_jvalue_class(#value, #class, env) }
+                        quote_spanned! {value.span()=> <#ty as ::ez_jni::utils::FromJValueClass>::from_jvalue_class(#value, #class, env) }
                     }),
-                    None => Err(syn::Error::new(ty.span(), "Field must have \"class\" property if it is JObject"))
+                    None => Err(syn::Error::new(ty.span(), "Field must have \"class\" property if it is JObject or JThrowable"))
                 },
-                _ => Ok(quote_spanned! {value.span()=> <#rust_type_tokens ::ez_jni::FromJValueOwned>::from_jvalue_owned_env(#value, env) })
+                _ => Ok(quote_spanned! {value.span()=> <#ty as ::ez_jni::FromJValueOwned>::from_jvalue_owned_env(#value, env) })
             }
         }
         // Everything else uses the regular FromJValue or FromObject
@@ -573,11 +576,11 @@ fn convert_field_value(ty: &FieldType, class_attr: Option<&Class>, value: &Token
             // Use FromObject
             Some(_) => quote_spanned! {ty.span() =>
                 <#ty as ::ez_jni::FromObject>::from_object_env(
-                    <&JObject<'_> as ::ez_jni::FromJValue>::from_jvalue_env((#value).borrow(), env),
+                    <&JObject<'_> as ::ez_jni::FromJValue>::from_jvalue_env((#value).borrow(), env).unwrap(),
                 env).unwrap()
             },
             // Use FromJValue
-            None => quote_spanned! {ty.span()=> <#ty as ::ez_jni::FromJValue>::from_jvalue_env((#value).borrow(), env) }
+            None => quote_spanned! {ty.span()=> <#ty as ::ez_jni::FromJValue>::from_jvalue_env((#value).borrow(), env).unwrap() }
         })
     }
 }
@@ -612,9 +615,12 @@ fn struct_constructor(fields: &Fields) -> syn::Result<TokenStream> {
                     if let Some(field_ty) = &field_ty.java_type {
                         class_attr.match_ty(field_ty)?;
                     }
-                    class_attr.sig_type()
+                    class_attr.sig_type().to_token_stream()
                 },
-                None => todo!("use guess_jvalue_type()"),
+                // Get the field signature at runtime
+                None => quote_spanned! {field_ty.span()=>
+                    &::ez_jni::utils::guess_sig_from_jvalue_type::<#field_ty>(env)
+                }
             };
 
             let get_field = |name: String| {
@@ -626,18 +632,19 @@ fn struct_constructor(fields: &Fields) -> syn::Result<TokenStream> {
             if let Some(name) = attr.name {
                 // Use the "name" of the field attribute
                 get_field(name.to_string())
-            } else if let Some(name) = &field.ident {
-                // Get name from Rust field convert it to camelCase for the Java field
-                get_field(name.to_string().to_case(Case::Camel))
             } else if let Some(call) = attr.call {
                 // Call the Java method
                 let method = LitStr::new(&call.to_string(), call.span());
-                let sig = format!("(){}", sig_ty.value());
+                // Transform the obtained field signature to a function signature
+                let sig = quote_spanned! {field_ty.span()=> &format!("(){}", #sig_ty) };
                 
                 convert_field_value(&field_ty, class_attr, &quote_spanned! {method.span()=>
                     ::ez_jni::utils::call_obj_method(&object, #method, #sig, &[], env)
                         .unwrap_or_else(|exception| ::ez_jni::__throw::panic_exception(exception))
                 })
+            } else if let Some(name) = &field.ident {
+                // Get name from Rust field convert it to camelCase for the Java field
+                get_field(name.to_string().to_case(Case::Camel))
             } else {
                 Err(syn::Error::new(field.span(), "Field must have \"name\" or \"call\" properties if it is unnamed. See the 'field' attribute."))
             }

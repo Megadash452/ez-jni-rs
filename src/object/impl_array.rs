@@ -26,7 +26,7 @@ use super::*;
 /// }
 /// ```
 pub trait FromArrayObject<'local>
-where Self: Class + Sized + 'local {
+where Self: Sized + 'local {
     /// Creates a `boxed slice` of a Type that can be created [from a Java Object][FromObject].
     /// 
     /// Users should NOT use this trait method.

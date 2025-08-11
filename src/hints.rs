@@ -15,7 +15,7 @@ use crate::eprintln as println;
 /// This function makes *A LOT* Java calls, so it can be quite slow,
 /// so it only exists in DEBUG builds.
 #[cfg(debug_assertions)]
-pub(crate) fn check_method_existence(class: JClass<'_>, method_name: &'static str, method_sig: &'static str, env: &mut JNIEnv<'_>) {
+pub(crate) fn check_method_existence(class: JClass<'_>, method_name: &'static str, method_sig: &str, env: &mut JNIEnv<'_>) {
     // Find all the classes that this Class is a descendant of (including itself)
     let mut classes = vec![class];
     while let Some(class) = env.get_superclass(classes.last().unwrap())
@@ -103,7 +103,7 @@ pub(crate) fn check_method_existence(class: JClass<'_>, method_name: &'static st
 /// 
 /// This function makes *A LOT* Java calls, so it can be quite slow,
 /// so it only exists in DEBUG builds.
-pub(crate) fn check_field_existence(class: JClass<'_>, field_name: &'static str, field_ty: &'static str, env: &mut JNIEnv<'_>) -> JNIResult<()> {
+pub(crate) fn check_field_existence(class: JClass<'_>, field_name: &'static str, field_ty: &str, env: &mut JNIEnv<'_>) -> JNIResult<()> {
     // Find all the classes that this Class is a descendant of (including itself)
     let mut classes = vec![class];
     while let Some(class) = env.get_superclass(classes.last().unwrap())? {

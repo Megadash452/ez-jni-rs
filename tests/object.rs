@@ -1,7 +1,7 @@
 mod common;
 
-use ez_jni::{Class as _, FromObject, ToObject, call, new, utils::create_object_array_converted};
-use jni::objects::{JClass, JObject};
+use ez_jni::{call, new, utils::create_object_array_converted, Class, FromObject, ToObject};
+use jni::{objects::{JObject, JValue}, JNIEnv};
 
 use crate::common::run_with_jnienv;
 
@@ -213,9 +213,19 @@ struct IntWrapper(i32);
 struct MyWrapperClass {
     member: IntWrapper
 }
+impl ::ez_jni::FromJValue<'_, '_, '_> for IntWrapper {
+    fn from_jvalue_env(val: JValue<'_, '_>, env: &mut JNIEnv<'_>) -> Result<Self, ez_jni::FromJValueError> {
+        Ok(Self(i32::from_jvalue_env(val, env)?))
+    }
+}
 impl FromObject<'_, '_, '_> for IntWrapper {
-    fn from_object_env(object: &'_ JObject<'_>, env: &mut jni::JNIEnv<'_>) -> Result<Self, ez_jni::FromObjectError> {
-        Self(i32::from_object_env(object, env)?)
+    fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Self, ez_jni::FromObjectError> {
+        Ok(Self(i32::from_object_env(object, env)?))
+    }
+}
+impl Class for IntWrapper {
+    fn class() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("java/lang/Integer")
     }
 }
 
@@ -282,17 +292,15 @@ fn from_object() { run_with_jnienv(|| {
     // Array
     object = create_object_array_converted(
         &[new!(me.test.Test(int(1))), new!(me.test.Test(int(2))), new!(me.test.Test(int(3)))],
-        MyClass::CLASS_PATH,
         |obj, env| obj.to_object_env(env),
     ez_jni::utils::get_env());
     assert_eq!(
-        [MyClass { member_field: 1 }, MyClass { member_field: 2 }, MyClass { member_field:3 }],
+        [MyClass { member_field: 1 }, MyClass { member_field: 2 }, MyClass { member_field: 3 }],
         Box::<[MyClass]>::from_object(&object).unwrap().as_ref()
     );
     // Array Option
     object = create_object_array_converted(
         &[None, Some(new!(me.test.Test(int(1)))), None],
-        MyClass::CLASS_PATH,
         |obj, env| obj.to_object_env(env),
     ez_jni::utils::get_env());
     assert_eq!(
@@ -302,11 +310,10 @@ fn from_object() { run_with_jnienv(|| {
     // Option Array
     object = Some(create_object_array_converted(
         &[new!(me.test.Test(int(1))), new!(me.test.Test(int(2))), new!(me.test.Test(int(3)))],
-        MyClass::CLASS_PATH,
         |obj, env| obj.to_object_env(env),
     ez_jni::utils::get_env())).to_object();
     assert_eq!(
-        Some(Box::new([MyClass { member_field: 1 }, MyClass { member_field: 2 }, MyClass { member_field:3 }]) as Box<[_]>),
+        Some(Box::new([MyClass { member_field: 1 }, MyClass { member_field: 2 }, MyClass { member_field: 3 }]) as Box<[_]>),
         Option::<Box<[MyClass]>>::from_object(&object).unwrap()
     );
     // Multidimensional Array
@@ -315,8 +322,7 @@ fn from_object() { run_with_jnienv(|| {
             [new!(me.test.Test(int(1))), new!(me.test.Test(int(2))), new!(me.test.Test(int(3)))],
             [new!(me.test.Test(int(4))), new!(me.test.Test(int(5))), new!(me.test.Test(int(6)))],
         ],
-        &format!("[L{};", MyClass::CLASS_PATH),
-        |obj, env| ("me/test/Test", obj).to_object_env(env),
+        |objs, env| objs.to_object_env(env),
     ez_jni::utils::get_env());
     assert_eq!(
         Box::<[Box<[MyClass]>]>::from_object(&object).unwrap().as_ref(),
@@ -331,8 +337,7 @@ fn from_object() { run_with_jnienv(|| {
             [None, Some(new!(me.test.Test(int(1)))), None],
             [Some(new!(me.test.Test(int(2)))), None, Some(new!(me.test.Test(int(3))))],
         ],
-    &format!("[L{};", MyClass::CLASS_PATH),
-    |obj, env| obj.to_object_env(env),
+    |objs, env| objs.to_object_env(env),
         ez_jni::utils::get_env(),
     );
     assert_eq!(
@@ -348,7 +353,6 @@ fn from_object() { run_with_jnienv(|| {
             None,
             Some([new!(me.test.Test(int(3))), new!(me.test.Test(int(4)))]),
         ],
-        &format!("[L{};", MyClass::CLASS_PATH),
         |obj, env| obj.to_object_env(env),
         ez_jni::utils::get_env(),
     );

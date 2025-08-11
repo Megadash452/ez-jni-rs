@@ -1,10 +1,12 @@
 //! Contains helper functions for the macros in `/jni_macros/src/object.rs`.
+use std::borrow::Cow;
+
 use jni::{
-    objects::{JObject, JThrowable, JValueOwned},
+    objects::{JObject, JThrowable, JValueOwned, JValue},
     errors::{Error as JNIError},
     JNIEnv
 };
-use crate::{call, FromJValueOwned, FromObject, FromObjectError, __throw::try_catch};
+use crate::{call, Class, FromJValue, FromJValueError, FromJValueOwned, FromObject, FromObjectError, JValueType, __throw::try_catch};
 use super::{field_helper, getter_name_and_sig, FieldNotFound, MethodNotFound};
 
 /// Trait that allows instantiating an [`Object`][crate::FromObjectOwned] *Rust type* [`From a JValue`][crate::FromJValue] while also
@@ -16,22 +18,22 @@ use super::{field_helper, getter_name_and_sig, FieldNotFound, MethodNotFound};
 #[doc(hidden)]
 pub trait FromJValueClass<'obj>: FromJValueOwned<'obj> {
     /// Same as [`from_jvalue_owned_env`][FromJValueOwned::from_jvalue_owned_env()], but also checks that the object is an instance of a specified **Class**.
-    fn from_jvalue_class(val: JValueOwned<'obj>, class: &'static str, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError>;
+    fn from_jvalue_class(val: JValueOwned<'obj>, class: &'static str, env: &mut JNIEnv<'_>) -> Self;
 }
 impl<'obj> FromJValueClass<'obj> for JObject<'obj> {
-    fn from_jvalue_class(val: JValueOwned<'obj>, class: &'static str, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
+    fn from_jvalue_class(val: JValueOwned<'obj>, class: &'static str, env: &mut JNIEnv<'_>) -> Self {
         let object = JObject::from_jvalue_owned_env(val, env);
-        check_object_class(&object, class, env)?;
-        Ok(object)
+        check_object_class(&object, class, env).unwrap();
+        object
     }
 }
 impl<'obj> FromJValueClass<'obj> for JThrowable<'obj> {
-    fn from_jvalue_class(val: JValueOwned<'obj>, class: &'static str, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
+    fn from_jvalue_class(val: JValueOwned<'obj>, class: &'static str, env: &mut JNIEnv<'_>) -> Self {
         let object = JObject::from_jvalue_owned_env(val, env);
         // Call from_object() to perform checks
-        <&Self as FromObject>::from_object(&object)?;
-        check_object_class(&object, class, env)?;
-        Ok(Self::from(object))
+        <&Self as FromObject>::from_object(&object).unwrap();
+        check_object_class(&object, class, env).unwrap();
+        Self::from(object)
     }
 }
 
@@ -42,7 +44,7 @@ impl<'obj> FromJValueClass<'obj> for JThrowable<'obj> {
 /// 
 /// This is used by the derive macros of [`FromObject`][crate::FromObject] and [`FromObject`][crate::FromException].
 #[doc(hidden)]
-pub fn from_object_get_field<'local>(object: &JObject<'_>, name: &'static str, ty: &'static str, env: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, FromObjectError> {
+pub fn from_object_get_field<'local>(object: &JObject<'_>, name: &'static str, ty: &str, env: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, FromObjectError> {
     field_helper(name, ty,
         |env| env.get_field(object, name, ty),
         |env| {
@@ -74,6 +76,44 @@ pub fn from_object_get_field<'local>(object: &JObject<'_>, name: &'static str, t
                 err => crate::__throw::handle_jni_call_error(err, env)
             }
         })
+}
+
+/// Guesses the [`Type`][crate::JValueType] that a `T` expects to find in a [`JValue`][jni::objects::JValue].
+/// Returns a *Java Type signature* with the [`Class`] if thje signature is for Object.
+/// 
+/// This is done attempting a call to [`FromJValue::from_jvalue_env()`] with a `Boolean(true)`
+/// and checking the *expected type* in the [`FromJValueError`][crate::FromJValueError].
+/// 
+/// [`JNIEnv`] is not used but it needs to be passed to [`FromJValue::from_jvalue_env()`].
+#[doc(hidden)]
+pub fn guess_sig_from_jvalue_type<T>(env: &mut JNIEnv<'_>) -> Cow<'static, str>
+where T: for<'a, 'obj, 'local> FromJValue<'a, 'obj, 'local> + Class {
+    match T::from_jvalue_env(JValue::Bool(1), env) {
+        Ok(_) => Cow::Borrowed("Z"),
+        Err(FromJValueError::Object(_)) => panic!("Encountered FromObjectError when JValue is Bool; FromJValue implementation can only call FromObject if JValue is Object"),
+        Err(FromJValueError::IncorrectType { expected, .. }) => match expected {
+            JValueType::Bool   => panic!("Unreachable"),
+            JValueType::Void   => Cow::Borrowed("V"),
+            JValueType::Char   => Cow::Borrowed("C"),
+            JValueType::Byte   => Cow::Borrowed("B"),
+            JValueType::Short  => Cow::Borrowed("S"),
+            JValueType::Int    => Cow::Borrowed("I"),
+            JValueType::Long   => Cow::Borrowed("J"),
+            JValueType::Float  => Cow::Borrowed("F"),
+            JValueType::Double => Cow::Borrowed("D"),
+            JValueType::Object => {
+                let class = T::class();
+                // L sig does not need to be prepended if class is array.
+                if class.starts_with('[')
+                || (class.starts_with('L') && class.ends_with(';')) {
+                    class
+                } else {
+                    // Prepend L if it isn't already
+                    Cow::Owned(format!("L{class};"))
+                }
+            },
+        }
+    }
 }
 
 /// Helper function for the [`FromObject`][ez_jni::FromObject] [derive macro][ez_jni_macros::from_object] to check whether the *object*'s Class matches the struct's *target Class*.
