@@ -2,6 +2,8 @@ mod r#impl;
 mod impl_array;
 mod impl_exception;
 
+use std::cmp::Ordering;
+
 use jni::{objects::{JClass, JObject, JThrowable}, JNIEnv};
 use thiserror::Error;
 use ez_jni_macros::call;
@@ -22,6 +24,12 @@ pub enum FromObjectError {
     ClassMismatch { obj_class: String, target_class: Option<String> },
     #[error("Could not find field {name:?} of type {ty} in class {target_class}; maybe its private?")]
     FieldNotFound { name: String, ty: String, target_class: String },
+    #[error("{}", match actual_len.cmp(expected_len) {
+        Ordering::Equal => panic!("UNREACHABLE"),
+        Ordering::Less => format!("Java Array is too long. Can't put {actual_len} elements, in an array of length {expected_len}"),
+        Ordering::Greater => format!("Expected Java Array to contain {expected_len} elements, but it has {actual_len} elements")
+    })]
+    ArrayTooLong { expected_len: usize, actual_len: usize },
     #[error("Error converting Java Object: {0}")]
     Other(String)
 }
