@@ -2,7 +2,7 @@ use either::Either;
 use convert_case::{Case, Casing};
 use proc_macro2::{Span, TokenStream, TokenTree};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
-use syn::{parse::{Parse, ParseStream, Parser}, punctuated::Punctuated, AngleBracketedGenericArguments, Field, Fields, GenericArgument, GenericParam, Generics, Ident, ItemEnum, ItemStruct, Lifetime, LitStr, Token, TypePath, Variant};
+use syn::{parse::{Parse, ParseStream, Parser}, AngleBracketedGenericArguments, Field, Fields, GenericArgument, Generics, Ident, ItemEnum, ItemStruct, Lifetime, LitStr, Token, TypePath, Variant};
 use itertools::Itertools as _;
 use std::{cell::RefCell, collections::{HashMap, HashSet}};
 use crate::{
@@ -14,14 +14,13 @@ pub fn derive_struct(mut st: ItemStruct) -> syn::Result<TokenStream> {
     let class = take_class_attribute_required(&mut st.attrs, st.ident.span())?
         .to_jni_class_path();
     
-    let mut st_generic_params = st.generics.params.clone();
-    let env_lt = get_local_lifetime(Either::Left(&st), &mut st_generic_params);
+    let env_lt = get_local_lifetime(Either::Left(&st));
     let st_ident = st.ident;
     let st_generics = st.generics;
     let st_ctor = struct_constructor(&st.fields)?;
 
     Ok(quote! {
-        impl <#st_generic_params> ::ez_jni::FromObject<'_, '_, #env_lt> for #st_ident #st_generics {
+        impl #st_generics ::ez_jni::FromObject<'_, '_, #env_lt> for #st_ident #st_generics {
             fn from_object_env(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<#env_lt>) -> Result<Self, ::ez_jni::FromObjectError> {
                 #[allow(unused_imports)]
                 use ::std::borrow::Borrow;
@@ -30,7 +29,7 @@ pub fn derive_struct(mut st: ItemStruct) -> syn::Result<TokenStream> {
                 Ok(Self #st_ctor)
             }
         }
-        impl <#st_generic_params> ::ez_jni::FromArrayObject<#env_lt> for #st_ident #st_generics {
+        impl #st_generics ::ez_jni::FromArrayObject<#env_lt> for #st_ident #st_generics {
             #[inline(always)]
             fn from_object_array_helper(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<'local>) -> ::std::result::Result<::std::boxed::Box<[Self]>, ::ez_jni::FromObjectError> {
                 ::ez_jni::utils::get_object_array(object, Some(<#st_ident as ::ez_jni::Class>::CLASS_PATH), env)?
@@ -39,7 +38,7 @@ pub fn derive_struct(mut st: ItemStruct) -> syn::Result<TokenStream> {
                     .collect()
             }
         }
-        impl <#st_generic_params> ::ez_jni::Class for #st_ident #st_generics {
+        impl #st_generics ::ez_jni::Class for #st_ident #st_generics {
             const CLASS_PATH: &'static str = #class;
         }
     })
@@ -76,8 +75,7 @@ pub fn derive_enum(mut enm: ItemEnum) -> syn::Result<TokenStream> {
 
     merge_errors(errors)?;
 
-    let mut enm_generic_params = enm.generics.params.clone();
-    let env_lt = get_local_lifetime(Either::Right(&enm), &mut enm_generic_params);
+    let env_lt = get_local_lifetime(Either::Right(&enm));
     let enm_ident = &enm.ident;
     let enm_generics = &enm.generics;
 
@@ -85,7 +83,7 @@ pub fn derive_enum(mut enm: ItemEnum) -> syn::Result<TokenStream> {
     // However, for enums this is optional because only the variants need to specify a class.
     let base_class_impl = base_class.as_ref()
         .map(|class| quote! {
-            impl <#enm_generic_params> ::ez_jni::Class for #enm_ident #enm_generics {
+            impl #enm_generics ::ez_jni::Class for #enm_ident #enm_generics {
                 const CLASS_PATH: &'static str = #class;
             }
         })
@@ -97,7 +95,7 @@ pub fn derive_enum(mut enm: ItemEnum) -> syn::Result<TokenStream> {
     };
 
     Ok(quote! {
-        impl <#enm_generic_params> ::ez_jni::FromObject<'_, '_, #env_lt> for #enm_ident #enm_generics {
+        impl #enm_generics ::ez_jni::FromObject<'_, '_, #env_lt> for #enm_ident #enm_generics {
             fn from_object_env(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<#env_lt>) -> ::std::result::Result<Self, ::ez_jni::FromObjectError> {
                 #[allow(unused_imports)]
                 use ::std::borrow::Borrow;
@@ -118,7 +116,7 @@ pub fn derive_enum(mut enm: ItemEnum) -> syn::Result<TokenStream> {
                 }
             }
         }
-        impl <#enm_generic_params> ::ez_jni::FromArrayObject<#env_lt> for #enm_ident #enm_generics {
+        impl #enm_generics ::ez_jni::FromArrayObject<#env_lt> for #enm_ident #enm_generics {
             #[inline(always)]
             fn from_object_array_helper(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<'local>) -> ::std::result::Result<::std::boxed::Box<[Self]>, ::ez_jni::FromObjectError> {
                 ::ez_jni::utils::get_object_array(object, #base_class, env)?
@@ -269,17 +267,32 @@ impl Parse for AttributeProps {
     }
 }
 
-/// Find the JObject field with a lifetime, and use that lifetime's name for the JNIEnv lifetime,
-/// Defaults to `'local` if such object could not be found, and **appends** the lifetime to the *generics*.
-///
-/// `P` is just the punctuation type; don't worry about it.
-fn get_local_lifetime<P: Default>(item: Either<&ItemStruct, &ItemEnum>, generics: &mut Punctuated<GenericParam, P>) -> Lifetime {
-    static DEFAULT: &str = "local";
-    /// Find the lifetiem in the struct/enum's generics
+/// Find the *name* of the lifetime that should be used in the [`JNIEnv`][jni::JNIEnv] as the `'local` lifetime.
+/// 
+/// If the item contains a lifetime named `'local`,
+/// or has only 1 lifetime named anything,
+/// then that lifetime will be used.
+/// 
+/// Defaults to the ellided lifetime if none could be found.
+fn get_local_lifetime(item: Either<&ItemStruct, &ItemEnum>) -> Lifetime {
+    /// Find the lifetime in the struct/enum's generics.
+    /// If only 1 lifetime exists, just grabs that one.
     fn find_local(generics: &Generics) -> Option<Lifetime> {
-        generics.lifetimes()
-            .map(|lt| &lt.lifetime)
-            .find(|lt| lt.ident.to_string() == DEFAULT)
+        let mut lifetimes = generics.lifetimes()
+            .map(|lt| &lt.lifetime);
+
+        // Check if only 1 lifetime exists.
+        let first = lifetimes.next()?;
+        let second = lifetimes.next();
+        if second == None {
+            return Some(first.clone());
+        }
+
+        // Otherwise, find 'local
+        Some(first).into_iter()
+            .chain(second)
+            .chain(lifetimes)
+            .find(|lt| lt.ident.to_string() == "local")
             .map(Clone::clone)
     }
     /// Find a field that has a lifetime in its generics
@@ -300,29 +313,18 @@ fn get_local_lifetime<P: Default>(item: Either<&ItemStruct, &ItemEnum>, generics
             })
     }
 
-    /// Generate the default Lifetime: `'local`.
-    /// Appends the lifetime to the generic params.
-    /// The failure of [`find_local()`] indicates that there is no `'local` lifetime and it needs to be added.
-    fn default<P: Default>(span: Span, generics: &mut Punctuated<GenericParam, P>) -> Lifetime {
-        let default = Lifetime::new(&format!("'{DEFAULT}"), span);
-
-        generics.push(syn::GenericParam::Lifetime(syn::LifetimeParam::new(default.clone())));
-
-        default
-    }
-    
     match item {
         Either::Left(st) =>
             find_local(&st.generics)
                 .or_else(|| find_in_fields(&st.fields))
-                .unwrap_or_else(|| default(st.ident.span(), generics)),
+                .unwrap_or_else(|| Lifetime::new("'_", st.ident.span())),
         Either::Right(enm) =>
             find_local(&enm.generics)
                 .or_else(||
                     enm.variants.iter()
                         .find_map(|variant| find_in_fields(&variant.fields))
                 )
-                .unwrap_or_else(|| default(enm.ident.span(), generics)),
+                .unwrap_or_else(|| Lifetime::new("'_", enm.ident.span())),
     }
 }
 
