@@ -34,11 +34,11 @@ pub fn derive_struct(mut st: ItemStruct) -> syn::Result<TokenStream> {
         }
         impl #st_generics ::ez_jni::FromArrayObject<#env_lt> for #st_ident #st_generics {
             #[inline(always)]
-            fn from_array_object(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<'local>) -> ::std::result::Result<::std::boxed::Box<[Self]>, ::ez_jni::FromObjectError> {
+            fn from_array_object(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<#env_lt>) -> ::std::result::Result<::std::boxed::Box<[Self]>, ::ez_jni::FromObjectError> {
                 ::ez_jni::utils::get_object_array_converted(object, |obj, env| <Self as ::ez_jni::FromObject>::from_object_env(&obj, env), env)
             }
             #[inline(always)]
-            fn from_array_object_nullable(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<'local>) -> ::std::result::Result<::std::boxed::Box<[::std::option::Option<Self>]>, ::ez_jni::FromObjectError> {
+            fn from_array_object_nullable(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<#env_lt>) -> ::std::result::Result<::std::boxed::Box<[::std::option::Option<Self>]>, ::ez_jni::FromObjectError> {
                 ::ez_jni::utils::get_object_array_converted(object, |obj, env| <::std::option::Option::<Self> as ::ez_jni::FromObject>::from_object_env(&obj, env), env)
             }
         }
@@ -125,11 +125,11 @@ pub fn derive_enum(mut enm: ItemEnum) -> syn::Result<TokenStream> {
         }
         impl #enm_generics ::ez_jni::FromArrayObject<#env_lt> for #enm_ident #enm_generics {
             #[inline(always)]
-            fn from_array_object(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<'local>) -> ::std::result::Result<::std::boxed::Box<[Self]>, ::ez_jni::FromObjectError> {
+            fn from_array_object(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<#env_lt>) -> ::std::result::Result<::std::boxed::Box<[Self]>, ::ez_jni::FromObjectError> {
                 ::ez_jni::utils::get_object_array_converted(object, |obj, env| <Self as ::ez_jni::FromObject>::from_object_env(&obj, env), env)
             }
             #[inline(always)]
-            fn from_array_object_nullable(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<'local>) -> ::std::result::Result<::std::boxed::Box<[::std::option::Option<Self>]>, ::ez_jni::FromObjectError> {
+            fn from_array_object_nullable(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<#env_lt>) -> ::std::result::Result<::std::boxed::Box<[::std::option::Option<Self>]>, ::ez_jni::FromObjectError> {
                 ::ez_jni::utils::get_object_array_converted(object, |obj, env| <::std::option::Option::<Self> as ::ez_jni::FromObject>::from_object_env(&obj, env), env)
             }
         }
@@ -303,12 +303,12 @@ fn get_local_lifetime(item: Either<&ItemStruct, &ItemEnum>) -> Lifetime {
             .find(|lt| lt.ident.to_string() == "local")
             .map(Clone::clone)
     }
-    /// Find a field that has a lifetime in its generics
+    /// Find a field that has a lifetime in its generics OR is a JObject or one of its counterparts
     fn find_in_fields(fields: &Fields) -> Option<Lifetime> {
         fields.iter()
             .find_map(|field| match &field.ty {
                 syn::Type::Path(TypePath { path, .. } ) if path.segments.last()
-                    .is_some_and(|seg| seg.ident.to_string() == "JObject")
+                    .is_some_and(|seg| matches!(seg.ident.to_string().as_str(), "JObject" | "JClass" | "JThrowable"))
                 => match path.segments.last().map(|seg| &seg.arguments) {
                     Some(syn::PathArguments::AngleBracketed(AngleBracketedGenericArguments { args, .. }))
                     => match args.first() {

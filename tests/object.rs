@@ -196,15 +196,6 @@ struct MyClass3 {
     member: i32,
 }
 
-#[derive(Debug, FromObject, PartialEq, Eq)]
-#[class(me.test.Test$SumClass)]
-enum MyEnumClass {
-    #[class(me.test.Test$SumClass$SumClass1)]
-    Variant1 { number: i32 },
-    #[class(me.test.Test$SumClass$SumClass2)]
-    Variant2 { str: String },
-}
-
 /// Test field FromObject for custom structs
 #[derive(Debug)]
 struct IntWrapper(i32);
@@ -227,6 +218,15 @@ impl Class for IntWrapper {
     fn class() -> std::borrow::Cow<'static, str> {
         std::borrow::Cow::Borrowed("java/lang/Integer")
     }
+}
+
+#[derive(Debug, FromObject, PartialEq, Eq)]
+#[class(me.test.Test$SumClass)]
+enum MyEnumClass {
+    #[class(me.test.Test$SumClass$SumClass1)]
+    Variant1 { number: i32 },
+    #[class(me.test.Test$SumClass$SumClass2)]
+    Variant2 { str: String },
 }
 
 /// This one is not tested at runtime, as it is identical to [`MyEnumClass`].
@@ -268,6 +268,7 @@ fn from_object() { run_with_jnienv(|| {
         ARRAY_VAL
     );
     assert_eq!(MyClass3::from_object(&object).unwrap().member, VAL);
+    assert_eq!(MyWrapperClass::from_object(&object).unwrap().member.0, VAL);
 
     object = new!(me.test.Test$SumClass$SumClass1(int(VAL)));
     assert_eq!(
@@ -345,7 +346,7 @@ fn from_object() { run_with_jnienv(|| {
             Box::new([None, Some(MyClass { member_field: 1 }), None]) as Box<[_]>,
             Box::new([Some(MyClass { member_field: 2 }), None, Some(MyClass { member_field: 3 })]) as Box<[_]>,
         ],
-        Box::<[Box<[Option<MyClass>]>]>::from_object(&object).unwrap()
+        Box::<[Box<[Option<MyClass>]>]>::from_object(&object).unwrap().as_ref()
     );
     object = create_object_array_converted(
         &[

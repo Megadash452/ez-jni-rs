@@ -61,8 +61,7 @@ where Self: ToObject + Sized {
 // -- Blanket Implementations --
 
 impl<'local, const N: usize, T> FromObject<'_, '_, 'local> for [T; N]
-where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local>,
-      T: Class {
+where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local> {
     fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
         // Get an unized array from the Java Array
         let boxed = Box::<[T]>::from_object_env(object, env)?;
@@ -230,7 +229,18 @@ where T: ToArrayObject { }
 
 // For recursive blanket implementation
 impl<'local, T> FromArrayObject<'local> for Box<[T]>
-where T: FromArrayObject<'local> + 'local {
+where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local> + 'local {
+    #[inline(always)]
+    fn from_array_object(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Box<[Self]>, FromObjectError> {
+        get_object_array_converted(object, |obj, env| Self::from_object_env(&obj, env), env)
+    }
+    #[inline(always)]
+    fn from_array_object_nullable(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Box<[Option<Self>]>, FromObjectError> {
+        get_object_array_converted(object, |obj, env| Option::<Self>::from_object_env(&obj, env), env)
+    }
+}
+impl<'local, const N: usize, T> FromArrayObject<'local> for [T; N]
+where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local> + 'local {
     #[inline(always)]
     fn from_array_object(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Box<[Self]>, FromObjectError> {
         get_object_array_converted(object, |obj, env| Self::from_object_env(&obj, env), env)
