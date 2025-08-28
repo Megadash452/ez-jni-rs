@@ -90,7 +90,7 @@ impl Type {
             Self::Assertive(InnerType::Object(class))
             | Self::Option { ty: OptionType::Object(class), .. } if class.is_jobject() => {
                 let ty = self.ty_tokens(false, None);
-                return quote_spanned! {value.span()=> <#ty as ::ez_jni::FromJValueOwned>::from_jvalue_owned_env(#value, env) }
+                return quote_spanned! {value.span()=> <#ty as ::ez_jni::utils::FromJValueOwned>::from_jvalue_owned_env(#value, env) }
             },
             _ => self.ty_tokens(false, None),
         };

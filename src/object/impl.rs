@@ -12,6 +12,7 @@ impl<'a, 'obj> FromObject<'a, 'obj, '_> for &'a JObject<'obj> {
         }
         Ok(object)
     }
+    #[inline(always)]
     fn from_object_env(object: &'a JObject<'obj>, _: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         Self::from_object(object)
     }
@@ -39,6 +40,7 @@ impl<'a, 'obj> FromObject<'a, 'obj, '_> for &'a JThrowable<'obj> {
     }
 }
 impl ToObject for JThrowable<'_> {
+    #[inline(always)]
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         <JObject as ToObject>::to_object_env(self, env)
     }
@@ -46,6 +48,7 @@ impl ToObject for JThrowable<'_> {
 
 impl<T> ToObject for &T
 where T: ToObject {
+    #[inline(always)]
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         <T as ToObject>::to_object_env(self, env)
     }
@@ -74,6 +77,10 @@ where T: ToObject {
     }
 }
 
+// TODO: Support Box for any type
+
+// TODO: Support Callbacks
+
 // Implementation for String types
 
 impl FromObject<'_, '_, '_> for String {
@@ -92,6 +99,7 @@ impl FromObject<'_, '_, '_> for String {
     }
 }
 impl ToObject for String {
+    #[inline(always)]
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         <str as ToObject>::to_object_env(self, env)
     }
@@ -104,6 +112,7 @@ impl ToObject for str {
     }
 }
 impl ToObject for &str {
+    #[inline(always)]
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         <str as ToObject>::to_object_env(self, env)
     }
@@ -247,5 +256,48 @@ impl FromObject<'_, '_, '_> for char {
 impl ToObject for char {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         new!(env=> java.lang.Character(char(*self)))
+    }
+}
+
+/// Hidden trait for a macro to use to convert a java value.
+/// Only used in the macros and for element conversion in [`FromArrayObject`].
+#[doc(hidden)]
+pub trait FromObjectOwned<'obj>: Sized {
+    fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError>;
+}
+#[doc(hidden)]
+impl<'obj> FromObjectOwned<'obj> for JObject<'obj> {
+    #[inline]
+    fn from_object_owned_env(object: JObject<'obj>, _: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
+        // Call from_object() to perform checks
+        <&Self>::from_object(&object)?;
+        Ok(object)
+    }
+}
+#[doc(hidden)]
+impl<'obj> FromObjectOwned<'obj> for JClass<'obj> {
+    fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
+        // Call from_object() to perform checks
+        <&Self>::from_object_env(&object, env)?;
+        Ok(Self::from(object))
+    }
+}
+#[doc(hidden)]
+impl<'obj> FromObjectOwned<'obj> for JThrowable<'obj> {
+    fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
+        // Call from_object() to perform checks
+        <&Self>::from_object_env(&object, env)?;
+        Ok(Self::from(object))
+    }
+}
+#[doc(hidden)]
+impl<'obj, T> FromObjectOwned<'obj> for Option<T>
+where T: FromObjectOwned<'obj> {
+    fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
+        Ok(if object.is_null() {
+            None
+        } else {
+            Some(T::from_object_owned_env(object, env)?)
+        })
     }
 }

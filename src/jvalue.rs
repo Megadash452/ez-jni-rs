@@ -1,7 +1,7 @@
 use std::fmt::Display;
 use jni::{objects::{JClass, JObject, JThrowable, JValue, JValueGen, JValueOwned}, JNIEnv};
 use thiserror::Error;
-use crate::{utils::get_env, FromObject, FromObjectError, FromObjectOwned, Primitive, ToObject};
+use crate::{utils::get_env, FromObject, FromObjectError, Primitive, ToObject};
 
 /// Get a **Rust** value from a **Java** value.
 /// 
@@ -282,55 +282,3 @@ impl<T> ToJValue for &[T]
 where Self: ToObject { impl_to_jvalue_env!(); }
 impl<const N: usize, T> ToJValue for [T; N]
 where Self: ToObject { impl_to_jvalue_env!(); }
-
-/// Hidden trait for `call!` to use to convert the return value
-/// Only used in the macros, so this will `panic!` on error.
-#[doc(hidden)]
-pub trait FromJValueOwned<'obj>
-where Self: FromObjectOwned<'obj> {
-    fn from_jvalue_owned_env(val: JValueOwned<'obj>, env: &mut JNIEnv<'_>) -> Self;
-}
-#[doc(hidden)]
-impl<'obj> FromJValueOwned<'obj> for JObject<'obj> {
-    fn from_jvalue_owned_env(val: JValueOwned<'obj>, env: &mut JNIEnv<'_>) -> Self {
-        match val {
-            ::jni::objects::JValueGen::Object(object) => Self::from_object_owned_env(object, env).unwrap(),
-            val => panic!("{}", FromJValueError::IncorrectType {
-                actual: JValueType::from(val.borrow()),
-                expected: JValueType::Object,
-            })
-        }
-    }
-}
-#[doc(hidden)]
-impl<'obj> FromJValueOwned<'obj> for JClass<'obj> {
-    fn from_jvalue_owned_env(val: JValueOwned<'obj>, env: &mut JNIEnv<'_>) -> Self {
-        let object = JObject::from_jvalue_owned_env(val, env);
-        Self::from_object_owned_env(object, env).unwrap()
-    }
-}
-#[doc(hidden)]
-impl<'obj> FromJValueOwned<'obj> for JThrowable<'obj> {
-    fn from_jvalue_owned_env(val: JValueOwned<'obj>, env: &mut JNIEnv<'_>) -> Self {
-        let object = JObject::from_jvalue_owned_env(val, env);
-        Self::from_object_owned_env(object, env).unwrap()
-    }
-}
-#[doc(hidden)]
-impl<'obj, T> FromJValueOwned<'obj> for Option<T>
-where T: FromJValueOwned<'obj> {
-    fn from_jvalue_owned_env(val: JValueOwned<'obj>, env: &mut JNIEnv<'_>) -> Self {
-        let object = match val {
-            ::jni::objects::JValueGen::Object(object) => object,
-            val => panic!("{}", FromJValueError::IncorrectType {
-                actual: JValueType::from(val.borrow()),
-                expected: JValueType::Object,
-            })
-        };
-        if object.is_null() {
-            None
-        } else {
-            Some(T::from_object_owned_env(object, env).unwrap())
-        }
-    }
-}

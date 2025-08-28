@@ -1,7 +1,9 @@
 use std::mem::MaybeUninit;
-
 use jni::objects::JClass;
-use crate::utils::{create_java_prim_array, get_java_prim_array, get_object_array_converted, create_object_array_converted};
+use crate::{
+    FromObjectOwned,
+    utils::{create_java_prim_array, get_java_prim_array, get_object_array_converted, create_object_array_converted}
+};
 use super::*;
 
 /// A trait that allows converting a *Java Object* to a Rust `Boxed slice` of a *Rust Type*.

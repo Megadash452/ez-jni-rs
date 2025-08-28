@@ -3,11 +3,13 @@ mod impl_array;
 mod impl_exception;
 
 use std::cmp::Ordering;
-use jni::{objects::{JClass, JObject, JThrowable}, JNIEnv};
+use jni::{objects::{JObject, JThrowable}, JNIEnv};
 use thiserror::Error;
 use ez_jni_macros::call;
 use crate::{utils::get_env, Class};
 
+#[doc(hidden)]
+pub use r#impl::FromObjectOwned;
 pub use impl_exception::JavaException;
 pub use impl_array::{FromArrayObject, ToArrayObject};
 
@@ -135,43 +137,4 @@ pub trait ToObject {
     /// 
     /// Only implement *this* method for the trait.
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local>;
-}
-
-/// Hidden trait for a macro to use to convert a java value.
-/// Only used in the macros, so this will `panic!` on error.
-#[doc(hidden)]
-pub trait FromObjectOwned<'obj>: Sized {
-    fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError>;
-}
-impl<'obj> FromObjectOwned<'obj> for JObject<'obj> {
-    #[inline]
-    fn from_object_owned_env(object: JObject<'obj>, _: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        // Call from_object() to perform checks
-        <&Self>::from_object(&object)?;
-        Ok(object)
-    }
-}
-impl<'obj> FromObjectOwned<'obj> for JClass<'obj> {
-    fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        // Call from_object() to perform checks
-        <&Self>::from_object_env(&object, env)?;
-        Ok(Self::from(object))
-    }
-}
-impl<'obj> FromObjectOwned<'obj> for JThrowable<'obj> {
-    fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        // Call from_object() to perform checks
-        <&Self>::from_object_env(&object, env)?;
-        Ok(Self::from(object))
-    }
-}
-impl<'obj, T> FromObjectOwned<'obj> for Option<T>
-where T: FromObjectOwned<'obj> {
-    fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        Ok(if object.is_null() {
-            None
-        } else {
-            Some(T::from_object_owned_env(object, env)?)
-        })
-    }
 }
