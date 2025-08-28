@@ -1,7 +1,11 @@
 mod call;
+#[doc(hidden)]
 mod object;
 mod array;
+use std::fmt::{Display, Debug};
+
 pub use call::*;
+#[doc(hidden)]
 pub use object::*;
 pub use array::*;
 
@@ -92,6 +96,17 @@ pub fn get_env<'a, 'local>() -> &'a mut JNIEnv<'local> {
           Thus, the return value cannot exit that root function. */
         unsafe { std::mem::transmute::<&'_ mut JNIEnv<'static>, &'a mut JNIEnv<'local>>(env) }
     })
+}
+
+pub trait ResultExt<T> {
+    /// The same as [`Result::unwrap()`], but prints the error with [`Display`] instead of [`Debug`].
+    fn unwrap_display(self) -> T;
+}
+impl<T, E> ResultExt<T> for Result<T, E>
+where E: Debug + Display {
+    fn unwrap_display(self) -> T {
+        self.unwrap_or_else(|err| panic!("{err}"))
+    }
 }
 
 #[doc(hidden)]
