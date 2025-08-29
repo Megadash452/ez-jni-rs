@@ -18,10 +18,12 @@ fn from_object_derive() {
             member: String,
         }
     "), Some(ErrorContent {
-        msg: "",
-        loc: "",
+        msg: "The field attributes 'name' and 'call' are mutually exclusive; only one can be used.",
+        loc: "8:6",
         preview: indoc!("
-        TODO
+          |
+        8 |     #[field(name = myMember, call = memberField)]
+          |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     ")}));
     // FIXME: comiler complains that JObject does not implement FromJValue, but that trait is not used at all here.
     assert_compile_fail(t, "jobject_require_class", indoc!("
@@ -34,7 +36,7 @@ fn from_object_derive() {
             member: JObject<'local>,
         }
     "), Some(ErrorContent {
-        msg: "",
+        msg: "the trait bound `JObject<'local>: FieldFromJValue<'_, '_>` is not satisfied",
         loc: "",
         preview: indoc!("
         TODO
@@ -49,7 +51,7 @@ fn from_object_derive() {
             member: JThrowable<'local>,
         }
     "), Some(ErrorContent {
-        msg: "",
+        msg: "the trait bound `JThrowable<'local>: FieldFromJValue<'_, '_>` is not satisfied",
         loc: "",
         preview: indoc!("
         TODO

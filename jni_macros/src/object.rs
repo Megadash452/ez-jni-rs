@@ -366,11 +366,15 @@ impl FieldAttr {
             .map_or_else(
                 || Ok(Self { name: None, call: None, class: None }),
                 |attr| AttributeProps::parse_attr_with(attr, |props| {
-                    Ok(Self {
+                    let field_attr = Self {
                         name: props.take("name")?,
                         call: props.take("call")?,
                         class: props.take("class")?,
-                    })
+                    };
+                    if field_attr.name.is_some() && field_attr.call.is_some() {
+                        return Err(syn::Error::new(attr.bracket_token.span.span(), "The field attributes 'name' and 'call' are mutually exclusive; only one can be used."))
+                    }
+                    Ok(field_attr)
                 })
             )
     }
@@ -469,7 +473,7 @@ fn struct_constructor(fields: &Fields) -> syn::Result<TokenStream> {
                 Some(class_attr) => class_attr.sig_type().to_token_stream(),
                 // Get the field signature at runtime
                 None => quote_spanned! {field_ty.span()=>
-                    &::ez_jni::utils::guess_sig_from_jvalue_type::<#field_ty>(env)
+                    &<#field_ty as ::ez_jni::utils::FieldFromJValue>::guess_sig(env)
                 }
             };
 

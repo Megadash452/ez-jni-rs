@@ -17,8 +17,17 @@ pub trait FromJValueOwned<'obj, 'local> {
 /// This separate is necessary because `call!` does not need to check the *return* Object's **Class**,
 /// but the check is needed on a [`JObject`] or [`JThrowable`] field in the [`FromObject`] derive.
 /// To enforce this check, [`JObject`] or [`JThrowable`] do NOT implement this trait, but do implement [`FromJValueOwned`].
-pub trait FieldFromJValue<'obj, 'local>: FromJValueOwned<'obj, 'local> {
+pub trait FieldFromJValue<'obj, 'local> {
     fn field_from_jvalue_owned_env(val: JValueOwned<'obj>, env: &mut JNIEnv<'local>) -> Self;
+    /// Guesses the *signature* that `Self` expects from a [`JValue`][jni::objects::JValue].
+    /// Returns a *Java Type signature* with the [`Class`] if the signature is for Object.
+    /// 
+    /// This is done by attempting a call to [`FromJValue::from_jvalue_env()`] with a `Boolean(true)`
+    /// and checking the *expected type* in the [`FromJValueError`][crate::FromJValueError].
+    /// Though, some types just provide a hardcoded value.
+    /// 
+    /// The [`JNIEnv`] is not used but it needs to be passed to [`FromJValue::from_jvalue_env()`].
+    fn guess_sig(env: &mut JNIEnv<'local>) -> Cow<'static, str>;
 }
 
 /// Trait that allows instantiating an [`Object`][crate::FromObjectOwned] *Rust type* [`From a JValue`][crate::FromJValue] while also
@@ -116,11 +125,18 @@ macro_rules! impl_from_object_class {
             fn field_from_jvalue_owned_env(val: JValueOwned<'obj>, env: &mut JNIEnv<'_>) -> Self {
                 <Self as FromJValueOwned>::from_jvalue_owned_env(val, env)
             }
+            fn guess_sig(_: &mut JNIEnv<'_>) -> Cow<'static, str> {
+                Cow::Owned(format!("L{};", <$ty as Class>::class()))
+            }
         }
         impl<'obj> FieldFromJValue<'obj, '_> for Option<$ty> {
             #[inline(always)]
             fn field_from_jvalue_owned_env(val: JValueOwned<'obj>, env: &mut JNIEnv<'_>) -> Self {
                 <Self as FromJValueOwned>::from_jvalue_owned_env(val, env)
+            }
+            #[inline(always)]
+            fn guess_sig(env: &mut JNIEnv<'_>) -> Cow<'static, str> {
+                <$ty as FieldFromJValue>::guess_sig(env)
             }
         }
         impl<'obj> FromJValueClass<'obj, '_> for $ty {
@@ -152,10 +168,38 @@ where T: for<'a> FromJValue<'a, 'obj, 'local> {
 }
 
 impl<'obj, 'local, T> FieldFromJValue<'obj, 'local> for T
-where T: for<'a> FromJValue<'a, 'obj, 'local> {
+where T: for<'a> FromJValue<'a, 'obj, 'local> + Class {
     #[inline(always)]
     fn field_from_jvalue_owned_env(val: JValueOwned<'obj>, env: &mut JNIEnv<'local>) -> Self {
         Self::from_jvalue_owned_env(val, env)
+    }
+    fn guess_sig(env: &mut JNIEnv<'local>) -> Cow<'static, str> {
+        match T::from_jvalue_env(JValue::Bool(1), env) {
+            Ok(_) => Cow::Borrowed("Z"),
+            Err(FromJValueError::Object(_)) => panic!("Encountered FromObjectError when JValue is Bool; FromJValue implementation can only call FromObject if JValue is Object"),
+            Err(FromJValueError::IncorrectType { expected, .. }) => match expected {
+                JValueType::Bool   => panic!("Unreachable"),
+                JValueType::Void   => Cow::Borrowed("V"),
+                JValueType::Char   => Cow::Borrowed("C"),
+                JValueType::Byte   => Cow::Borrowed("B"),
+                JValueType::Short  => Cow::Borrowed("S"),
+                JValueType::Int    => Cow::Borrowed("I"),
+                JValueType::Long   => Cow::Borrowed("J"),
+                JValueType::Float  => Cow::Borrowed("F"),
+                JValueType::Double => Cow::Borrowed("D"),
+                JValueType::Object => {
+                    let class = T::class();
+                    // L sig does not need to be prepended if class is array.
+                    if class.starts_with('[')
+                    || (class.starts_with('L') && class.ends_with(';')) {
+                        class
+                    } else {
+                        // Prepend L if it isn't already
+                        Cow::Owned(format!("L{class};"))
+                    }
+                },
+            }
+        }
     }
 }
 
@@ -206,43 +250,6 @@ pub fn from_object_get_field<'local>(object: &JObject<'_>, name: &'static str, t
                 err => crate::__throw::handle_jni_call_error(err, env)
             }
         })
-}
-
-/// Guesses the [`Type`][crate::JValueType] that a `T` expects to find in a [`JValue`][jni::objects::JValue].
-/// Returns a *Java Type signature* with the [`Class`] if thje signature is for Object.
-/// 
-/// This is done attempting a call to [`FromJValue::from_jvalue_env()`] with a `Boolean(true)`
-/// and checking the *expected type* in the [`FromJValueError`][crate::FromJValueError].
-/// 
-/// [`JNIEnv`] is not used but it needs to be passed to [`FromJValue::from_jvalue_env()`].
-pub fn guess_sig_from_jvalue_type<T>(env: &mut JNIEnv<'_>) -> Cow<'static, str>
-where T: for<'a, 'obj, 'local> FromJValue<'a, 'obj, 'local> + Class {
-    match T::from_jvalue_env(JValue::Bool(1), env) {
-        Ok(_) => Cow::Borrowed("Z"),
-        Err(FromJValueError::Object(_)) => panic!("Encountered FromObjectError when JValue is Bool; FromJValue implementation can only call FromObject if JValue is Object"),
-        Err(FromJValueError::IncorrectType { expected, .. }) => match expected {
-            JValueType::Bool   => panic!("Unreachable"),
-            JValueType::Void   => Cow::Borrowed("V"),
-            JValueType::Char   => Cow::Borrowed("C"),
-            JValueType::Byte   => Cow::Borrowed("B"),
-            JValueType::Short  => Cow::Borrowed("S"),
-            JValueType::Int    => Cow::Borrowed("I"),
-            JValueType::Long   => Cow::Borrowed("J"),
-            JValueType::Float  => Cow::Borrowed("F"),
-            JValueType::Double => Cow::Borrowed("D"),
-            JValueType::Object => {
-                let class = T::class();
-                // L sig does not need to be prepended if class is array.
-                if class.starts_with('[')
-                || (class.starts_with('L') && class.ends_with(';')) {
-                    class
-                } else {
-                    // Prepend L if it isn't already
-                    Cow::Owned(format!("L{class};"))
-                }
-            },
-        }
-    }
 }
 
 /// Helper function for the [`FromObject`][ez_jni::FromObject] [derive macro][ez_jni_macros::from_object] to check whether the *object*'s Class matches the struct's *target Class*.
