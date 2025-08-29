@@ -98,7 +98,7 @@ pub fn get_object_array<'local>(obj: &JObject<'_>, env: &mut JNIEnv<'local>) -> 
     // Fill array
     for i in 0..len {
         vec.push(env.get_object_array_element(array, i as jsize)
-            .map_err(|err| FromObjectError::Other(format!("Failed to read Array elements: {err}")))?
+            .map_err(|err| FromObjectError::ArrayElement { index: i, error: Box::new(FromObjectError::Other(err.to_string())) })?
         );
     }
 
@@ -114,7 +114,10 @@ where T: 'local {
     // TODO: make this more memory efficient by using the get_object_array() implementation and calling elem_conversion and then dropping the object
     get_object_array(obj, env)?
         .into_iter()
-        .map(|obj| elem_conversion(obj, env))
+        .enumerate()
+        .map(|(i, obj)| elem_conversion(obj, env)
+            .map_err(|err| FromObjectError::ArrayElement { index: i, error: Box::new(err) })
+        )
         .collect()
 }
 

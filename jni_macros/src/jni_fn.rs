@@ -176,8 +176,8 @@ impl JniFn {
 
         quote! {
             /* #[allow(noop_method_call)] */ move | #[allow(unused_variables)] env | {
-                #[allow(unused_imports)]
-                use ::std::borrow::Borrow;
+                #[allow(unused_imports)] use ::std::borrow::Borrow;
+                #[allow(unused_imports)] use ::ez_jni::utils::ResultExt as _;
                 // #[allow(unused_variables)]
                 // let env: &mut ::jni::JNIEnv = #env;
                 #conversions

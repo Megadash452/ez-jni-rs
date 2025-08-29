@@ -95,7 +95,7 @@ impl Type {
             _ => self.ty_tokens(false, None),
         };
         // use the FromJValue implementation
-        quote_spanned! {value.span()=> <#ty as ::ez_jni::FromJValue>::from_jvalue_env((#value).borrow(), env).unwrap() }
+        quote_spanned! {value.span()=> <#ty as ::ez_jni::FromJValue>::from_jvalue_env((#value).borrow(), env).unwrap_display() }
     }
 
     /// General function to convert a **Rust value** to a [`JValue`][jni::objects::JValue].
@@ -140,7 +140,7 @@ impl Type {
     /// 
     /// Even though `void` and `()` are the same, it must still be *unwrapped* from the [`JValue`][::jni::objects::JValueGen].
     pub fn convert_void_to_unit(value: &TokenStream) -> TokenStream {
-        quote_spanned! {value.span()=> <() as ::ez_jni::FromJValue>::from_jvalue_env((#value).borrow(), env).unwrap() }
+        quote_spanned! {value.span()=> <() as ::ez_jni::FromJValue>::from_jvalue_env((#value).borrow(), env).unwrap_display() }
     }
 
     /// Gets the **Rust** type *name/path* of a [`Type`].
@@ -464,7 +464,7 @@ impl ArrayType {
         /// **ty** is a Rust type, the type of the elements of the slice.
         fn from_object(ty: TokenStream, value: &TokenStream) -> TokenStream {
             quote_spanned! {ty.span()=>
-                <Box<[#ty]> as ::ez_jni::FromObject>::from_object_env(&(#value), env).unwrap()
+                <Box<[#ty]> as ::ez_jni::FromObject>::from_object_env(&(#value), env).unwrap_display()
             }
         }
 
@@ -478,7 +478,7 @@ impl ArrayType {
         // ```
         let get_object_arr = |elem_conversion: TokenStream| -> TokenStream {
             quote_spanned! {value.span() => 
-                ::ez_jni::utils::get_object_array_converted(&(#value), |_element, #[allow(unused_variables)] env| Ok(#elem_conversion), env).unwrap()
+                ::ez_jni::utils::get_object_array_converted(&(#value), |_element, #[allow(unused_variables)] env| Ok(#elem_conversion), env).unwrap_display()
             }
         };
 
@@ -962,16 +962,16 @@ impl Conversion for Class {
         // Also checks object's class
         match self.rust_type() {
             ClassRustType::JObject => Some(quote_spanned! {self.span()=>
-                <::jni::objects::JObject::<'_> as ::ez_jni::FromObjectOwned>::from_object_owned_env(#value, env).unwrap()
+                <::jni::objects::JObject::<'_> as ::ez_jni::FromObjectOwned>::from_object_owned_env(#value, env).unwrap_display()
             }),
             ClassRustType::JClass => Some(quote_spanned! {self.span()=>
-                <::jni::objects::JClass::<'_> as ::ez_jni::FromObjectOwned>::from_object_owned_env(#value, env).unwrap()
+                <::jni::objects::JClass::<'_> as ::ez_jni::FromObjectOwned>::from_object_owned_env(#value, env).unwrap_display()
             }),
             ClassRustType::JThrowable => Some(quote_spanned! {self.span()=>
-                <::jni::objects::JThrowable::<'_> as ::ez_jni::FromObjectOwned>::from_object_owned_env(#value, env).unwrap()
+                <::jni::objects::JThrowable::<'_> as ::ez_jni::FromObjectOwned>::from_object_owned_env(#value, env).unwrap_display()
             }),
             ClassRustType::String => Some(quote_spanned! {self.span()=>
-                <String as ::ez_jni::FromObject>::from_object_env(&(#value), env).unwrap()
+                <String as ::ez_jni::FromObject>::from_object_env(&(#value), env).unwrap_display()
             }),
         }
     }

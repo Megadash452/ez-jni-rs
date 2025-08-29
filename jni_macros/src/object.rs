@@ -25,8 +25,8 @@ pub fn derive_struct(mut st: ItemStruct) -> syn::Result<TokenStream> {
         }
         impl #st_generics ::ez_jni::FromObject<'_, '_, #env_lt> for #st_ident #st_generics {
             fn from_object_env(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<#env_lt>) -> ::std::result::Result<Self, ::ez_jni::FromObjectError> {
-                #[allow(unused_imports)]
-                use ::std::borrow::Borrow;
+                #[allow(unused_imports)] use ::std::borrow::Borrow;
+                #[allow(unused_imports)] use ::ez_jni::utils::ResultExt as _;
 
                 ::ez_jni::utils::check_object_class(object, &<Self as ::ez_jni::Class>::class(), env)?;
                 Ok(Self #st_ctor)
@@ -104,8 +104,8 @@ pub fn derive_enum(mut enm: ItemEnum) -> syn::Result<TokenStream> {
         }
         impl #enm_generics ::ez_jni::FromObject<'_, '_, #env_lt> for #enm_ident #enm_generics {
             fn from_object_env(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<#env_lt>) -> ::std::result::Result<Self, ::ez_jni::FromObjectError> {
-                #[allow(unused_imports)]
-                use ::std::borrow::Borrow;
+                #[allow(unused_imports)] use ::std::borrow::Borrow;
+                #[allow(unused_imports)] use ::ez_jni::utils::ResultExt as _;
 
                 if object.is_null() {
                     return Err(::ez_jni::FromObjectError::Null);

@@ -52,8 +52,8 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
         quote!(::ez_jni::utils::call_obj_method)
     };
     quote! { {
-        #[allow(unused_imports)]
-        use ::std::borrow::Borrow;
+        #[allow(unused_imports)] use ::std::borrow::Borrow;
+        #[allow(unused_imports)] use ::ez_jni::utils::ResultExt as _;
         let env: &mut ::jni::JNIEnv = #env;
         #[allow(noop_method_call)]
         #jni_method(#callee, #name, #signature, #arguments, env)
@@ -86,8 +86,8 @@ pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
     };
 
     quote! { {
-        #[allow(unused_imports)]
-        use ::std::borrow::Borrow;
+        #[allow(unused_imports)] use ::std::borrow::Borrow;
+        #[allow(unused_imports)] use ::ez_jni::utils::ResultExt as _;
         let env: &mut ::jni::JNIEnv = #env;
         #[allow(noop_method_call)]
         ::ez_jni::utils::create_object(#callee, #signature, #arguments, env)
@@ -121,8 +121,8 @@ pub fn field(call: FieldCall) -> TokenStream {
             // Convert Rust value to JValue for argument
             let val = call.ty.convert_rvalue_to_jvalue(&val.to_token_stream());
             quote! { {
-                #[allow(unused_imports)]
-                use ::std::borrow::Borrow;
+                #[allow(unused_imports)] use ::std::borrow::Borrow;
+                #[allow(unused_imports)] use ::ez_jni::utils::ResultExt as _;
                 let env: &mut ::jni::JNIEnv = #env;
                 #[allow(noop_method_call)]
                 #jni_method(#callee, #name, #ty_sig, #val, env)
@@ -137,8 +137,8 @@ pub fn field(call: FieldCall) -> TokenStream {
             // Convert jvalue returned from call
             let call = call.ty.convert_jvalue_to_rvalue(&quote! { #jni_method(#callee, #name, #ty_sig, env) });
             quote! { {
-                #[allow(unused_imports)]
-                use ::std::borrow::Borrow;
+                #[allow(unused_imports)] use ::std::borrow::Borrow;
+                #[allow(unused_imports)] use ::ez_jni::utils::ResultExt as _;
                 let env: &mut ::jni::JNIEnv = #env;
                 #[allow(noop_method_call)]
                 #call
@@ -151,8 +151,8 @@ pub fn field(call: FieldCall) -> TokenStream {
 pub fn get_class(env: Env, class: Class) -> TokenStream {
     let class = class.to_jni_class_path();
     quote! { {
-        #[allow(unused_imports)]
-        use ::std::borrow::Borrow;
+        #[allow(unused_imports)] use ::std::borrow::Borrow;
+        #[allow(unused_imports)] use ::ez_jni::utils::ResultExt as _;
         let env: &mut ::jni::JNIEnv = #env;
         #[allow(noop_method_call)]
         env.find_class(#class)
