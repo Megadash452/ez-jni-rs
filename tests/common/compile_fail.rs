@@ -24,6 +24,7 @@ macro_rules! assert_compile_fail {
 }
 
 pub struct ErrorContent {
+    pub code: Option<&'static str>,
     pub msg: &'static str,
     pub loc: &'static str,
     pub preview: &'static str,
@@ -44,9 +45,14 @@ pub fn assert_compile_fail(t: &TestCases, name: &str, input: &str, error: Option
         .unwrap_or_else(|err| panic!("Error writing to file: {err}"));
     // Write error content
     if let Some(error) = &error {
+        let code = match error.code {
+            Some(code) => format!("[{code}]"),
+            None => String::new(),
+        };
+
         std::fs::File::create(&error_path)
             .unwrap_or_else(|err| panic!("Error opening error file: {err}"))
-            .write_all(format!("error: {}\n --> {}:{}\n{}", error.msg, absolute_path(&file_path).display(), error.loc, error.preview).as_bytes())
+            .write_all(format!("error{code}: {}\n --> {}:{}\n{}", error.msg, absolute_path(&file_path).display(), error.loc, error.preview).as_bytes())
             .unwrap_or_else(|err| panic!("Error writing to error file: {err}"));
     }
     // Run test

@@ -18,6 +18,7 @@ fn from_object_derive() {
             member: String,
         }
     "), Some(ErrorContent {
+        code: None,
         msg: "The field attributes 'name' and 'call' are mutually exclusive; only one can be used.",
         loc: "8:6",
         preview: indoc!("
@@ -36,10 +37,18 @@ fn from_object_derive() {
             member: JObject<'local>,
         }
     "), Some(ErrorContent {
+        code: Some("E0277"),
         msg: "the trait bound `JObject<'local>: FieldFromJValue<'_, '_>` is not satisfied",
-        loc: "",
+        loc: "9:13",
         preview: indoc!("
-        TODO
+          |
+        9 |     member: JObject<'local>,
+          |             ^^^^^^^^^^^^^^^ the trait `for<'a> FromJValue<'a, '_, '_>` is not implemented for `JObject<'local>`
+          |
+          = help: the trait `FromJValue<'a, '_, '_>` is not implemented for `JObject<'local>`
+                  but trait `FromJValue<'_, '_, '_>` is implemented for `&JObject<'_>`
+          = help: for that trait implementation, expected `&JObject<'_>`, found `JObject<'local>`
+          = note: required for `JObject<'local>` to implement `FieldFromJValue<'_, '_>`
     ")}));
     assert_compile_fail(t, "jthrowable_require_class", indoc!("
         use ez_jni::FromObject;
@@ -51,9 +60,17 @@ fn from_object_derive() {
             member: JThrowable<'local>,
         }
     "), Some(ErrorContent {
+        code: Some("E0277"),
         msg: "the trait bound `JThrowable<'local>: FieldFromJValue<'_, '_>` is not satisfied",
-        loc: "",
+        loc: "9:13",
         preview: indoc!("
-        TODO
+          |
+        9 |     member: JThrowable<'local>,
+          |             ^^^^^^^^^^^^^^^^^^ the trait `for<'a> FromJValue<'a, '_, '_>` is not implemented for `JThrowable<'local>`
+          |
+          = help: the trait `FromJValue<'a, '_, '_>` is not implemented for `JThrowable<'local>`
+                  but trait `FromJValue<'_, '_, '_>` is implemented for `&JThrowable<'_>`
+          = help: for that trait implementation, expected `&JThrowable<'_>`, found `JThrowable<'local>`
+          = note: required for `JThrowable<'local>` to implement `FieldFromJValue<'_, '_>`
     ")}));
 }

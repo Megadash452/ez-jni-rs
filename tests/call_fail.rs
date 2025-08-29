@@ -12,6 +12,7 @@ fn return_() {
         use ez_jni::call;
         call!(static me.test.Test.method() -> Option<void>);
     "), Some(ErrorContent {
+        code: None,
         msg: "'void' is not allowed here.",
         loc: "4:46",
         preview: indoc!("
@@ -23,6 +24,7 @@ fn return_() {
         use ez_jni::call;
         call!(static me.test.Test.method() -> Option<int>);
     "), Some(ErrorContent {
+        code: None,
         msg: "Primitives are not allowed as the Option's inner type. Only Classes are allowed here.",
         loc: "4:46",
         preview: indoc!("
@@ -34,6 +36,7 @@ fn return_() {
         use ez_jni::call;
         call!(static me.test.Test.method() -> Option<Result<int, String>>);
     "), Some(ErrorContent {
+        code: None,
         msg: "'Result' is not allowed as an inner type, it must be the outermost type.",
         loc: "4:46",
         preview: indoc!("
@@ -45,6 +48,7 @@ fn return_() {
         use ez_jni::call;
         call!(static me.test.Test.method() -> Option<Option<int>>);
     "), Some(ErrorContent {
+        code: None,
         msg: "'Option' is not allowed here.",
         loc: "4:46",
         preview: indoc!("
@@ -56,6 +60,7 @@ fn return_() {
         use ez_jni::call;
         call!(static me.test.Test.method() -> Result<Result<int, String>, String>);
     "), Some(ErrorContent {
+        code: None,
         msg: "Can't use 'Result' here.",
         loc: "4:46",
         preview: indoc!("
@@ -67,6 +72,7 @@ fn return_() {
         use ez_jni::call;
         call!(static me.test.Test.getIntArray() -> [Option<int>]);
     "), Some(ErrorContent {
+        code: None,
         msg: "Primitives are not allowed as the Option's inner type. Only Classes are allowed here.",
         loc: "4:52",
         preview: indoc!("
@@ -84,6 +90,7 @@ fn arguments() {
         use ez_jni::call;
         call!(static me.test.Test.method(Option<int>(null)) -> void);
     "), Some(ErrorContent {
+        code: None,
         msg: "Primitives are not allowed as the Option's inner type. Only Classes are allowed here.",
         loc: "4:41",
         preview: indoc!("
@@ -95,6 +102,7 @@ fn arguments() {
         use ez_jni::call;
         call!(static me.test.Test.method(Option<[int]>(null)) -> void);
     "), Some(ErrorContent {
+        code: None,
         msg: "Can't use 'Option' in call! or new! arguments. Instead, use 'null' as the value.",
         loc: "4:34",
         preview: indoc!("
@@ -106,6 +114,7 @@ fn arguments() {
         use ez_jni::call;
         call!(static me.test.Test.method([Option<int>](null)) -> void);
     "), Some(ErrorContent {
+        code: None,
         msg: "Primitives are not allowed as the Option's inner type. Only Classes are allowed here.",
         loc: "4:42",
         preview: indoc!("
@@ -117,6 +126,7 @@ fn arguments() {
         use ez_jni::call;
         call!(static me.test.Test.method(int(null)) -> void);
     "), Some(ErrorContent {
+        code: None,
         msg: "Can't use 'null' as value of primitive argument type.",
         loc: "4:38",
         preview: indoc!("
