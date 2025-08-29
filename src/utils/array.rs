@@ -16,7 +16,7 @@ where T: Primitive {
             .map(#[inline] |&t| elem_conversion(t))
             .collect::<Box<[_]>>(),
         // If the type requires no conversion, then T and T::JType are the same and are safe to transmute.
-        None => unsafe { std::mem::transmute::<&[T], &[T::JType]>(slice) }
+        None => unsafe { std::mem::transmute::<&[T], &[T::JNIType]>(slice) }
     };
 
     // Allocate the array
@@ -40,11 +40,11 @@ where T: Primitive + for<'a, 'obj, 'local> FromObject<'a, 'obj, 'local> {
         return Err(FromObjectError::Null);
     }
 
-    let array = <&JPrimitiveArray<'_, T::JType>>::from(obj);
+    let array = <&JPrimitiveArray<'_, T::JNIType>>::from(obj);
     let array_class = call!(env=> call!(env=> obj.getClass() -> Class).getName() -> String);
 
     // Check if array contains primitives or Objects of primitives.
-    if array_class == format!("[L{};", T::JNAME) {
+    if array_class == format!("[{}", T::JSIG) {
         // Array contains primitives
         let len = env.get_array_length(array)
             .map_err(|err| FromObjectError::Other(format!("Failed to check Array's length: {err}")))?
@@ -61,7 +61,7 @@ where T: Primitive + for<'a, 'obj, 'local> FromObject<'a, 'obj, 'local> {
                 .map(#[inline] |t| elem_conversion(t))
                 .collect::<Box<[_]>>(),
             // If the type requires no conversion, then T and T::JType are the same and are safe to transmute.
-            None => unsafe { std::mem::transmute::<Box<[T::JType]>, Box<[T]>>(vec) }
+            None => unsafe { std::mem::transmute::<Box<[T::JNIType]>, Box<[T]>>(vec) }
         })
     } else if array_class == format!("[L{};", T::class()) {
         // Array contains Objects of primitives (e.g. java/lang/Integer).
@@ -73,7 +73,7 @@ where T: Primitive + for<'a, 'obj, 'local> FromObject<'a, 'obj, 'local> {
     } else {
         Err(FromObjectError::ClassMismatch {
             obj_class: array_class,
-            target_class: Some(format!("[L{};", T::JNAME))
+            target_class: Some(format!("[{}", T::JSIG))
         })
     }
 }

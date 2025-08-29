@@ -120,6 +120,8 @@ fn return_arrays() { run_with_jnienv(|| {
 #[test]
 fn return_arrays_other() { run_with_jnienv(|| {
     // Object
+    let _: Box<[JObject]> = call!(static me.test.Test.getObjectPrimitiveArray() -> [java.lang.Boolean]);
+    let _: Box<[bool]> = call!(static me.test.Test.getObjectPrimitiveArray() -> [bool]);
     let _: Box<[JObject]> = call!(static me.test.Test.getObjectArray() -> [java.lang.Object]);
     let _: Box<[JObject]> = call!(static me.test.Test.getStringArray() -> [java.lang.String]);
     let _: Box<[String]> = call!(static me.test.Test.getStringArray() -> [String]);
