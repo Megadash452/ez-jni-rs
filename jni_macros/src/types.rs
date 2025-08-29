@@ -733,7 +733,7 @@ impl Display for InnerType {
 /// So [`Class`] is needed for that context.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClassRustType {
-    JObject, JClass, JThrowable, String
+    JObject, JClass, JThrowable, /* JString, */ String
 }
 impl Display for ClassRustType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

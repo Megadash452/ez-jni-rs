@@ -59,13 +59,10 @@ pub enum FromObjectError {
 ///   - **`name`**: Use a different name for the Object's field lookup instead of the field's name.
 ///     Mutually exclusive with `call`.
 ///   - **`call`**: Instead of accessing a field, Call a *getter method* with this name.
-/// // TODO: Also do GlobalRef                     vvvvvvvvvvvvvvvvvvvvvvvvvvvvv
-///   - **`class`**: If the struct field's type is [`JObject`] or [`JThrowable`] require that it be of a specific Class.
-///                  The class can also be wrapped in *square brackets* if the [`JObject`] or [`JThrowable`] is in a `Boxed Slice` or [`Vec`],
+///   - **`class`**: Change the **field's** *java type signature* to use a custom **class** in the jni call.
+///                  The class can also be wrapped in *square brackets* if the *Rust type* is wrapped in a `Boxed Slice` or [`Vec`],
 ///                  with support for multiple dimensions.
-///                  <br><br>
-///                  the **class** attribute also affects the call's *type signature* under the hood.
-///                     
+///                  Note: [`JObject`] and [`JThrowable`] require the user to provide a specic class using this attribute.
 /// 
 /// ```
 /// # use ez_jni::FromObject;

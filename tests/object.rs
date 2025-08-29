@@ -193,7 +193,7 @@ struct MyClass2<'local> {
 #[class(me.test.Test)]
 struct MyClass3 {
     #[field(call = memberObject, class = java.lang.Integer)]
-    member: i32,
+    member: Option<i32>,
 }
 
 /// Test field FromObject for custom structs
@@ -267,7 +267,7 @@ fn from_object() { run_with_jnienv(|| {
             .as_ref(),
         ARRAY_VAL
     );
-    assert_eq!(MyClass3::from_object(&object).unwrap().member, VAL);
+    assert_eq!(MyClass3::from_object(&object).unwrap().member, Some(VAL));
     assert_eq!(MyWrapperClass::from_object(&object).unwrap().member.0, VAL);
 
     object = new!(me.test.Test$SumClass$SumClass1(int(VAL)));

@@ -39,7 +39,8 @@ pub fn assert_compile_fail(t: &TestCases, name: &str, input: &str, error: Option
     // Write Rust file content
     std::fs::File::create(&file_path)
         .unwrap_or_else(|err| panic!("Error opeining compile_fail file: {err}"))
-        .write_all(format!("fn main() {{let env = std::mem::zeroed();\n\n{input}\n\n}}").as_bytes())
+        // .write_all(format!("fn main() {{ #[allow(unused, invalid_value)] let env: &mut ::jni::JNIEnv<'_> = unsafe{{std::mem::zeroed()}};\n\n{input}\n\n}}").as_bytes())
+        .write_all(format!("fn main() {{\n\n{input}\n\n}}").as_bytes())
         .unwrap_or_else(|err| panic!("Error writing to file: {err}"));
     // Write error content
     if let Some(error) = &error {
