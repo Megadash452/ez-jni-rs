@@ -1,4 +1,4 @@
-use crate::{__throw::get_jni_error_msg};
+use crate::__throw::get_jni_error_msg;
 use ez_jni_macros::new;
 use jni::objects::GlobalRef;
 use std::{io, fmt::{Debug, Display}};
@@ -62,7 +62,7 @@ impl<'local> FromObject<'_, '_, '_> for JavaException {
 
         Ok(Self {
             class,
-            message: call!(object.get_message() -> String),
+            message: call!(env=> object.getMessage() -> String),
             exception: env
                 .new_global_ref(&object)
                 .map_err(|err| FromObjectError::Other(get_jni_error_msg(err, env)))?,
