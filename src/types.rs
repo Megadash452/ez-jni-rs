@@ -80,6 +80,7 @@ where T: Class {
         Cow::Owned(if elem_class.contains('[') {
             format!("[{elem_class}")
         } else {
+            // FIXME: Primitives (e.g. Z) don't use L{}; .... May need different implementation for primitives
             format!("[L{elem_class};")
         })
     }
@@ -93,20 +94,6 @@ where T: Class {
 }
 impl_class!(<T> for Box<[T]> => [T]);
 impl_class!(<T> for Vec<T> => [T]);
-
-// impl ClassCheck for JObject<'_> {
-//     fn type_class() -> Option<&'static str> { None }
-//     fn array_elem_class(slice: &[impl AsRef<Self>]) -> Cow<str> {
-//         for obj in slice {
-//             let obj = obj.as_ref();
-
-//             todo!()
-//         }
-
-//         // Could not determine the class of the elements
-//         Cow::Borrowed("java/lang/Object")
-//     }
-// }
 
 // TODO: when generic_const_items https://github.com/rust-lang/rust/issues/113521 is stablized, delete DynamicClass trait and use `const_format::formatcp!("[L{};", T::CLASS_PATH)`
 // impl<T> Class for [T]

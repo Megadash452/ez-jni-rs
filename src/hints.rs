@@ -103,9 +103,12 @@ pub(crate) fn check_method_existence(class: JClass<'_>, method_name: &'static st
 /// 
 /// This function makes *A LOT* Java calls, so it can be quite slow,
 /// so it only exists in DEBUG builds.
-pub(crate) fn check_field_existence(class: JClass<'_>, field_name: &'static str, field_ty: &str, env: &mut JNIEnv<'_>) -> JNIResult<()> {
+pub(crate) fn check_field_existence(class: &JClass<'_>, field_name: &'static str, field_ty: &str, env: &mut JNIEnv<'_>) -> JNIResult<()> {
     // Find all the classes that this Class is a descendant of (including itself)
-    let mut classes = vec![class];
+    let mut classes = vec![JClass::from(
+            env.new_local_ref(class) // new_local_ref() is ok here because it is only used once with no recursion or anything else fancy
+                .unwrap_or_else(|err| crate::__throw::handle_jni_call_error(err, env))
+    )];
     while let Some(class) = env.get_superclass(classes.last().unwrap())? {
         classes.push(class);
     }
@@ -411,18 +414,18 @@ mod tests {
         setup_env!(env);
 
         println!("--- Same Name and same Type Fields");
-        check_field_existence(env.find_class("java/lang/Integer").unwrap(), "SIZE", "I", &mut env).unwrap();
+        check_field_existence(&env.find_class("java/lang/Integer").unwrap(), "SIZE", "I", &mut env).unwrap();
         println!("--- Same Name but different Type Fields");
-        check_field_existence(env.find_class("java/lang/Integer").unwrap(), "SIZE", "J", &mut env).unwrap();
+        check_field_existence(&env.find_class("java/lang/Integer").unwrap(), "SIZE", "J", &mut env).unwrap();
         println!("--- Similar Name and same Type Methods");
-        check_field_existence(env.find_class("java/lang/Integer").unwrap(), "intValue", "I", &mut env).unwrap();
-        check_field_existence(env.find_class("java/lang/Integer").unwrap(), "string", "Ljava/lang/String;", &mut env).unwrap();
+        check_field_existence(&env.find_class("java/lang/Integer").unwrap(), "intValue", "I", &mut env).unwrap();
+        check_field_existence(&env.find_class("java/lang/Integer").unwrap(), "string", "Ljava/lang/String;", &mut env).unwrap();
         println!("--- Similar Name but different Type Methods");
-        check_field_existence(env.find_class("java/lang/Integer").unwrap(), "intValue", "J", &mut env).unwrap();
+        check_field_existence(&env.find_class("java/lang/Integer").unwrap(), "intValue", "J", &mut env).unwrap();
         println!("--- Fields and Methods with the same Type");
-        check_field_existence(env.find_class("java/lang/Integer").unwrap(), "myOwnField", "I", &mut env).unwrap();
+        check_field_existence(&env.find_class("java/lang/Integer").unwrap(), "myOwnField", "I", &mut env).unwrap();
         println!("--- No matches");
-        check_field_existence(env.find_class("java/lang/Integer").unwrap(), "myOwnField", "Lme.my.Class;", &mut env).unwrap();
+        check_field_existence(&env.find_class("java/lang/Integer").unwrap(), "myOwnField", "Lme.my.Class;", &mut env).unwrap();
     }
 
     #[test]

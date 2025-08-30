@@ -111,7 +111,7 @@ pub fn derive_enum(mut enm: ItemEnum) -> syn::Result<TokenStream> {
                     return Err(::ez_jni::FromObjectError::Null);
                 }
 
-                let __class = ::ez_jni::call!(env=> call!(env=> object.getClass() -> Class).getName() -> String);
+                let __class = ::ez_jni::utils::get_object_class_name(object, env);
 
                 #base_class_check
 

@@ -1,4 +1,4 @@
-use crate::__throw::get_jni_error_msg;
+use crate::{__throw::get_jni_error_msg, utils::get_object_class_name};
 use ez_jni_macros::new;
 use jni::objects::GlobalRef;
 use std::{io, fmt::{Debug, Display}};
@@ -48,7 +48,7 @@ impl Debug for JavaException {
 }
 impl<'local> FromObject<'_, '_, '_> for JavaException {
     fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        let class = call!(env=> call!(env=> object.getClass() -> Class).getName() -> String);
+        let class = get_object_class_name(object, env);
 
         // Check that Object is an Exception
         if !env.is_instance_of(object, <Self as Class>::class())
@@ -72,7 +72,7 @@ impl<'local> FromObject<'_, '_, '_> for JavaException {
 impl ToObject for JavaException {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         env.new_local_ref(&self.exception)
-            .unwrap_or_else(|err| panic!("{}", get_jni_error_msg(err, env)))
+            .unwrap_or_else(|err| crate::__throw::handle_jni_call_error(err, env))
     }
 }
 
@@ -114,8 +114,8 @@ impl FromObject<'_, '_, '_> for std::io::Error {
             return Err(FromObjectError::Null);
         }
         
-        let class = call!(env=> call!(object.getClass() -> Class).getName() -> String);
-        let msg = call!(env=> object.getMessage() -> Option<String>).unwrap_or_default();
+        let class = get_object_class_name(object, env);
+        let msg = call!(env=> object.getMessage() -> String);
 
         // All classes in map extend java.io.IOException.
         // Check this before the classes in map to avoid a bunch of pointless JNI calls

@@ -1,7 +1,7 @@
 //! These functions are used in [`call!`] and *similar macros*.
 use jni::{errors::Error as JNIError, objects::GlobalRef};
 use super::*;
-use crate::{utils::JNI_CALL_GHOST_EXCEPTION, FromObject, JavaException};
+use crate::{utils::{get_object_class_name, JNI_CALL_GHOST_EXCEPTION}, FromObject, JavaException};
 
 /// Checks if there is a *pending Exception* that was thrown from a previous JNI call,
 /// and tries to convert it to an `E` and the Exception is caught and cleared.
@@ -82,10 +82,10 @@ pub fn get_jni_error_msg(error: JNIError, env: &mut JNIEnv<'_>) -> String {
 
             call!(env=> exception.getMessage() -> Option<String>)
                 .unwrap_or_else(|| {
-                    let class = call!(env=> call!(env=> exception.getClass() -> Class).getName() -> String);
+                    let class = get_object_class_name(&exception, env);
                     panic!("Could not get message from exception {class}");
                 })
         },
-        error => panic!("{error}")
+        error => error.to_string()
     }
 }

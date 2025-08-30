@@ -26,7 +26,6 @@ fn from_object_derive() {
         8 |     #[field(name = myMember, call = memberField)]
           |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     ")}));
-    // FIXME: comiler complains that JObject does not implement FromJValue, but that trait is not used at all here.
     assert_compile_fail(t, "jobject_require_class", indoc!("
         use ez_jni::FromObject;
         use jni::objects::JObject;

@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use jni::{
     errors::Error as JNIError, objects::{JClass, JObject, JThrowable, JValue, JValueGen, JValueOwned}, JNIEnv
 };
-use crate::{call, Class, FromJValue, FromJValueError, FromObject, FromObjectError, JValueType, __throw::try_catch, utils::ResultExt};
+use crate::{call, Class, FromJValue, FromJValueError, FromObject, FromObjectError, JValueType, __throw::try_catch, utils::{get_object_class_name, ResultExt}};
 use super::{field_helper, getter_name_and_sig, FieldNotFound, MethodNotFound};
 
 /// Trait for `call!` to use to convert the return value.
@@ -219,20 +219,19 @@ where T: for<'a> FromObject<'a, 'obj, 'local> {
 /// 
 /// This is used by the derive macros of [`FromObject`][crate::FromObject] and [`FromObject`][crate::FromException].
 pub fn from_object_get_field<'local>(object: &JObject<'_>, name: &'static str, ty: &str, env: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, FromObjectError> {
-    field_helper(name, ty,
+    field_helper(super::Callee::Object(object), name, ty,
         |env| env.get_field(object, name, ty),
         |env| {
             let (name, sig) = getter_name_and_sig(name, ty);
             env.call_method(object, name, sig, &[])
         },
-        |env| env.get_object_class(object),
     env)
         .map_err(|err| {
             // Create the error that will be returned before checking
             let not_found_error = FromObjectError::FieldNotFound {
                 name: name.to_string(),
                 ty: ty.to_string(),
-                target_class: call!(env=> call!(env=> object.getClass() -> Class).getName() -> String)
+                target_class: get_object_class_name(object, env)
             };
             match err {
                 // NUll was already checked, will not appear here

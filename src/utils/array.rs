@@ -1,6 +1,6 @@
 //! Contains helper functions for the To/FromObject implementatios in `/src/object/impl_array.rs`.
 use jni::{objects::{JClass, JObject, JObjectArray, JPrimitiveArray}, sys::jsize, JNIEnv};
-use crate::{call, FromObject, FromObjectError, Primitive};
+use crate::{utils::get_object_class_name, FromObject, FromObjectError, Primitive};
 
 
 /// Create a Java **Array** from a Rust [slice](https://doc.rust-lang.org/std/primitive.slice.html),
@@ -41,7 +41,7 @@ where T: Primitive + for<'a, 'obj, 'local> FromObject<'a, 'obj, 'local> {
     }
 
     let array = <&JPrimitiveArray<'_, T::JNIType>>::from(obj);
-    let array_class = call!(env=> call!(env=> obj.getClass() -> Class).getName() -> String);
+    let array_class = get_object_class_name(obj, env);
 
     // Check if array contains primitives or Objects of primitives.
     if array_class == format!("[{}", T::JSIG) {

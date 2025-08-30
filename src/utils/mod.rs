@@ -2,15 +2,15 @@ mod call;
 #[doc(hidden)]
 mod object;
 mod array;
-use std::fmt::{Display, Debug};
+use std::fmt::{Debug, Display};
 
 pub use call::*;
 #[doc(hidden)]
 pub use object::*;
 pub use array::*;
 
-use jni::JNIEnv;
-use crate::{FromObject, LOCAL_JNIENV_STACK};
+use jni::{objects::JObject, JNIEnv};
+use crate::{call, FromObject, LOCAL_JNIENV_STACK};
 
 #[doc(hidden)]
 pub use cfg_if;
@@ -19,10 +19,12 @@ pub use cfg_if;
 /// but no Exception was found.
 pub(crate) static JNI_CALL_GHOST_EXCEPTION: &str = "JNI Call returned with Error::JavaException, but no exception was found.";
 
+/// A wrapper type for a `java.lang.NoSuchFieldError` **Exception**.
 #[derive(FromObject)]
 #[class(java.lang.NoSuchFieldError)]
 struct FieldNotFound;
 
+/// A wrapper type for a `java.lang.NoSuchMethodError` **Exception**.
 #[derive(FromObject)]
 #[class(java.lang.NoSuchMethodError)]
 struct MethodNotFound;
@@ -96,6 +98,15 @@ pub fn get_env<'a, 'local>() -> &'a mut JNIEnv<'local> {
           Thus, the return value cannot exit that root function. */
         unsafe { std::mem::transmute::<&'_ mut JNIEnv<'static>, &'a mut JNIEnv<'local>>(env) }
     })
+}
+
+/// Returns the fully qualified **Class** name of the provided **object** (e.g. `"java.lang.String"`).
+/// 
+/// `panic!`s if there is an error.
+pub fn get_object_class_name(object: &JObject<'_>, env: &mut JNIEnv<'_>) -> String {
+    let class = env.get_object_class(object)
+        .unwrap_or_else(|err| crate::__throw::handle_jni_call_error(err, env));
+    call!(env=> class.getName() -> String)
 }
 
 pub trait ResultExt<T> {
