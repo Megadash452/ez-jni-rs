@@ -43,6 +43,33 @@ fn return_primitives() { run_with_jnienv(|| {
     assert_eq!(r, 3.3);
     let r: f64 = call!(static me.test.Test.getDouble() -> f64);
     assert_eq!(r, 3.3);
+    // Return primitive Object with option
+    let r: Option<bool> = call!(static me.test.Test.getBooleanObj() -> Option<bool>);
+    assert_eq!(r, Some(true));
+    let r: Option<char> = call!(static me.test.Test.getCharObj() -> Option<char>);
+    assert_eq!(r, Some('a'));
+    let r: Option<u8> = call!(static me.test.Test.getByteObj() -> Option<u8>);
+    assert_eq!(r, Some(3));
+    let r: Option<u16> = call!(static me.test.Test.getShortObj() -> Option<u16>);
+    assert_eq!(r, Some(3));
+    let r: Option<u32> = call!(static me.test.Test.getIntObj() -> Option<u32>);
+    assert_eq!(r, Some(3));
+    let r: Option<u64> = call!(static me.test.Test.getLongObj() -> Option<u64>);
+    assert_eq!(r, Some(3));
+    let r: Option<i8> = call!(static me.test.Test.getByteObj() -> Option<i8>);
+    assert_eq!(r, Some(3));
+    let r: Option<i16> = call!(static me.test.Test.getShortObj() -> Option<i16>);
+    assert_eq!(r, Some(3));
+    let r: Option<i32> = call!(static me.test.Test.getIntObj() -> Option<i32>);
+    assert_eq!(r, Some(3));
+    let r: Option<i64> = call!(static me.test.Test.getLongObj() -> Option<i64>);
+    assert_eq!(r, Some(3));
+    let r: Option<f32> = call!(static me.test.Test.getFloatObj() -> Option<f32>);
+    assert_eq!(r, Some(3.3));
+    let r: Option<f64> = call!(static me.test.Test.getDoubleObj() -> Option<f64>);
+    assert_eq!(r, Some(3.3));
+    let r: Option<bool> = call!(static me.test.Test.getNullPrim() -> Option<bool>);
+    assert!(r.is_none());
 }) }
 
 #[test]
@@ -112,16 +139,44 @@ fn return_arrays() { run_with_jnienv(|| {
     let r: Box<[f64]> = call!(static me.test.Test.getDoubleArray() -> [f64]);
     assert_eq!(r.as_ref(), &[1.1, 2.2, 3.3]);
     // Multi-Dimensional Array
+    // 2 Dimensional
     let r: Box<[Box<[i32]>]> = call!(static me.test.Test.get2DIntArray() -> [[int]]);
     let expect: Box<[Box<[i32]>]> = Box::new([Box::new([1, 2]), Box::new([3, 4])]);
     assert_eq!(r, expect);
+    // 3 Dimensional
+    let r: Box<[Box<[Box<[i32]>]>]> = call!(static me.test.Test.get3DIntArray() -> [[[int]]]);
+    let expect: Box<[Box<[Box<[i32]>]>]> = Box::new([Box::new([Box::new([1, 2]), Box::new([3, 4])]), Box::new([Box::new([5, 6]), Box::new([7, 8])])]);
+    assert_eq!(r, expect);
+    // Primitive Object Array with option
+    let r: Box<[Option<bool>]> = call!(static me.test.Test.getBooleanObjArray() -> [Option<bool>]);
+    assert_eq!(r.as_ref(), &[Some(true), None]);
+    let r: Box<[Option<char>]> = call!(static me.test.Test.getCharObjArray() -> [Option<char>]);
+    assert_eq!(r.as_ref(), &[Some('a'), None]);
+    let r: Box<[Option<u8>]> = call!(static me.test.Test.getByteObjArray() -> [Option<u8>]);
+    assert_eq!(r.as_ref(), &[Some(1), None]);
+    let r: Box<[Option<u16>]> = call!(static me.test.Test.getShortObjArray() -> [Option<u16>]);
+    assert_eq!(r.as_ref(), &[Some(1), None]);
+    let r: Box<[Option<u32>]> = call!(static me.test.Test.getIntObjArray() -> [Option<u32>]);
+    assert_eq!(r.as_ref(), &[Some(1), None]);
+    let r: Box<[Option<u64>]> = call!(static me.test.Test.getLongObjArray() -> [Option<u64>]);
+    assert_eq!(r.as_ref(), &[Some(1), None]);
+    let r: Box<[Option<i8>]> = call!(static me.test.Test.getByteObjArray() -> [Option<i8>]);
+    assert_eq!(r.as_ref(), &[Some(1), None]);
+    let r: Box<[Option<i16>]> = call!(static me.test.Test.getShortObjArray() -> [Option<i16>]);
+    assert_eq!(r.as_ref(), &[Some(1), None]);
+    let r: Box<[Option<i32>]> = call!(static me.test.Test.getIntObjArray() -> [Option<i32>]);
+    assert_eq!(r.as_ref(), &[Some(1), None]);
+    let r: Box<[Option<i64>]> = call!(static me.test.Test.getLongObjArray() -> [Option<i64>]);
+    assert_eq!(r.as_ref(), &[Some(1), None]);
+    let r: Box<[Option<f32>]> = call!(static me.test.Test.getFloatObjArray() -> [Option<f32>]);
+    assert_eq!(r.as_ref(), &[Some(1.1), None]);
+    let r: Box<[Option<f64>]> = call!(static me.test.Test.getDoubleObjArray() -> [Option<f64>]);
+    assert_eq!(r.as_ref(), &[Some(1.1), None]);
 }) }
 
 #[test]
 fn return_arrays_other() { run_with_jnienv(|| {
     // Object
-    let _: Box<[JObject]> = call!(static me.test.Test.getObjectPrimitiveArray() -> [java.lang.Boolean]);
-    let _: Box<[bool]> = call!(static me.test.Test.getObjectPrimitiveArray() -> [bool]);
     let _: Box<[JObject]> = call!(static me.test.Test.getObjectArray() -> [java.lang.Object]);
     let _: Box<[JObject]> = call!(static me.test.Test.getStringArray() -> [java.lang.String]);
     let _: Box<[String]> = call!(static me.test.Test.getStringArray() -> [String]);
@@ -138,38 +193,24 @@ fn return_arrays_other() { run_with_jnienv(|| {
     // Option
     let r: Option<Box<[bool]>> = call!(static me.test.Test.getBooleanArray() -> Option<[bool]>);
     r.unwrap();
-    let r: Option<Box<[bool]>> = call!(static me.test.Test.nullPrimArray() -> Option<[bool]>);
+    let r: Option<Box<[bool]>> = call!(static me.test.Test.primNullArray() -> Option<[bool]>);
     assert!(r.is_none());
-    let r: Option<Box<[JObject]>> =
-        call!(static me.test.Test.getObjectArray() -> Option<[java.lang.Object]>);
+    let r: Option<Box<[JObject]>> = call!(static me.test.Test.getObjectArray() -> Option<[java.lang.Object]>);
     r.unwrap();
-    let r: Option<Box<[JObject]>> =
-        call!(static me.test.Test.nullObjArray() -> Option<[java.lang.Object]>);
+    let r: Option<Box<[JObject]>> = call!(static me.test.Test.objNullArray() -> Option<[java.lang.Object]>);
     assert!(r.is_none());
     // Array Option
     let r: Box<[Option<String>]> = call!(static me.test.Test.getStringArray() -> [Option<String>]);
-    let expect: Box<[Option<String>]> = Box::new(["Hello", "World"].map(|s| Some(s.to_string())));
-    assert_eq!(r, expect);
-    let r: Box<[Option<String>]> =
-        call!(static me.test.Test.getNullStringArray() -> [Option<String>]);
-    let expect: Box<[Option<String>]> =
-        Box::new([Some("Hello"), None].map(|s| s.map(|s| s.to_string())));
-    assert_eq!(r, expect);
-    let r: Box<[Option<JObject>]> =
-        call!(static me.test.Test.getObjectArray() -> [Option<java.lang.Object>]);
-    r.into_vec().into_iter().for_each(|s| {
-        s.unwrap();
-    });
-    let r: Option<Box<[Option<String>]>> =
-        call!(static me.test.Test.getStringArray() -> Option<[Option<String>]>);
-    r.unwrap().into_vec().into_iter().for_each(|s| {
-        s.unwrap();
-    });
-    let r: Option<Box<[Option<JObject>]>> =
-        call!(static me.test.Test.getObjectArray() -> Option<[Option<java.lang.Object>]>);
-    r.unwrap().into_vec().into_iter().for_each(|s| {
-        s.unwrap();
-    });
+    assert_eq!(r.as_ref(), ["Hello", "World"].map(|s| Some(s.to_string())));
+    let r: Box<[Option<String>]> = call!(static me.test.Test.getNullStringArray() -> [Option<String>]);
+    assert_eq!(r.as_ref(), [Some("Hello"), None].map(|s| s.map(|s| s.to_string())));
+    let r: Box<[Option<JObject>]> = call!(static me.test.Test.getObjectArray() -> [Option<java.lang.Object>]);
+    r.into_vec().into_iter().map(Option::unwrap).for_each(|_| {});
+    let r: Option<Box<[Option<String>]>> = call!(static me.test.Test.getStringArray() -> Option<[Option<String>]>);
+    assert_eq!(r.unwrap().as_ref(), &[Some("Hello"), None].map(|s| s.map(|s| s.to_string())));
+    let r: Option<Box<[Option<JObject>]>> = call!(static me.test.Test.getObjectArray() -> Option<[Option<java.lang.Object>]>);
+    r.unwrap().into_vec().into_iter().map(Option::unwrap).for_each(|_| {});
+
     // Multi-Dimensional Arrays
     let r: Box<[Box<[String]>]> = call!(static me.test.Test.get2DStringArray() -> [[String]]);
     let expect: Box<[Box<[String]>]> = Box::new([
@@ -180,11 +221,11 @@ fn return_arrays_other() { run_with_jnienv(|| {
     // Result<Option<_>, _>
     let r: Result<Option<Box<[bool]>>, JavaException> = call!(static me.test.Test.getBooleanArray() -> Result<Option<[bool]>, Exception>);
     r.unwrap().unwrap();
-    let r: Result<Option<Box<[bool]>>, JavaException> = call!(static me.test.Test.nullPrimArray() -> Result<Option<[bool]>, Exception>);
+    let r: Result<Option<Box<[bool]>>, JavaException> = call!(static me.test.Test.primNullArray() -> Result<Option<[bool]>, Exception>);
     assert!(r.unwrap().is_none());
     let r: Result<Option<Box<[JObject]>>, JavaException> = call!(static me.test.Test.getObjectArray() -> Result<Option<[java.lang.Object]>, Exception>);
     r.unwrap().unwrap();
-    let r: Result<Option<Box<[JObject]>>, JavaException> = call!(static me.test.Test.nullObjArray() -> Result<Option<[java.lang.Object]>, Exception>);
+    let r: Result<Option<Box<[JObject]>>, JavaException> = call!(static me.test.Test.objNullArray() -> Result<Option<[java.lang.Object]>, Exception>);
     assert!(r.unwrap().is_none());
 }) }
 
@@ -198,7 +239,7 @@ fn return_fail() { run_with_jnienv(|| {
     // .map_err(op); // TODO: Ensure error is "called `Result::unwrap()` on an `Err` value: Null"
     // Returned Array should NOT be NULL
     catch_unwind(AssertUnwindSafe(
-        || call!(static me.test.Test.nullObjArray() -> [java.lang.Object]),
+        || call!(static me.test.Test.objNullArray() -> [java.lang.Object]),
     ))
     .unwrap_err();
     // .map_err(op); // TODO: Ensure error is "called `Result::unwrap()` on an `Err` value: Object(Null)"
@@ -210,7 +251,7 @@ fn return_fail() { run_with_jnienv(|| {
     // .map_err(op); // TODO: Ensure error is "called `Result::unwrap()` on an `Err` value: Object(Null)"
     // Returned Array should NOT be NULL, even if its Objects can
     catch_unwind(AssertUnwindSafe(
-        || call!(static me.test.Test.nullObjArray() -> [Option<java.lang.Object>]),
+        || call!(static me.test.Test.objNullArray() -> [Option<java.lang.Object>]),
     ))
     .unwrap_err();
     // .map_err(op); // TODO: Ensure error is "called `Result::unwrap()` on an `Err` value: Object(Null)"
@@ -231,6 +272,16 @@ fn arguments() { run_with_jnienv(|| {
     call!(static me.test.Test.otherArgs(Class(null), Exception(null)) -> void);
     // call!(static me.test.Test.objArgs(java.lang.Object(None), java.lang.String(Some("hi"))) -> void);
     call!(static me.test.Test.objArgs(java.lang.Object(null), java.lang.String(null)) -> void);
+    call!(static me.test.Test.primObjArgs(
+        java.lang.Boolean(true),
+        java.lang.Character('a'),
+        java.lang.Byte(1i8),
+        java.lang.Short(1i16),
+        java.lang.Integer(1i32),
+        java.lang.Long(1i64),
+        java.lang.Float(1f32),
+        java.lang.Double(1f64)
+    ) -> void);
     // -- Primitive Array Arguments
     // Rust slices stored in variables
     // Also tests types that can be coerced to slice
@@ -253,6 +304,16 @@ fn arguments() { run_with_jnienv(|| {
         [long]([1i64, 2]),
         [float]([1f32, 2.0]),
         [double]([1f64, 2.0]),
+    ) -> void);
+    call!(static me.test.Test.primObjArrayArgs(
+        [java.lang.Boolean]([true, false]),
+        [java.lang.Character](['a', 'b']),
+        [java.lang.Byte]([1i8, 2]),
+        [java.lang.Short]([1i16, 2]),
+        [java.lang.Integer]([1i32, 2]),
+        [java.lang.Long]([1i64, 2]),
+        [java.lang.Float]([1f32, 2.0]),
+        [java.lang.Double]([1f64, 2.0]),
     ) -> void);
     // Arrays with Rust primitive as Inner type
     call!(static me.test.Test.primArrayArgs(
