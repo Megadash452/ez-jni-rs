@@ -5,7 +5,7 @@ use syn::{
     parenthesized, parse::{discouraged::Speculative, Parse, ParseStream, Parser}, punctuated::Punctuated, Expr, Ident, LitStr, Token
 };
 use crate::{
-    types::{ArrayType, Class, ClassRustType, InnerType, SigType, Type, NULL_KEYWORD},
+    types::{Class, ClassRustType, InnerType, SigType, Type, NULL_KEYWORD},
     utils::{gen_signature, join_spans, Spanned, StepResult, TokenTreeExt as _}
 };
 
@@ -477,19 +477,19 @@ impl Parse for Parameter {
         if let Type::Option { ident, .. } = &ty {
             return Err(syn::Error::new(
                 ident.span(),
-                "Can't use 'Option' in call! or new! arguments. Instead, use 'null' as the value."
+                format!("Can't use 'Option' in call! or new! arguments. Instead, use '{NULL_KEYWORD}' as the value.")
             ))
         }
 
         // Check that the correct Value was passed in for the correct Type
         match &value {
-            // null can be used for Object and Array
+            // null can be used for Object and Array only.
             ParamValue::Null(null) => match &ty {
                 Type::Assertive(InnerType::JavaPrimitive { .. } | InnerType::RustPrimitive { .. })
-                    => return Err(syn::Error::new(null.span(), "Can't use 'null' as value of primitive argument type.")),
-                Type::Assertive(InnerType::Object(_))
-                | Type::Option { .. }
-                | Type::Array(_) => { },
+                | Type::Option { ty: InnerType::JavaPrimitive { .. } | InnerType::RustPrimitive { .. }, .. }
+                    => return Err(syn::Error::new(null.span(), format!("Can't use '{NULL_KEYWORD}' as value of primitive argument type."))),
+                Type::Assertive(InnerType::Object(_) | InnerType::Array(_))
+                | Type::Option { ty: InnerType::Object(_) | InnerType::Array(_), .. } => { },
             },
             _ => {}
         };
@@ -501,11 +501,8 @@ impl Parse for Parameter {
             || v_str.ends_with("::null_mut()") {
                 // If ty is any of these, it will not accept the expression of a null value, so use 'null' instead.
                 let should_use_null = match &ty {
-                    Type::Array(ArrayType { ty, .. }) => match ty.as_ref() {
-                        Type::Assertive(InnerType::Object(class)) => class.to_jni_class_path() == "java/lang/String",
-                        _ => false,
-                    }
-                    | Type::Assertive(InnerType::Object(class)) => class.to_jni_class_path() == "java/lang/String",
+                    Type::Assertive(InnerType::Object(class)) => class.rust_type() == ClassRustType::String,
+                    Type::Assertive(InnerType::Array(_)) => true,
                     _ => false,
                 };
                 if should_use_null {

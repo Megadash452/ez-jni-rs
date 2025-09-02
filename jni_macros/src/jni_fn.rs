@@ -2,7 +2,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
 use syn::{braced, ext::IdentExt as _, parenthesized, parse::{Parse, ParseStream}, punctuated::Punctuated, token::{Brace, Paren}, Attribute, GenericParam, Generics, Ident, Lifetime, LitStr, Token};
 use utils::java_method_to_symbol;
-use crate::{types::{Class, Conversion as _, InnerType, JavaPrimitive, RustPrimitive, SigType, Type}, utils::{gen_signature, merge_errors, take_class_attribute_required, Spanned}};
+use crate::{types::{Class, ClassRustType, Conversion as _, InnerType, JavaPrimitive, RustPrimitive, SigType, Type}, utils::{gen_signature, merge_errors, take_class_attribute_required, Spanned}};
 
 /// Processes the input for [`crate::jni_fns`].
 /// Converts the parsed [`JniFn`] to a regular function used in Rust.
@@ -132,7 +132,7 @@ impl JniFn {
                 param.mutability.to_tokens(tokens);
                 param.name.to_tokens(tokens);
                 param.colon_token.to_tokens(tokens);
-                tokens.append_all(param.ty.ty_tokens(false, Some(lifetime.clone())));
+                tokens.append_all(param.ty.type_tokens(false, false, Some(lifetime.clone())));
                 comma.to_tokens(tokens);
             }
         });
@@ -140,7 +140,7 @@ impl JniFn {
         let output = match output {
             JniReturn::Void => quote!(),
             JniReturn::Type { arrow_token, ty } => {
-                let rust_ty = ty.ty_tokens(false, Some(lifetime.clone()));
+                let rust_ty = ty.type_tokens(false, false, Some(lifetime.clone()));
                 quote! { #arrow_token #rust_ty }
             }
         };
@@ -363,7 +363,7 @@ impl ToTokens for JniFnArg {
         self.name.to_tokens(tokens);
         self.colon_token.to_tokens(tokens);
         
-        // Convert Primitive Type to Java Primitive and Class to JObject (or JString)
+        // Convert the `Type` to a `jni::objects` type (with 'local lifetime).
         fn primitive(j_prim: JavaPrimitive, span: Span) -> TokenStream {
             let j_type = Ident::new(&format!("j{j_prim}"), span);
             quote_spanned! {span=> ::jni::sys::#j_type}
@@ -371,10 +371,15 @@ impl ToTokens for JniFnArg {
         tokens.append_all(match &self.ty {
             Type::Assertive(InnerType::RustPrimitive { ident, ty }) => primitive(JavaPrimitive::from(*ty), ident.span()),
             Type::Assertive(InnerType::JavaPrimitive { ident, ty }) => primitive(*ty, ident.span()),
-            // Type::Assertive(InnerType::Object(class)) if class.to_string() == "java.lang.String" => quote_spanned! {class.span()=> ::jni::objects::JString<'local>},
-            Type::Assertive(InnerType::Object(_))
-            | Type::Array(_)
-            | Type::Option { .. } => quote_spanned! {self.ty.span()=> ::jni::objects::JObject<'local>},
+            Type::Assertive(InnerType::Object(class))
+            | Type::Option { ty: InnerType::Object(class), .. } => match class.rust_type() {
+                ClassRustType::JObject    => quote_spanned! {self.ty.span()=> ::jni::objects::JObject<'local> },
+                ClassRustType::JClass     => quote_spanned! {self.ty.span()=> ::jni::objects::JClass<'local> },
+                ClassRustType::JThrowable => quote_spanned! {self.ty.span()=> ::jni::objects::JThrowable<'local> },
+                ClassRustType::String /* | ClassRustType::JString */ => quote_spanned! {self.ty.span()=> ::jni::objects::JString<'local> }
+            },
+            Type::Assertive(InnerType::Array(_))
+            | Type::Option { .. } => quote_spanned! {self.ty.span()=> ::jni::objects::JObject<'local> },
         })
     }
 }
@@ -398,8 +403,7 @@ impl JniReturn {
                 Type::Assertive(InnerType::RustPrimitive { ty: prim, .. }) => prim.convert_rust_to_java(value),
                 Type::Assertive(InnerType::JavaPrimitive { ty: prim, .. }) => RustPrimitive::from(*prim).convert_rust_to_java(value),
                 // Always convert Object to jni::sys::jobject
-                Type::Assertive(InnerType::Object(_))
-                | Type::Array(_)
+                Type::Assertive(InnerType::Object(_) | InnerType::Array(_))
                 | Type::Option { .. } => Some(match ty.convert_rust_to_java(value) {
                     Some(conversion) => quote_spanned!(conversion.span()=> #conversion.as_raw()),
                     None => quote_spanned!(value.span()=> #value.as_raw())
@@ -439,18 +443,28 @@ impl ToTokens for JniReturn {
             Self::Void => { }, // Void return has no tokens
             Self::Type { arrow_token, ty: output } => {
                 arrow_token.to_tokens(tokens);
-                // Convert Primitive Type to Java Primitive and Class to *jobject (or *jstring)
-                fn primitive(j_prim: JavaPrimitive, span: Span) -> TokenStream {
-                    let j_type = Ident::new(&format!("j{j_prim}"), span);
+                // Convert the `Type` to a `jni::sys` type.
+                fn primitive(j_prim: JavaPrimitive, is_array: bool, span: Span) -> TokenStream {
+                    let j_type = Ident::new(&format!("j{j_prim}{}", if is_array { "Array" } else { "" }), span);
                     quote_spanned! {span=> ::jni::sys::#j_type}
                 }
                 tokens.append_all(match output {
-                    Type::Assertive(InnerType::RustPrimitive { ident, ty }) => primitive(JavaPrimitive::from(*ty), ident.span()),
-                    Type::Assertive(InnerType::JavaPrimitive { ident, ty }) => primitive(*ty, ident.span()),
-                    // Type::Assertive(InnerType::Object(class)) if class.to_string() == "java.lang.String" => quote_spanned! {class.span()=> ::jni::sys::jstring},
-                    Type::Assertive(InnerType::Object(_))
-                    | Type::Array(_)
-                    | Type::Option { .. } => quote_spanned! {output.span()=> ::jni::sys::jobject},
+                    Type::Assertive(InnerType::RustPrimitive { ident, ty }) => primitive(JavaPrimitive::from(*ty), false, ident.span()),
+                    Type::Assertive(InnerType::JavaPrimitive { ident, ty }) => primitive(*ty, false, ident.span()),
+                    Type::Assertive(InnerType::Object(class))
+                    | Type::Option { ty: InnerType::Object(class), .. } => match class.rust_type() {
+                        ClassRustType::JObject    => quote_spanned! {output.span()=> ::jni::sys::jobject },
+                        ClassRustType::JClass     => quote_spanned! {output.span()=> ::jni::sys::jclass },
+                        ClassRustType::JThrowable => quote_spanned! {output.span()=> ::jni::sys::jthrowable },
+                        ClassRustType::String /* | ClassRustType::JString */ => quote_spanned! {output.span()=> ::jni::sys::jstring }
+                    },
+                    Type::Option { .. } => quote_spanned! {output.span()=> ::jni::sys::jobject },
+                    Type::Assertive(InnerType::Array(array)) => match &*array.ty {
+                        Type::Assertive(InnerType::RustPrimitive { ident, ty }) => primitive(JavaPrimitive::from(*ty), true, ident.span()),
+                        Type::Assertive(InnerType::JavaPrimitive { ident, ty }) => primitive(*ty, true, ident.span()),
+                        Type::Assertive(InnerType::Object(_) | InnerType::Array(_))
+                        | Type::Option { .. } => quote_spanned! {output.span()=> ::jni::sys::jobjectArray },
+                    },
                 });
             },
         }
