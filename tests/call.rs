@@ -1,10 +1,10 @@
 mod common;
 
-use std::panic::{AssertUnwindSafe, catch_unwind};
-
 use common::run_with_jnienv;
-use ez_jni::{call, class, eprintln, field, new, println, singleton, JavaException};
-use jni::objects::{JClass, JObject, JThrowable};
+use ez_jni::{call, class, eprintln, field, new, println, singleton, FromObjectError, JavaException};
+use jni::objects::{JClass, JObject, JString, JThrowable};
+
+use crate::common::fail_with;
 
 #[test]
 fn return_primitives() { run_with_jnienv(|| {
@@ -76,7 +76,7 @@ fn return_primitives() { run_with_jnienv(|| {
 fn return_object() { run_with_jnienv(|| {
     // Object
     let _: JObject = call!(static me.test.Test.getObject() -> java.lang.Object);
-    let _: JObject = call!(static me.test.Test.getString() -> java.lang.String);
+    let _: JString = call!(static me.test.Test.getString() -> java.lang.String);
     let _: JClass = call!(static me.test.Test.getMyClass() -> Class);
     let _: JThrowable = call!(static me.test.Test.getException() -> Exception);
     let _: String = call!(static me.test.Test.getString() -> String);
@@ -178,7 +178,7 @@ fn return_arrays() { run_with_jnienv(|| {
 fn return_arrays_other() { run_with_jnienv(|| {
     // Object
     let _: Box<[JObject]> = call!(static me.test.Test.getObjectArray() -> [java.lang.Object]);
-    let _: Box<[JObject]> = call!(static me.test.Test.getStringArray() -> [java.lang.String]);
+    let _: Box<[JString]> = call!(static me.test.Test.getStringArray() -> [java.lang.String]);
     let _: Box<[String]> = call!(static me.test.Test.getStringArray() -> [String]);
     // Result Primitive
     let r: Result<Box<[bool]>, JavaException> = call!(static me.test.Test.getBooleanArray() -> Result<[bool], java.lang.IndexOutOfBoundsException>);
@@ -232,35 +232,30 @@ fn return_arrays_other() { run_with_jnienv(|| {
 #[test]
 fn return_fail() { run_with_jnienv(|| {
     // Returned Object should NOT be NULL
-    catch_unwind(AssertUnwindSafe(
-        || call!(static me.test.Test.nullable() -> java.lang.Object),
-    ))
-    .unwrap_err();
-    // .map_err(op); // TODO: Ensure error is "called `Result::unwrap()` on an `Err` value: Null"
+    fail_with(
+        || { call!(static me.test.Test.nullable() -> java.lang.Object); },
+        FromObjectError::Null.to_string().as_str()
+    );
     // Returned Array should NOT be NULL
-    catch_unwind(AssertUnwindSafe(
-        || call!(static me.test.Test.objNullArray() -> [java.lang.Object]),
-    ))
-    .unwrap_err();
-    // .map_err(op); // TODO: Ensure error is "called `Result::unwrap()` on an `Err` value: Object(Null)"
+    fail_with(
+        || { call!(static me.test.Test.objNullArray() -> [java.lang.Object]); },
+        FromObjectError::Null.to_string().as_str()
+    );
     // Objects in returned Array should NOT be NULL
-    catch_unwind(AssertUnwindSafe(
-        || call!(static me.test.Test.getNullObjectArray() -> [java.lang.Object]),
-    ))
-    .unwrap_err();
-    // .map_err(op); // TODO: Ensure error is "called `Result::unwrap()` on an `Err` value: Object(Null)"
+    fail_with(
+        || { call!(static me.test.Test.getNullObjectArray() -> [java.lang.Object]); },
+        FromObjectError::ArrayElement { index: 1, error: Box::new(FromObjectError::Null) }.to_string().as_str()
+    );
     // Returned Array should NOT be NULL, even if its Objects can
-    catch_unwind(AssertUnwindSafe(
-        || call!(static me.test.Test.objNullArray() -> [Option<java.lang.Object>]),
-    ))
-    .unwrap_err();
-    // .map_err(op); // TODO: Ensure error is "called `Result::unwrap()` on an `Err` value: Object(Null)"
+    fail_with(
+        || { call!(static me.test.Test.objNullArray() -> [Option<java.lang.Object>]); },
+        FromObjectError::Null.to_string().as_str()
+    );
     // Incorrect Error Class
-    // catch_unwind(AssertUnwindSafe(
-    //     || call!(static me.test.Test.throwPrimArray() -> Result<[bool], java.lang.WrongException>)
-    // ))
-    // .unwrap_err();
-    // .map_err(op); // TODO: Ensure error is "Expected the Object to be the Class or a descendant of the Class "java/lang/WrongException", but the actual Class of the Object is "java/lang/IndexOutOfBoundsException""
+    fail_with(
+        || { call!(static me.test.Test.throwPrimArray() -> Result<[bool], java.lang.WrongException>).unwrap_err(); },
+        FromObjectError::ClassNotFound("java/lang/WrongException".to_string()).to_string().as_str()
+    );
 }) }
 
 #[test]
@@ -306,14 +301,14 @@ fn arguments() { run_with_jnienv(|| {
         [double]([1f64, 2.0]),
     ) -> void);
     call!(static me.test.Test.primObjArrayArgs(
-        [java.lang.Boolean]([true, false]),
-        [java.lang.Character](['a', 'b']),
-        [java.lang.Byte]([1i8, 2]),
-        [java.lang.Short]([1i16, 2]),
-        [java.lang.Integer]([1i32, 2]),
-        [java.lang.Long]([1i64, 2]),
-        [java.lang.Float]([1f32, 2.0]),
-        [java.lang.Double]([1f64, 2.0]),
+        [java.lang.Boolean]([true, null]),
+        [java.lang.Character](['a', null]),
+        [java.lang.Byte]([1i8, null]),
+        [java.lang.Short]([1i16, null]),
+        [java.lang.Integer]([1i32, null]),
+        [java.lang.Long]([1i64, null]),
+        [java.lang.Float]([1f32, null]),
+        [java.lang.Double]([1f64, null]),
     ) -> void);
     // Arrays with Rust primitive as Inner type
     call!(static me.test.Test.primArrayArgs(
@@ -399,11 +394,10 @@ fn constructor() { run_with_jnienv(|| {
 #[test]
 fn constructor_fail() { run_with_jnienv(|| {
     // Should panic if the constructor throws, but user did not indicate that the constructor could throw
-    catch_unwind(AssertUnwindSafe(|| {
-        new!(me.test.Test(java.lang.String(null)))
-    }))
-    .unwrap_err();
-    // .map_err(op); // TODO: Ensure error is "java.lang.NullPointerException: String was null"
+    fail_with(
+        || { new!(me.test.Test(java.lang.String(null))); },
+        "java.lang.NullPointerException: String was null"
+    );
 }) }
 
 #[test]

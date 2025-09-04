@@ -1,8 +1,9 @@
 #![allow(unused)]
 pub mod compile_fail;
 
-use std::{panic::UnwindSafe, process::Command, sync::LazyLock};
+use std::{panic::{catch_unwind, AssertUnwindSafe, UnwindSafe}, process::Command, sync::LazyLock};
 use jni::{JNIEnv, JavaVM};
+use ez_jni::{call, __throw::PanicPayloadRepr};
 use utils::CLASS_DIR;
 
 static JVM: LazyLock<JavaVM> = LazyLock::new(|| {
@@ -50,6 +51,26 @@ pub fn run_with_jnienv<'local>(f: impl FnOnce() + UnwindSafe) {
 
     // Remove the JNIEnv when the function finishes running
     stack_env.pop();
+}
+
+/// Assert that a test (**f**) should **fail** (`panic!`) with a specific **error message**.
+pub fn fail_with(f: impl Fn(), expected_error: &str) {
+    // Set hook to prevent printing of the payload
+    std::panic::set_hook(Box::new(|info| { }));
+    let result = catch_unwind(AssertUnwindSafe(f));
+    std::panic::take_hook();
+
+    let msg = result
+        .map_err(|payload| match PanicPayloadRepr::from(payload) {
+            PanicPayloadRepr::Message(msg) => msg.to_string(),
+            PanicPayloadRepr::Object(exception) => call!(exception.getMessage() -> String),
+            PanicPayloadRepr::Unknown => panic!("{}", PanicPayloadRepr::UNKNOWN_PAYLOAD_TYPE_MSG),
+        })
+        .expect_err("Expected function to fail, but it succeeded");
+
+    if msg != expected_error {
+        panic!("Expected function to fail with error:\n    {expected_error}\nBut the actual error was:\n    {msg}")
+    }
 }
 
 fn compile_java() -> Result<(), Box<dyn std::error::Error>> {

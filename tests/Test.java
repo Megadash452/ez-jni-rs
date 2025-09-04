@@ -43,10 +43,10 @@ public final class Test {
     public static double    getDouble()    { return 3.3d; }
     public static Boolean   getBooleanObj(){ return new Boolean(true); }
     public static Character getCharObj()   { return new Character('a'); }
-    public static Byte      getByteObj()   { return new Byte(3); }
-    public static Short     getShortObj()  { return new Short(3); }
+    public static Byte      getByteObj()   { return new Byte((byte)3); }
+    public static Short     getShortObj()  { return new Short((short)3); }
     public static Integer   getIntObj()    { return new Integer(3); }
-    public static Long      getLongObj()   { return new Long(3); }
+    public static Long      getLongObj()   { return new Long(3L); }
     public static Float     getFloatObj()  { return new Float(3.3f); }
     public static Double    getDoubleObj() { return new Double(3.3d); }
     public static Object    getObject()    { return new Object(); }
@@ -69,12 +69,12 @@ public final class Test {
     public static Object[]    getObjectArray()     { return new Object[]    {new Object()}; }
     public static Boolean[]   getBooleanObjArray() { return new Boolean[]   {new Boolean(true), null}; }
     public static Character[] getCharObjArray()    { return new Character[] {new Character('a'), null}; }
-    public static Byte[]      getByteObjArray()    { return new Byte[]      {new Byte(1), null}; }
-    public static Short[]     getShortObjArray()   { return new Short[]     {new Short(1), null}; }
+    public static Byte[]      getByteObjArray()    { return new Byte[]      {new Byte((byte)1), null}; }
+    public static Short[]     getShortObjArray()   { return new Short[]     {new Short((short)1), null}; }
     public static Integer[]   getIntObjArray()     { return new Integer[]   {new Integer(1), null}; }
-    public static Long[]      getLongObjArray()    { return new Long[]      {new Long(1), null}; }
+    public static Long[]      getLongObjArray()    { return new Long[]      {new Long(1L), null}; }
     public static Float[]     getFloatObjArray()   { return new Float[]     {new Float(1.1f), null}; }
-    public static Double[]    getDoubleObjArray()  { return new Double[]    {new Double(1.1), null}; }
+    public static Double[]    getDoubleObjArray()  { return new Double[]    {new Double(1.1d), null}; }
     public static Object[]    getNullObjectArray() { return new Object[]    {new Object(), null}; }
     public static String[]    getStringArray()     { return new String[]    {"Hello", "World"}; }
     public static String[]    getNullStringArray() { return new String[]    {"Hello", null}; }
@@ -83,7 +83,7 @@ public final class Test {
     public static String[][]  get2DStringArray()   { return new String[][]  { new String[] {"Hello", "World"}, new String[] {"How", "are", "you"} }; }
 
     public static boolean[] primNullArray() { return null; }
-    public static Object[]  nullObjArray()  { return null; }
+    public static Object[]  objNullArray()  { return null; }
     public static boolean[] throwPrimArray() throws IndexOutOfBoundsException { throw new IndexOutOfBoundsException("exception"); }
     public static Object[]  throwObjArray()  throws IndexOutOfBoundsException { throw new IndexOutOfBoundsException("exception"); }
     

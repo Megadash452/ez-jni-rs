@@ -769,8 +769,7 @@ fn check_exception_class(err_class: &Class) -> TokenStream {
         let class = err_class.to_jni_class_path();
         quote! {
             .inspect_err(|exception| {
-                ::ez_jni::utils::check_object_class(exception.as_ref(), #class, env)
-                    .unwrap_or_else(|err| panic!("{err}. Exception message: {}", &exception.message()))
+                ::ez_jni::utils::check_object_class(exception.as_ref(), #class, env).unwrap_display()
             })
         }
     }

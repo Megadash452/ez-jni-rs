@@ -1,6 +1,6 @@
 use super::*;
 use std::{any::Any, panic::{AssertUnwindSafe, UnwindSafe}};
-use jni::objects::{GlobalRef, JObject};
+use jni::objects::JObject;
 use crate::{compile_java_class, LOCAL_JNIENV_STACK};
 
 /// Runs a Rust function and returns its value, catching any `panics!` and throwing them as *Java Exceptions*.
@@ -77,15 +77,10 @@ fn run_with_jnienv_main<'local, R: Sized>(mut env: JNIEnv<'local>, f: impl FnOnc
 /// Aborts if a panic occurs.
 fn my_catch<'local, R>(f: impl FnOnce() -> R) -> R {
     std::panic::catch_unwind(AssertUnwindSafe(|| f()))
-        .map_err(|payload| {
-            match payload.downcast::<&'static str>() {
-                Ok(msg) => msg.as_ref().to_string(),
-                Err(payload) => match payload.downcast::<String>() {
-                    Ok(msg) => *msg,
-                    // Unexpected panic type
-                    Err(_) => "Rust panicked!; Unable to obtain panic message".to_string(),
-                },
-            }
+        .map_err(|payload| match PanicPayloadRepr::from(payload) {
+            PanicPayloadRepr::Message(msg) => msg,
+            PanicPayloadRepr::Object(_) => panic!("UNREACHABLE"),
+            PanicPayloadRepr::Unknown => Cow::Borrowed(PanicPayloadRepr::UNKNOWN_PAYLOAD_TYPE_MSG)
         })
         .unwrap_or_else(|panic_msg| {
             eprintln!("Aborting due to error in ez_jni::__throw::jni_fn::run_with_jnienv_main():\n{panic_msg}\n");
@@ -140,41 +135,32 @@ impl StackEnv {
 
 /// This function is allowed to `panic!`.
 fn throw_panic(env: &mut JNIEnv, payload: Box<dyn Any + Send>) {
-    let panic_msg = match payload.downcast::<&'static str>() {
-        Ok(msg) => msg.as_ref().to_string(),
-        Err(payload) => match payload.downcast::<String>() {
-            Ok(msg) => *msg,
-            Err(payload) => match payload.downcast::<GlobalRef>() {
-                // Panicked with an Exception (should be rethrown)
-                Ok(exception) => {
-                    let exception = <&JThrowable>::from(exception.as_obj());
-                    // Inject Backtrace to Exception
-                    let _ = prepare_backtrace().map(|backtrace| {
-                        inject_backtrace(exception, &backtrace, env);
-                    });
-                    // Finally, rethrow the new Exception
-                    env.throw(exception)
-                        .map_err(|err| format!("Failed to rethrow exception: {err}"))
-                        .unwrap();
-                    return;
-                },
-                // Unexpected panic type
-                Err(_) => "Rust panicked!; Unable to obtain panic message".to_string(),
-            },
-        },
+    let panic_msg = match PanicPayloadRepr::from(payload) {
+        PanicPayloadRepr::Message(msg) => msg,
+        PanicPayloadRepr::Unknown => Cow::Borrowed(PanicPayloadRepr::UNKNOWN_PAYLOAD_TYPE_MSG),
+        // Panicked with an Exception (should be rethrown)
+        PanicPayloadRepr::Object(exception) => {
+            let exception = <&JThrowable>::from(exception.as_obj());
+            // Inject Backtrace to Exception
+            let _ = prepare_backtrace().map(|backtrace| {
+                inject_backtrace(exception, &backtrace, env);
+            });
+            // Finally, rethrow the new Exception
+            env.throw(exception)
+                .unwrap_or_else(|err| panic!("Failed to rethrow exception: {err}"));
+            return;
+        }
     };
-    let location = match PANIC_LOCATION.try_with(|loc| {
+    let location = PANIC_LOCATION.try_with(|loc| {
         loc.try_borrow()
             .map_err(|err| format!("Error borrowing PANIC_LOCATION: {err}"))?
             .as_ref()
             .map(|loc| loc.clone())
             .ok_or("value is None".to_string())
     })
-    .map_err(|err| err.to_string()) {
-        // Result::flatten() is not stable :(
-        Ok(Ok(loc)) => loc,
-        Ok(Err(err)) | Err(err) => panic!("Failed to get panic location: {err}")
-    };
+        .map_err(|err| err.to_string())
+        .flatten()
+        .unwrap_or_else(|err| panic!("Failed to get panic location: {err}"));
 
     env.exception_clear().unwrap();
 

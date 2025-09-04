@@ -25,7 +25,9 @@ pub enum FromObjectError {
     ClassMismatch { obj_class: String, target_class: Option<String> },
     #[error("Could not find field {name:?} of type {ty} in class {target_class}; maybe its private?")]
     FieldNotFound { name: String, ty: String, target_class: String },
-    #[error("Could instantiating Type from element in Java Object Array at index {index}: {error}")]
+    #[error("Could not find class \"{0}\"")]
+    ClassNotFound(String),
+    #[error("Could not instantiate Type from element in Java Object Array at index {index}: {error}")]
     ArrayElement { index: usize, error: Box<Self> },
     #[error("{}", match actual_len.cmp(expected_len) {
         Ordering::Equal => panic!("UNREACHABLE"),

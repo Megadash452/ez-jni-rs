@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use jni::{
     errors::Error as JNIError, objects::{JClass, JObject, JString, JThrowable, JValue, JValueGen, JValueOwned}, JNIEnv
 };
-use crate::{call, Class, FromJValue, FromJValueError, FromObject, FromObjectError, JValueType, __throw::try_catch, utils::{get_object_class_name, ResultExt}};
+use crate::{call, Class, FromJValue, FromJValueError, FromObject, FromObjectError, JValueType, __throw::{get_jni_error_msg, try_catch}, utils::{get_object_class_name, ResultExt}};
 use super::{field_helper, getter_name_and_sig, FieldNotFound, MethodNotFound};
 
 /// Trait for `call!` to use to convert the return value.
@@ -258,9 +258,14 @@ pub fn check_object_class(object: &JObject, target_class: &str, env: &mut JNIEnv
     }
 
     let class = env.get_object_class(object)
-        .unwrap_or_else(|err| panic!("Failed to get Object's class: {err}"));
+        .unwrap_or_else(|err| panic!("Failed to get Object's class: {}", get_jni_error_msg(err, env)));
+
+    let target_class_obj = env.find_class(target_class)
+        .map_err(|_| FromObjectError::ClassNotFound(target_class.to_string()))?;
     
-    if !env.is_instance_of(object, target_class).unwrap() {
+    if !env.is_instance_of(object, target_class_obj)
+        .unwrap_or_else(|err| panic!("Failed check Object's classes: {}", get_jni_error_msg(err, env)))
+    {
         return Err(FromObjectError::ClassMismatch {
             obj_class: call!(env=> class.getName() -> String),
             target_class: Some(target_class.to_string())

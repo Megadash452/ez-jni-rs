@@ -5,9 +5,9 @@ pub use jni_fn::*;
 pub use call::*;
 
 use thiserror::Error;
-use jni::{JNIEnv, objects::JThrowable};
+use jni::{objects::{GlobalRef, JThrowable}, JNIEnv};
 use ez_jni_macros::{call, new};
-use std::{backtrace::{Backtrace, BacktraceStatus}, cell::{Cell, RefCell}, error::Error};
+use std::{any::Any, backtrace::{Backtrace, BacktraceStatus}, borrow::Cow, cell::{Cell, RefCell}, error::Error};
 
 thread_local! {
     static PANIC_LOCATION: RefCell<Option<Location>> = const { RefCell::new(None) };
@@ -62,6 +62,36 @@ enum ParseBacktraceError {
     Empty,
     #[error("{0}")]
     Other(Box<dyn Error>)
+}
+
+pub type PanicPayload = Box<dyn Any + Send + 'static>;
+/// Representations of possible **types** that can be used as the **payload** of a `panic!`.
+pub enum PanicPayloadRepr {
+    Message(Cow<'static, str>),
+    Object(GlobalRef),
+    Unknown
+}
+impl PanicPayloadRepr {
+    pub const UNKNOWN_PAYLOAD_TYPE_MSG: &str = "Rust panicked! with an unknown type";
+
+    #[inline(always)]
+    pub fn new(payload: PanicPayload) -> Self { Self::from(payload) }
+}
+impl From<PanicPayload> for PanicPayloadRepr {
+    /// Tries to guess the *concrete type* of a panic payload and casts it to that type.
+    fn from(payload: PanicPayload) -> Self {
+        match payload.downcast::<&'static str>() {
+            Ok(msg) => Self::Message(Cow::Borrowed(&msg)),
+            Err(payload) => match payload.downcast::<String>() {
+                Ok(msg) => Self::Message(Cow::Owned(*msg)),
+                Err(payload) => match payload.downcast::<GlobalRef>() {
+                    Ok(exception) => Self::Object(*exception),
+                    // Unexpected panic type
+                    Err(_) => Self::Unknown,
+                },
+            },
+        }
+    }
 }
 
 /// Gets full [`Backtrace`] as a `String` and parses each line as a [`BacktraceElement`].
