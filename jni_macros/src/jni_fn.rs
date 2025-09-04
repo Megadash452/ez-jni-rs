@@ -376,7 +376,7 @@ impl ToTokens for JniFnArg {
                 ClassRustType::JObject    => quote_spanned! {self.ty.span()=> ::jni::objects::JObject<'local> },
                 ClassRustType::JClass     => quote_spanned! {self.ty.span()=> ::jni::objects::JClass<'local> },
                 ClassRustType::JThrowable => quote_spanned! {self.ty.span()=> ::jni::objects::JThrowable<'local> },
-                ClassRustType::String /* | ClassRustType::JString */ => quote_spanned! {self.ty.span()=> ::jni::objects::JString<'local> }
+                ClassRustType::String | ClassRustType::JString => quote_spanned! {self.ty.span()=> ::jni::objects::JString<'local> },
             },
             Type::Assertive(InnerType::Array(_))
             | Type::Option { .. } => quote_spanned! {self.ty.span()=> ::jni::objects::JObject<'local> },
@@ -456,7 +456,7 @@ impl ToTokens for JniReturn {
                         ClassRustType::JObject    => quote_spanned! {output.span()=> ::jni::sys::jobject },
                         ClassRustType::JClass     => quote_spanned! {output.span()=> ::jni::sys::jclass },
                         ClassRustType::JThrowable => quote_spanned! {output.span()=> ::jni::sys::jthrowable },
-                        ClassRustType::String /* | ClassRustType::JString */ => quote_spanned! {output.span()=> ::jni::sys::jstring }
+                        ClassRustType::String | ClassRustType::JString => quote_spanned! {output.span()=> ::jni::sys::jstring },
                     },
                     Type::Option { .. } => quote_spanned! {output.span()=> ::jni::sys::jobject },
                     Type::Assertive(InnerType::Array(array)) => match &*array.ty {

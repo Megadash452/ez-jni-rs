@@ -658,7 +658,7 @@ impl Debug for ArrayType {
 /// So [`Class`] is needed for that context.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClassRustType {
-    JObject, JClass, JThrowable, /* JString, */ String
+    JObject, JClass, JThrowable, JString, String
 }
 impl Display for ClassRustType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -666,6 +666,7 @@ impl Display for ClassRustType {
             Self::JObject    => "Object",
             Self::JClass     => "Class",
             Self::JThrowable => "Throwable",
+            Self::JString    => "JString",
             Self::String     => "String",
         })
     }
@@ -708,10 +709,35 @@ pub struct NestedPath {
     pub final_class: Ident
 }
 impl Class {
+    const EMPTY_PATH_ERROR: &str = "Java Class Path must not be empty";
+    const SINGLE_COMPONENT_ERROR: &str = "Java Class Path must have more than one component, such as `me.author`";
+
+    /// Constructs the [`Class::Path`] variant using the provided **path**.
+    /// All tokens will inherit the given **span**.
+    pub fn new_path(path: &[&str], span: Span) -> syn::Result<Self> {
+        if path.is_empty() {
+            return Err(syn::Error::new(span, Self::EMPTY_PATH_ERROR));
+        }
+        if path.len() == 1 {
+            return Err(syn::Error::new(span, Self::SINGLE_COMPONENT_ERROR));
+        }
+        let dot = syn::parse2::<Token![.]>(quote_spanned!(span=> . )).unwrap();
+
+        let packages = path[..(path.len() - 2)].into_iter()
+            .map(|&package| (Ident::new(package, span), dot.clone()))
+            .collect::<Vec<_>>();
+        let class = Ident::new(path.last().unwrap(), span);
+
+        Ok(Self::Path { packages, class, nested_path: None })
+    }
+
     #[allow(unused)]
     /// Creates a [`Class`] from a known *Rust Type* that can represent an object Class.
     pub fn from_rust_type(ty: ClassRustType, span: Span) -> Self {
-        Self::Short(Ident::new(&ty.to_string(), span))
+        match ty {
+            ClassRustType::JString => Self::new_path(&["java", "lang", "String"], span).unwrap(),
+            _ => Self::Short(Ident::new(&ty.to_string(), span)),
+        }
     }
 
     /// Get the final *Rust type* that will be used for a value with this [`Class`].
@@ -721,6 +747,7 @@ impl Class {
     /// E.g. `String` -> [`ClassRustType::String`], but `java.lang.String` -> [`ClassRustType::JObject`].
     pub fn rust_type(&self) -> ClassRustType {
         match self {
+            Self::Path { .. } if self.to_jni_class_path() == "java/lang/String" => ClassRustType::JString,
             Self::Short(ident) => ClassRustType::from_str(&ident.to_string())
                 .expect("Unreachable; Class::Short can only be constructed from select valid strings. See [ClassRustType][#impl-FromStr-for-ClassRustType] for that list"),
             _ => ClassRustType::JObject,
@@ -732,7 +759,7 @@ impl Class {
     /// See [`Class::rust_type`].
     pub fn is_jobject(&self) -> bool {
         match self.rust_type() {
-            ClassRustType::JObject | ClassRustType::JClass | ClassRustType::JThrowable => true,
+            ClassRustType::JObject | ClassRustType::JClass | ClassRustType::JThrowable | ClassRustType::JString => true,
             ClassRustType::String => false,
         }
     }
@@ -763,14 +790,7 @@ impl Class {
     fn to_string_helper(&self, sep: &str, nested_sep: &str) -> String {
         match self {
             Self::Short(class) => {
-                let expanded_path = match class.to_string().as_str() {
-                    "Object"    => ["java", "lang", "Object"],
-                    "Class"     => ["java", "lang", "Class"],
-                    "Exception" => ["java", "lang", "Exception"],
-                    "String"    => ["java", "lang", "String"],
-                    _ => panic!("Unreachable")
-                };
-                expanded_path.into_iter()
+                ["java", "lang", class.to_string().as_str()].into_iter()
                     .intersperse(sep)
                     .collect::<String>()
             },
@@ -853,7 +873,7 @@ impl Parse for Class {
         // The class is the final component of the path
         let class = match path.pop() {
             Some(class) => class.into_value(),
-            None => return Err(syn::Error::new(path.span(), "Java Class Path must not be empty"))
+            None => return Err(syn::Error::new(path.span(), Self::EMPTY_PATH_ERROR))
         };
         // Check for short hands
         let packages = if path.is_empty() {
@@ -861,7 +881,7 @@ impl Parse for Class {
                 input.advance_to(fork);
                 Ok(Self::Short(class))
             } else {
-                Err(syn::Error::new(class.span(), "Java Class Path must have more than one component, such as `me.author`"))
+                Err(syn::Error::new(class.span(), Self::SINGLE_COMPONENT_ERROR))
             }
         } else {
             // Take the rest of the path components
@@ -903,6 +923,9 @@ impl Conversion for Class {
             ClassRustType::JThrowable => Some(quote_spanned! {self.span()=>
                 <::jni::objects::JThrowable::<'_> as ::ez_jni::FromObjectOwned>::from_object_owned_env(#value, env).unwrap_display()
             }),
+            ClassRustType::JString => Some(quote_spanned! {self.span()=>
+                <::jni::objects::JString::<'_> as ::ez_jni::FromObjectOwned>::from_object_owned_env(#value, env).unwrap_display()
+            }),
             ClassRustType::String => Some(quote_spanned! {self.span()=>
                 <String as ::ez_jni::FromObject>::from_object_env(&(#value), env).unwrap_display()
             }),
@@ -917,6 +940,9 @@ impl Conversion for Class {
             ClassRustType::JThrowable => Some(quote_spanned! {self.span()=>
                 <&::jni::objects::JThrowable::<'_> as Into<&::jni::objects::JObject<'_>>>::into((#value).borrow())
             }),
+            ClassRustType::JString => Some(quote_spanned! {self.span()=>
+                <&::jni::objects::JString::<'_> as Into<&::jni::objects::JObject<'_>>>::into((#value).borrow())
+            }),
             ClassRustType::String => Some(quote_spanned! {self.span()=>
                 <str as ::ez_jni::ToObject>::to_object_env(::std::convert::AsRef::<str>::as_ref(&(#value)), env)
             }),
@@ -928,6 +954,7 @@ impl Conversion for Class {
             ClassRustType::JObject => quote_spanned! {self.span()=> ::jni::objects::JObject::<#lifetime> },
             ClassRustType::JClass => quote_spanned! {self.span()=> ::jni::objects::JClass::<#lifetime> },
             ClassRustType::JThrowable => quote_spanned! {self.span()=> ::jni::objects::JThrowable::<#lifetime> },
+            ClassRustType::JString => quote_spanned! {self.span()=> ::jni::objects::JString::<#lifetime> },
             ClassRustType::String =>
                 if as_ref && is_nested {
                     // str nested in another type must be used with Reference (&)

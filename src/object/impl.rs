@@ -1,5 +1,5 @@
 use ez_jni_macros::new;
-use jni::objects::JClass;
+use jni::objects::{JClass, JString};
 use crate::{utils::check_object_class, Class};
 use super::*;
 
@@ -22,29 +22,25 @@ impl ToObject for JObject<'_> {
         env.new_local_ref(self).unwrap()
     }
 }
-impl<'a, 'obj> FromObject<'a, 'obj, '_> for &'a JClass<'obj> {
-    fn from_object_env(object: &'a JObject<'obj>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        check_object_class(object, &Self::class(), env)?;
-        Ok(<&JClass>::from(object))
-    }
+macro_rules! impl_obj_ref {
+    ($ty:ty) => {
+        impl<'a, 'obj> FromObject<'a, 'obj, '_> for &'a $ty {
+            fn from_object_env(object: &'a JObject<'obj>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
+                check_object_class(object, &Self::class(), env)?;
+                Ok(Self::from(object))
+            }
+        }
+        impl<'obj> ToObject for $ty {
+            #[inline(always)]
+            fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+                <JObject as ToObject>::to_object_env(self, env)
+            }
+        }
+    };
 }
-impl ToObject for JClass<'_> {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        <JObject as ToObject>::to_object_env(self, env)
-    }
-}
-impl<'a, 'obj> FromObject<'a, 'obj, '_> for &'a JThrowable<'obj> {
-    fn from_object_env(object: &'a JObject<'obj>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        check_object_class(object, &Self::class(), env)?;
-        Ok(<&JThrowable>::from(object))
-    }
-}
-impl ToObject for JThrowable<'_> {
-    #[inline(always)]
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        <JObject as ToObject>::to_object_env(self, env)
-    }
-}
+impl_obj_ref!(JClass<'obj>);
+impl_obj_ref!(JThrowable<'obj>);
+impl_obj_ref!(JString<'obj>);
 
 impl<T> ToObject for &T
 where T: ToObject {
@@ -284,6 +280,14 @@ impl<'obj> FromObjectOwned<'obj> for JClass<'obj> {
 }
 #[doc(hidden)]
 impl<'obj> FromObjectOwned<'obj> for JThrowable<'obj> {
+    fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
+        // Call from_object() to perform checks
+        <&Self>::from_object_env(&object, env)?;
+        Ok(Self::from(object))
+    }
+}
+#[doc(hidden)]
+impl<'obj> FromObjectOwned<'obj> for JString<'obj> {
     fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         // Call from_object() to perform checks
         <&Self>::from_object_env(&object, env)?;

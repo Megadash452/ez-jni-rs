@@ -1,7 +1,7 @@
 //! Contains helper functions for the macros in `/jni_macros/src/object.rs`.
 use std::borrow::Cow;
 use jni::{
-    errors::Error as JNIError, objects::{JClass, JObject, JThrowable, JValue, JValueGen, JValueOwned}, JNIEnv
+    errors::Error as JNIError, objects::{JClass, JObject, JString, JThrowable, JValue, JValueGen, JValueOwned}, JNIEnv
 };
 use crate::{call, Class, FromJValue, FromJValueError, FromObject, FromObjectError, JValueType, __throw::try_catch, utils::{get_object_class_name, ResultExt}};
 use super::{field_helper, getter_name_and_sig, FieldNotFound, MethodNotFound};
@@ -157,7 +157,7 @@ impl_from_object_class!(@class JObject<'obj>);
 impl_from_object_class!(@class JThrowable<'obj>);
 impl_from_object_class!(JClass<'obj>);
 // TODO: GlobalRef
-// impl_from_object_class!(JString<'obj>);
+impl_from_object_class!(JString<'obj>);
 
 impl<'obj, 'local, T> FromJValueOwned<'obj, 'local> for T
 where T: for<'a> FromJValue<'a, 'obj, 'local> {

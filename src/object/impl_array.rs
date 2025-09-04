@@ -1,5 +1,5 @@
 use std::mem::MaybeUninit;
-use jni::objects::JClass;
+use jni::objects::{JClass, JString};
 use crate::{
     FromObjectOwned,
     utils::{create_java_prim_array, get_java_prim_array, get_object_array_converted, create_object_array_converted}
@@ -178,39 +178,34 @@ impl_prim_array!(u32);
 impl_prim_array!(u64);
 
 // -- Object types
-impl<'local> FromArrayObject<'local> for JObject<'local> {
+macro_rules! impl_obj_array {
+    (FromArrayObject for $ty:ty) => {
+        impl<'local> FromArrayObject<'local> for $ty {
+            #[inline(always)]
+            fn from_array_object(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Box<[Self]>, FromObjectError> {
+                get_object_array_converted(object, Self::from_object_owned_env, env)
+            }
+            #[inline(always)]
+            fn from_array_object_nullable(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Box<[Option<Self>]>, FromObjectError> {
+                get_object_array_converted(object, Option::<Self>::from_object_owned_env, env)
+            }
+        }
+    };
+    ($ty:ty) => {
+        impl_obj_array!(FromArrayObject for $ty);
+        impl<'local> ToArrayObject for $ty { }
+    };
+}
+impl_obj_array!(FromArrayObject for JObject<'local>);
+impl ToArrayObject for JObject<'_> {
     #[inline(always)]
-    fn from_array_object(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Box<[Self]>, FromObjectError> {
-        get_object_array_converted(object, Self::from_object_owned_env, env)
-    }
-    #[inline(always)]
-    fn from_array_object_nullable(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Box<[Option<Self>]>, FromObjectError> {
-        get_object_array_converted(object, Option::<Self>::from_object_owned_env, env)
+    fn to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>) -> JObject<'local> {
+        crate::utils::create_object_array(slice, env)
     }
 }
-impl ToArrayObject for JObject<'_> { }
-impl<'local> FromArrayObject<'local> for JClass<'local> {
-    #[inline(always)]
-    fn from_array_object(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Box<[Self]>, FromObjectError> {
-        get_object_array_converted(object, Self::from_object_owned_env, env)
-    }
-    #[inline(always)]
-    fn from_array_object_nullable(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Box<[Option<Self>]>, FromObjectError> {
-        get_object_array_converted(object, Option::<Self>::from_object_owned_env, env)
-    }
-}
-impl ToArrayObject for JClass<'_> { }
-impl<'local> FromArrayObject<'local> for JThrowable<'local> {
-    #[inline(always)]
-    fn from_array_object(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Box<[Self]>, FromObjectError> {
-        get_object_array_converted(object, Self::from_object_owned_env, env)
-    }
-    #[inline(always)]
-    fn from_array_object_nullable(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Box<[Option<Self>]>, FromObjectError> {
-        get_object_array_converted(object, Option::<Self>::from_object_owned_env, env)
-    }
-}
-impl ToArrayObject for JThrowable<'_> { }
+impl_obj_array!(JClass<'local>);
+impl_obj_array!(JThrowable<'local>);
+impl_obj_array!(JString<'local>);
 
 // -- Rust Types
 impl FromArrayObject<'_> for String {
