@@ -43,6 +43,23 @@ fn return_primitives() { run_with_jnienv(|| {
     assert_eq!(r, 3.3);
     let r: f64 = call!(static me.test.Test.getDouble() -> f64);
     assert_eq!(r, 3.3);
+    // Return primitive Object
+    let r: bool = call!(static me.test.Test.getBooleanObj() -> Boolean);
+    assert_eq!(r, true);
+    let r: char = call!(static me.test.Test.getCharObj() -> Character);
+    assert_eq!(r, 'a');
+    let r: i8 = call!(static me.test.Test.getByteObj() -> Byte);
+    assert_eq!(r, 3);
+    let r: i16 = call!(static me.test.Test.getShortObj() -> Short);
+    assert_eq!(r, 3);
+    let r: i32 = call!(static me.test.Test.getIntObj() -> Integer);
+    assert_eq!(r, 3);
+    let r: i64 = call!(static me.test.Test.getLongObj() -> Long);
+    assert_eq!(r, 3);
+    let r: f32 = call!(static me.test.Test.getFloatObj() -> Float);
+    assert_eq!(r, 3.3);
+    let r: f64 = call!(static me.test.Test.getDoubleObj() -> Double);
+    assert_eq!(r, 3.3);
     // Return primitive Object with option
     let r: Option<bool> = call!(static me.test.Test.getBooleanObj() -> Option<bool>);
     assert_eq!(r, Some(true));
@@ -236,6 +253,11 @@ fn return_fail() { run_with_jnienv(|| {
         || { call!(static me.test.Test.nullable() -> java.lang.Object); },
         FromObjectError::Null.to_string().as_str()
     );
+    // Returned primitive should NOT be NULL
+    fail_with(
+        || { call!(static me.test.Test.getNullPrim() -> Boolean); },
+        FromObjectError::Null.to_string().as_str()
+    );
     // Returned Array should NOT be NULL
     fail_with(
         || { call!(static me.test.Test.objNullArray() -> [java.lang.Object]); },
@@ -268,14 +290,14 @@ fn arguments() { run_with_jnienv(|| {
     // call!(static me.test.Test.objArgs(java.lang.Object(None), java.lang.String(Some("hi"))) -> void);
     call!(static me.test.Test.objArgs(java.lang.Object(null), java.lang.String(null)) -> void);
     call!(static me.test.Test.primObjArgs(
-        java.lang.Boolean(true),
-        java.lang.Character('a'),
-        java.lang.Byte(1i8),
-        java.lang.Short(1i16),
-        java.lang.Integer(1i32),
-        java.lang.Long(1i64),
-        java.lang.Float(1f32),
-        java.lang.Double(1f64)
+        Boolean(true),
+        Character('a'),
+        Byte(1i8),
+        Short(1i16),
+        Integer(1i32),
+        Long(1i64),
+        Float(1f32),
+        Double(1f64)
     ) -> void);
     // -- Primitive Array Arguments
     // Rust slices stored in variables
@@ -301,14 +323,25 @@ fn arguments() { run_with_jnienv(|| {
         [double]([1f64, 2.0]),
     ) -> void);
     call!(static me.test.Test.primObjArrayArgs(
-        [java.lang.Boolean]([true, null]),
-        [java.lang.Character](['a', null]),
-        [java.lang.Byte]([1i8, null]),
-        [java.lang.Short]([1i16, null]),
-        [java.lang.Integer]([1i32, null]),
-        [java.lang.Long]([1i64, null]),
-        [java.lang.Float]([1f32, null]),
-        [java.lang.Double]([1f64, null]),
+        [Boolean]([true, null]),
+        [Character](['a', null]),
+        [Byte]([1i8, null]),
+        [Short]([1i16, null]),
+        [Integer]([1i32, null]),
+        [Long]([1i64, null]),
+        [Float]([1f32, null]),
+        [Double]([1f64, null]),
+    ) -> void);
+    // Arrays with Option<primitive>
+    call!(static me.test.Test.primObjArrayArgs(
+        [Option<bool>]([Some(true), None]),
+        [Option<char>]([Some('a'), None]),
+        [Option<byte>]([Some(1i8), None]),
+        [Option<short>]([Some(1i16), None]),
+        [Option<int>]([Some(1i32), None]),
+        [Option<long>]([Some(1i64), None]),
+        [Option<float>]([Some(1f32), None]),
+        [Option<double>]([Some(1f64), None]),
     ) -> void);
     // Arrays with Rust primitive as Inner type
     call!(static me.test.Test.primArrayArgs(

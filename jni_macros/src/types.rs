@@ -118,18 +118,18 @@ impl Type {
         // Get a concrete Rust type to tell ToJValue to use
         let ty = match self {
             // Check if the Array's inner type is also Array:
-                    // Arrays above 1 dimensions don't have ToJValue implementations and require generated conversion code
+            // Arrays above 1 dimensions don't have ToJValue implementations and require generated conversion code
             Self::Assertive(InnerType::Array(array))
             | Self::Option { ty: InnerType::Array(array), .. }
             if matches!(&*array.ty, Type::Assertive(InnerType::Array(_)) | Type::Option { ty: InnerType::Array(_), .. }) => {
                 // Wrap the conversion code in a JValue so it can be passed to the arguments
                 let conversion = array.convert_rust_to_java(&value);
-                return quote_spanned! {array.span()=> ::jni::objects::JValue::Object(&(#conversion)) }
+                return quote_spanned! {value.span()=> ::jni::objects::JValue::Object(&(#conversion)) }
             },
             // Strings must be converted using AsRef instead of Borrow.
             Self::Assertive(InnerType::Object(class))
             | Self::Option { ty: InnerType::Object(class), .. }
-            if class.rust_type() == ClassRustType::String => return quote_spanned! {class.span()=>
+            if class.rust_type() == ClassRustType::String => return quote_spanned! {value.span()=>
                 ::jni::objects::JValueGen::borrow(&::ez_jni::ToJValue::to_jvalue_env(::std::convert::AsRef::<str>::as_ref(&(#value)), env))
             },
             // Wrap in JValue if type is JObject; no need to allocate another object
@@ -139,12 +139,12 @@ impl Type {
                 // JClass or JThrowable can be converted to JObject, which is converted to JValue
                 let converted = class.convert_rust_to_java(value);
                 let converted = converted.as_ref().unwrap_or(value);
-                return quote_spanned! {class.span()=> ::jni::objects::JValue::Object(&(#converted)) };
+                return quote_spanned! {value.span()=> ::jni::objects::JValue::Object(&(#converted)) };
             },
             _ => self.type_tokens(true, false, None),
         };
         // use the ToJValue implementation
-        quote_spanned! {ty.span()=> ::jni::objects::JValueGen::borrow(&<#ty as ::ez_jni::ToJValue>::to_jvalue_env((#value).borrow(), env)) }
+        quote_spanned! {value.span()=> ::jni::objects::JValueGen::borrow(&<#ty as ::ez_jni::ToJValue>::to_jvalue_env((#value).borrow(), env)) }
     }
 
     /// Convert a *Java `void`* value to a *Rust Unit `()`* value.
@@ -485,7 +485,7 @@ impl ArrayType {
         /// Converts an Object to a Rust slice by calling the respective FromObject implementation.
         /// **ty** is a Rust type, the type of the elements of the slice.
         fn from_object(ty: TokenStream, value: &TokenStream) -> TokenStream {
-            quote_spanned! {ty.span()=>
+            quote_spanned! {value.span()=>
                 <Box<[#ty]> as ::ez_jni::FromObject>::from_object_env(&(#value), env).unwrap_display()
             }
         }
@@ -531,7 +531,7 @@ impl ArrayType {
         /// Converts a Rust slice to an Object by calling the respective ToObject implementation.
         /// **ty** is a Rust type, the type of the elements of the slice (in this case its either a primitve or `_`).
         fn to_object(ty: TokenStream, value: &TokenStream) -> TokenStream {
-            quote_spanned! {ty.span()=>
+            quote_spanned! {value.span()=>
                 ::ez_jni::ToObject::to_object_env(::std::convert::AsRef::<[#ty]>::as_ref(&(#value)), env)
             }
         }
@@ -660,17 +660,6 @@ impl Debug for ArrayType {
 pub enum ClassRustType {
     JObject, JClass, JThrowable, JString, String
 }
-impl Display for ClassRustType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::JObject    => "Object",
-            Self::JClass     => "Class",
-            Self::JThrowable => "Throwable",
-            Self::JString    => "JString",
-            Self::String     => "String",
-        })
-    }
-}
 impl FromStr for ClassRustType {
     type Err = ();
 
@@ -685,6 +674,17 @@ impl FromStr for ClassRustType {
         }
     }
 }
+impl Display for ClassRustType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::JObject    => "Object",
+            Self::JClass     => "Class",
+            Self::JThrowable => "Throwable",
+            Self::JString    => "JString",
+            Self::String     => "String",
+        })
+    }
+}
 
 /// Represents the path in the JVM of a *Java Class*, such as `java.lang.String`.
 ///
@@ -695,7 +695,11 @@ impl FromStr for ClassRustType {
 /// Otherwise, a class with a *single component* is not allowed.
 #[derive(Clone)]
 pub enum Class {
+    /// The class is a *shorthand* of a full *class path*. E.g. `String` for `java.lang.String`
     Short(Ident),
+    /// The class is a *shorthand* of a class that wraps a **primitive**. E.g. `Boolean` for `java.lang.Boolean`
+    PrimitiveObject { ident: Ident, ty: JavaPrimitive },
+    // A full *class path*.
     Path {
         packages: Vec<(Ident, Token![.])>,
         /// The last Ident in the Punctuated list.
@@ -772,7 +776,8 @@ impl Class {
         match self {
             Class::Path { .. } => Ok(()),
             Class::Short(_) if self.rust_type() == ClassRustType::JThrowable => Ok(()),
-            Class::Short(class) => Err(syn::Error::new(self.span(), format!("{class} does not extend 'java.lang.Throwable'")))
+            Class::Short(class)
+            | Class::PrimitiveObject { ident: class, .. } => Err(syn::Error::new(self.span(), format!("{class} does not extend 'java.lang.Throwable'")))
         }
     }
 
@@ -789,8 +794,9 @@ impl Class {
     #[allow(unstable_name_collisions)]
     fn to_string_helper(&self, sep: &str, nested_sep: &str) -> String {
         match self {
-            Self::Short(class) => {
-                ["java", "lang", class.to_string().as_str()].into_iter()
+            Self::Short(ident)
+            | Self::PrimitiveObject { ident, .. } => {
+                ["java", "lang", ident.to_string().as_str()].into_iter()
                     .intersperse(sep)
                     .collect::<String>()
             },
@@ -831,6 +837,7 @@ impl Spanned for Class {
     fn span(&self) -> Span {
         match self {
             Self::Short(ident) => ident.span(),
+            Self::PrimitiveObject { ident, .. } => ident.span(),
             Self::Path { packages, class, nested_path } => {
                 let mut spans = Vec::new();
                 spans.extend(packages.iter()
@@ -880,6 +887,9 @@ impl Parse for Class {
             return if ClassRustType::from_str(&class.to_string()).is_ok() {
                 input.advance_to(fork);
                 Ok(Self::Short(class))
+            } else if let Some(ty) = JavaPrimitive::from_class_name(&class.to_string()) {
+                input.advance_to(fork);
+                Ok(Self::PrimitiveObject { ident: class, ty })
             } else {
                 Err(syn::Error::new(class.span(), Self::SINGLE_COMPONENT_ERROR))
             }
@@ -912,50 +922,61 @@ impl Parse for Class {
 }
 impl Conversion for Class {
     fn convert_java_to_rust(&self, value: &TokenStream) -> Option<TokenStream> {
-        // Also checks object's class
-        match self.rust_type() {
-            ClassRustType::JObject => Some(quote_spanned! {self.span()=>
-                <::jni::objects::JObject::<'_> as ::ez_jni::FromObjectOwned>::from_object_owned_env(#value, env).unwrap_display()
-            }),
-            ClassRustType::JClass => Some(quote_spanned! {self.span()=>
-                <::jni::objects::JClass::<'_> as ::ez_jni::FromObjectOwned>::from_object_owned_env(#value, env).unwrap_display()
-            }),
-            ClassRustType::JThrowable => Some(quote_spanned! {self.span()=>
-                <::jni::objects::JThrowable::<'_> as ::ez_jni::FromObjectOwned>::from_object_owned_env(#value, env).unwrap_display()
-            }),
-            ClassRustType::JString => Some(quote_spanned! {self.span()=>
-                <::jni::objects::JString::<'_> as ::ez_jni::FromObjectOwned>::from_object_owned_env(#value, env).unwrap_display()
-            }),
-            ClassRustType::String => Some(quote_spanned! {self.span()=>
-                <String as ::ez_jni::FromObject>::from_object_env(&(#value), env).unwrap_display()
-            }),
-        }
+        Some(match self {
+            Self::PrimitiveObject { ident, ty } => {
+                let ty = RustPrimitive::from(*ty).to_tokens_spanned(ident.span());
+                quote_spanned! {value.span()=>
+                    <#ty as ::ez_jni::FromObject>::from_object_env(&(#value), env).unwrap_display()
+                }
+            },
+            _ => {
+                let ty = self.type_tokens(false, false, None);
+                if self.is_jobject() {
+                    quote_spanned! {value.span()=>
+                        <#ty as ::ez_jni::FromObjectOwned>::from_object_owned_env(#value, env).unwrap_display()
+                    }
+                } else {
+                    quote_spanned! {value.span()=>
+                        <#ty as ::ez_jni::FromObject>::from_object_env(&(#value), env).unwrap_display()
+                    }
+                }
+            }
+        })
     }
     fn convert_rust_to_java(&self, value: &TokenStream) -> Option<TokenStream> {
-        match self.rust_type() {
-            ClassRustType::JObject => None,
-            ClassRustType::JClass => Some(quote_spanned! {self.span()=>
-                <&::jni::objects::JClass::<'_> as Into<&::jni::objects::JObject<'_>>>::into((#value).borrow())
+        match self {
+            Self::PrimitiveObject { ident, ty } => Some({
+                let ty = RustPrimitive::from(*ty).to_tokens_spanned(ident.span());
+                quote_spanned! {value.span()=>
+                    <#ty as ::ez_jni::ToObject>::to_object_env(&(#value), env)
+                }
             }),
-            ClassRustType::JThrowable => Some(quote_spanned! {self.span()=>
-                <&::jni::objects::JThrowable::<'_> as Into<&::jni::objects::JObject<'_>>>::into((#value).borrow())
-            }),
-            ClassRustType::JString => Some(quote_spanned! {self.span()=>
-                <&::jni::objects::JString::<'_> as Into<&::jni::objects::JObject<'_>>>::into((#value).borrow())
-            }),
-            ClassRustType::String => Some(quote_spanned! {self.span()=>
-                <str as ::ez_jni::ToObject>::to_object_env(::std::convert::AsRef::<str>::as_ref(&(#value)), env)
-            }),
+            _ => {
+                let ty = self.type_tokens(true, false, None);
+                match self.rust_type() {
+                    ClassRustType::JObject => None,
+                    ClassRustType::JClass
+                    | ClassRustType::JThrowable
+                    | ClassRustType::JString => Some(quote_spanned! {value.span()=>
+                        <&#ty as Into<&::jni::objects::JObject<'_>>>::into((#value).borrow())
+                    }),
+                    ClassRustType::String => Some(quote_spanned! {value.span()=>
+                        <#ty as ::ez_jni::ToObject>::to_object_env(::std::convert::AsRef::<str>::as_ref(&(#value)), env)
+                    }),
+                }
+            }
         }
     }
     fn type_tokens(&self, as_ref: bool, is_nested: bool, lifetime: Option<syn::Lifetime>) -> TokenStream {
         let lifetime = lifetime.unwrap_or(syn::Lifetime::new("'_", self.span()));
-        match self.rust_type() {
-            ClassRustType::JObject => quote_spanned! {self.span()=> ::jni::objects::JObject::<#lifetime> },
-            ClassRustType::JClass => quote_spanned! {self.span()=> ::jni::objects::JClass::<#lifetime> },
-            ClassRustType::JThrowable => quote_spanned! {self.span()=> ::jni::objects::JThrowable::<#lifetime> },
-            ClassRustType::JString => quote_spanned! {self.span()=> ::jni::objects::JString::<#lifetime> },
-            ClassRustType::String =>
+        match self {
+            Self::PrimitiveObject { ident, ty } => RustPrimitive::from(*ty).to_tokens_spanned(ident.span()),
+            _ => match self.rust_type() {
+                ClassRustType::JObject => quote_spanned! {self.span()=> ::jni::objects::JObject::<#lifetime> },
+                ClassRustType::JClass => quote_spanned! {self.span()=> ::jni::objects::JClass::<#lifetime> },
+                ClassRustType::JThrowable => quote_spanned! {self.span()=> ::jni::objects::JThrowable::<#lifetime> },
+                ClassRustType::JString => quote_spanned! {self.span()=> ::jni::objects::JString::<#lifetime> },
+                ClassRustType::String =>
                 if as_ref && is_nested {
                     // str nested in another type must be used with Reference (&)
                     quote_spanned! {self.span()=> &str }
@@ -964,6 +985,7 @@ impl Conversion for Class {
                 } else {
                     quote_spanned! {self.span()=> String }
                 },
+            }
         }
     }
 }
@@ -983,6 +1005,9 @@ impl Debug for Class {
         match self {
             Self::Short(ty) => f.debug_tuple("Class::Short")
                 .field(&ty.to_string())
+                .finish(),
+            Self::PrimitiveObject { ident, .. } => f.debug_tuple("Class::Primitive")
+                .field(&ident.to_string())
                 .finish(),
             Self::Path { .. } => f.debug_tuple("Class::Path")
                 .field(&self.to_string())
@@ -1097,6 +1122,36 @@ pub enum JavaPrimitive {
     Byte, Boolean, Char,
     Short, Int, Long,
     Float, Double
+}
+impl JavaPrimitive {
+    /// Returns the name of the **class** that wraps this **primitive** in Java.
+    #[allow(unused)]
+    pub fn class_name(self) -> &'static str {
+        match self {
+            Self::Boolean => "Boolean",
+            Self::Char    => "Character",
+            Self::Byte    => "Byte",
+            Self::Short   => "Short",
+            Self::Int     => "Integer",
+            Self::Long    => "Long",
+            Self::Float   => "Float",
+            Self::Double  => "Double",
+        }
+    }
+    /// Like [`JavaPrimitive::from_str()`], but the string is the *name* of a Java **class** that wraps a **primitive**.
+    pub fn from_class_name(class: &str) -> Option<Self> {
+        match class {
+            "Boolean"   => Some(Self::Boolean),
+            "Character" => Some(Self::Char),
+            "Byte"      => Some(Self::Byte),
+            "Short"     => Some(Self::Short),
+            "Integer"   => Some(Self::Int),
+            "Long"      => Some(Self::Long),
+            "Float"     => Some(Self::Float),
+            "Double"    => Some(Self::Double),
+            _ => None
+        }
+    }
 }
 impl SigType for JavaPrimitive {
     fn sig_char(&self) -> Ident {
