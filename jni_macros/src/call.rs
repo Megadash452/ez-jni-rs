@@ -441,7 +441,7 @@ impl Parse for ConstructorCall {
 }
 
 /// Parameter to a JNI method call, such as `java.lang.String(value)`.
-/// Holds a [`Type`] that can be an [`ArrayType`], or a regular *single* [`InnerType`].
+/// Holds a [`Type`] and a [`Value`][ParamValue].
 /// Can accept an **Array Literal** if the [`Type`] is array.
 #[derive(Debug, Clone)]
 pub struct Parameter {
@@ -489,7 +489,7 @@ impl Parse for Parameter {
                 | Type::Option { ty: InnerType::JavaPrimitive { .. } | InnerType::RustPrimitive { .. }, .. }
                     => return Err(syn::Error::new(null.span(), format!("Can't use '{NULL_KEYWORD}' as value of primitive argument type."))),
                 Type::Assertive(InnerType::Object(_) | InnerType::Array(_))
-                | Type::Option { ty: InnerType::Object(_) | InnerType::Array(_), .. } => { },
+                | Type::Option {  .. } => { },
             },
             _ => {}
         };
@@ -552,9 +552,8 @@ impl Parse for ParamValue {
 ///
 /// The caller of the macro can assert that the JNI method call will result in one of the following:
 /// 1. [`Type`] (or `void`) if the function being called can't return `NULL` or throw an `exception` (e.g. `bool` or `java.lang.String`).
-/// 2. `Option<Class>` if the return type is an [`Object`][Type::Object] that could be **NULL**.
-///    Java *does not allow* primitive types (i.e. not Object) to be **NULL**, so [Self::Option] can only be used with a [Class].
-/// 3. `Result<Type | void | Option<Class>, Class>` if the method call can throw an **Exception**,
+/// 2. `Option<Type>` if the return type is an [`Object`][Type::Object] that could be **NULL**.
+/// 3. `Result<void | Type | Option<Type>, Class>` if the method call can throw an **Exception**,
 ///    where the `Err` type is a **Java Class** that extends `java.lang.Throwable`.
 pub enum Return {
     /// The method being called can't throw (will `panic!` if it does).

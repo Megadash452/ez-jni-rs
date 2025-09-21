@@ -152,17 +152,19 @@ pub fn jni_fn(input: TokenStream) -> TokenStream {
 /// a **Java Class**,
 /// or an **Array** of one of the previous types (the type wrapped in *brackets* `[]`).
 /// 
-/// *Classes* and *Arrays* can be wrapped with [`Option`], but not *primitives*.
-/// This makes it so that *arguments* can be passed without needing a manual conversion from the caller,
-/// and to allow **null** values for the *return* in Rust.
+/// All of the above types can be wrapped in [`Option`].
+/// This allows the value to be `null` without causing an error.
+/// *Primitives* can't be `null` in Java, only *Objects* can.
+/// The macro solves this problem by using a **Primitive Class** (e.g. `java.lang.Boolean`)
+/// instead of the *primitive* itself in the call.
 /// This can be used when the Type in the Java function declaration has the `@Nullable` annotation,
 /// or the function documents that it can accept or return a `null` value.
 /// 
 /// Arrays can be **multi-dimensional** (with unlimited dimensions).
-/// Inner types of the array can also be wrapped with [`Option`] (except primitives, of course).
+/// Inner types of the array can also be wrapped with [`Option`].
 /// 
 /// For the class `java.lang.String`, use the Rust type [`String`] instead.
-/// Using `java.lang.String` will assume the value is a [`JObject`][jni::objects::JObject].
+/// Using `java.lang.String` will use the Rust type [`JString`][jni::objects::JString].
 /// 
 /// [`String`], **Array**, and [`Option`] values will be automatically converted between the 2 languages when making calls.
 /// 
@@ -176,10 +178,11 @@ pub fn jni_fn(input: TokenStream) -> TokenStream {
 /// [String]         // object array
 /// [[int]]          // multidimensional array
 /// Option<String>   // nullable object
-/// Option<[Option<String>]> // nullable array of nullable objects
+/// Option<[Option<int>]> // nullable array of nullable objects
 /// ```
 /// 
-/// In the sections below, the use of `T` or `Type` means that it can accept any of the types declared above.
+/// <br><br>
+/// > In the sections below, the use of `T` or `Type` means that it can accept any of the types declared above.
 ///
 /// ## Arguments
 ///
@@ -189,10 +192,13 @@ pub fn jni_fn(input: TokenStream) -> TokenStream {
 /// All arguments have a **type** (see the [types section][call!#types]),
 /// followed by a **value** (wrapped in parenthesis).
 /// 
-/// **Array** arguments' **values** can be any Rust Type that is `AsRef<[T]>`,
-/// where `T` is a primitive, or can be [converted to `JObject`][ez_jni::ToObject].
-/// i.e. the value can be read as a *slice* of said type.
-/// e.g. [slice](https://doc.rust-lang.org/std/primitive.slice.html)s, [`Vec`]s, boxed slices, etc.
+/// Argument **values** are converted to a [**Java Value**][ez_jni::ToJValue] so that they can be passed to the *JNI call*.
+/// 
+/// [`Option`] is not allowed in arguments, except if it is within an **Array** (e.g. `[Option<String>]`).
+/// This is to have better *readability* of the types in the arguments.
+/// If you have an [`Option`] to pass as an argument (e.g. `Option<String>`),
+/// manually convert it [to an object][ez_jni::ToObject] or use the [null keyword][call!#null-keyword].
+// TODO: deprecate the use of option and nul keyword
 /// 
 /// #### Null keyword
 /// 
