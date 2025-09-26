@@ -55,6 +55,7 @@ where Self: ToObject + Sized {
     /// Users should NOT use this trait method.
     /// Instead use the implementation of [`ToObject`] for `slices`.
     #[inline(always)]
+    // TODO: use T: AsRef<> for the element type
     fn to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>) -> JObject<'local> {
         create_object_array_converted(slice, Self::to_object_env, env)
     }
@@ -89,14 +90,14 @@ where T: FromArrayObject<'local> + 'local {
     }
 }
 impl<T> ToObject for [T]
-where T: ToArrayObject + ToObject {
+where T: ToArrayObject {
     #[inline(always)]
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         <T as ToArrayObject>::to_array_object(self, env)
     }
 }
 impl<T> ToObject for &[T]
-where T: ToArrayObject + ToObject {
+where T: ToArrayObject {
     #[inline(always)]
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         <[T] as ToObject>::to_object_env(self, env)

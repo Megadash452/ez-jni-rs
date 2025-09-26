@@ -335,11 +335,16 @@ impl JniFnArg {
         let attrs = &self.attrs;
         let mutability = &self.mutability;
         let name = &self.name;
-        // Output nothing if parameter name is ellided
+        // Skip parameter when name is ellided
         if name.to_string() == "_" {
             return TokenStream::new()
         }
-        self.ty.convert_java_to_rust(&quote!(#name))
+        // Variants of JObject are used as the native function parameter types (only at top-level of the type),
+        // so conversion (e.g. JString) is not necessary.
+        if matches!(&self.ty, Type::Assertive(InnerType::Object(class)) if class.is_jobject()) {
+            return TokenStream::new();
+        }
+        self.ty.convert_java_to_rust(&name.to_token_stream())
             .map(|conversion| quote! { #(#attrs)* let #mutability #name = #conversion; })
             // Output nothing if there is no conversion to be done.
             .unwrap_or_default()
@@ -364,6 +369,7 @@ impl ToTokens for JniFnArg {
         self.colon_token.to_tokens(tokens);
         
         // Convert the `Type` to a `jni::objects` type (with 'local lifetime).
+        // These are the argument types that will be used in the Java native method.
         fn primitive(j_prim: JavaPrimitive, span: Span) -> TokenStream {
             let j_type = Ident::new(&format!("j{j_prim}"), span);
             quote_spanned! {span=> ::jni::sys::#j_type}

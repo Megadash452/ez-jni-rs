@@ -111,9 +111,6 @@ jni_fn! { me.test.Native =>
 
     pub fn native_test_2d_str_arr<'local>(arr: [[String]]) -> [[String]] {
         let arr: Box<[Box<[String]>]> = arr;
-        // assert!(arr.len() == 2);
-        // assert_eq!(arr[0].as_ref(), &["Hello", "Rust"]);
-        // assert_eq!(arr[1].as_ref(), &["From", "Java"]);
         assert_eq!(arr.as_ref(), &[
             Box::new(["Hello", "Rust"].map(|s| s.to_string())) as Box<[_]>,
             Box::new(["From", "Java"].map(|s| s.to_string())) as Box<[_]>,

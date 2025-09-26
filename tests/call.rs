@@ -322,16 +322,6 @@ fn arguments() { run_with_jnienv(|| {
         [float]([1f32, 2.0]),
         [double]([1f64, 2.0]),
     ) -> void);
-    call!(static me.test.Test.primObjArrayArgs(
-        [Boolean]([true, null]),
-        [Character](['a', null]),
-        [Byte]([1i8, null]),
-        [Short]([1i16, null]),
-        [Integer]([1i32, null]),
-        [Long]([1i64, null]),
-        [Float]([1f32, null]),
-        [Double]([1f64, null]),
-    ) -> void);
     // Arrays with Option<primitive>
     call!(static me.test.Test.primObjArrayArgs(
         [Option<bool>]([Some(true), None]),
