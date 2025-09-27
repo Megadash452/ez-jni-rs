@@ -166,12 +166,22 @@ impl SigType for Type {
     fn sig_char(&self) -> Ident {
         match self {
             Self::Assertive(ty) => ty.sig_char(),
+            // Option with primitive is actually a class
+            Self::Option { ty: InnerType::JavaPrimitive { ident, ty }, .. }
+                => Class::PrimitiveObject { ident: ident.clone(), ty: *ty }.sig_char(),
+            Self::Option { ty: InnerType::RustPrimitive { ident, ty }, .. }
+                => Class::PrimitiveObject { ident: ident.clone(), ty: JavaPrimitive::from(*ty) }.sig_char(),
             Self::Option { ty, .. } => ty.sig_char(),
         }
     }
     fn sig_type(&self) -> LitStr {
         match self {
             Self::Assertive(ty) => ty.sig_type(),
+            // Option with primitive is actually a class
+            Self::Option { ty: InnerType::JavaPrimitive { ident, ty }, .. }
+                => Class::PrimitiveObject { ident: ident.clone(), ty: *ty }.sig_type(),
+            Self::Option { ty: InnerType::RustPrimitive { ident, ty }, .. }
+                => Class::PrimitiveObject { ident: ident.clone(), ty: JavaPrimitive::from(*ty) }.sig_type(),
             Self::Option { ty, .. } => ty.sig_type(),
         }
     }
@@ -764,13 +774,16 @@ impl Class {
     /// **nested_sep** is the separator between the nested classes
     #[allow(unstable_name_collisions)]
     fn to_string_helper(&self, sep: &str, nested_sep: &str) -> String {
-        match self {
-            Self::Short(ident)
-            | Self::PrimitiveObject { ident, .. } => {
-                ["java", "lang", ident.to_string().as_str()].into_iter()
+        // Creates a full **Class path** for a given **class name**.
+        let full_class = |class_name: &str| -> String {
+            ["java", "lang", class_name].into_iter()
                     .intersperse(sep)
                     .collect::<String>()
-            },
+        };
+
+        match self {
+            Self::Short(ident) => full_class(&ident.to_string()),
+            Self::PrimitiveObject { ty, .. } => full_class(ty.class_name()),
             Self::Path { packages, class, nested_path } => {
                 let nested_classes = match &nested_path {
                     Some(nested_path) => Box::new(
@@ -1096,7 +1109,6 @@ pub enum JavaPrimitive {
 }
 impl JavaPrimitive {
     /// Returns the name of the **class** that wraps this **primitive** in Java.
-    #[allow(unused)]
     pub fn class_name(self) -> &'static str {
         match self {
             Self::Boolean => "Boolean",

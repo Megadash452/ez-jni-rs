@@ -223,7 +223,7 @@ fn return_arrays_other() { run_with_jnienv(|| {
     assert_eq!(r.as_ref(), [Some("Hello"), None].map(|s| s.map(|s| s.to_string())));
     let r: Box<[Option<JObject>]> = call!(static me.test.Test.getObjectArray() -> [Option<java.lang.Object>]);
     r.into_vec().into_iter().map(Option::unwrap).for_each(|_| {});
-    let r: Option<Box<[Option<String>]>> = call!(static me.test.Test.getStringArray() -> Option<[Option<String>]>);
+    let r: Option<Box<[Option<String>]>> = call!(static me.test.Test.getNullStringArray() -> Option<[Option<String>]>);
     assert_eq!(r.unwrap().as_ref(), &[Some("Hello"), None].map(|s| s.map(|s| s.to_string())));
     let r: Option<Box<[Option<JObject>]>> = call!(static me.test.Test.getObjectArray() -> Option<[Option<java.lang.Object>]>);
     r.unwrap().into_vec().into_iter().map(Option::unwrap).for_each(|_| {});
@@ -310,9 +310,9 @@ fn arguments() { run_with_jnienv(|| {
     let j = [1i64, 2];
     let f = [1f32, 2.0];
     let d = [1f64, 2.0];
-    call!(static me.test.Test.primArrayArgs([boolean](&z), [char](c), [byte](b), [short](s), [int](i), [long](j), [float](f), [double](d)) -> void);
+    call!(static me.test.Test.primObjArrayArgs([boolean](&z), [char](c), [byte](b), [short](s), [int](i), [long](j), [float](f), [double](d)) -> void);
     // Array literals
-    call!(static me.test.Test.primArrayArgs(
+    call!(static me.test.Test.primObjArrayArgs(
         [boolean]([true, false]),
         [char](['a', 'b']),
         [byte]([1i8, 2]),
