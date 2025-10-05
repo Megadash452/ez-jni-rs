@@ -5,6 +5,8 @@ use jni::{
 
 /// A trait that allows a *base* **Java Class** to be assigned to a *Rust Type*.
 /// 
+/// The class must be in *Class Path* format (e.g. `"java/lang/String"`).
+/// 
 /// When converting [from an object][crate::FromObject],
 /// the *Rust Type* will expect the *Java Object* to be an instance of the **Class**.
 pub trait Class {
