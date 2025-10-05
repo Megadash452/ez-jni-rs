@@ -91,6 +91,7 @@ public final class Test {
     public static void primObjArgs(Boolean z, Character c, Byte b, Short s, Integer i, Long j, Float f, Double d) { }
     public static void objArgs(Object l, String s) { }
     public static void otherArgs(Class c, Exception e) {  }
+    public static void primArrayArgs(boolean[] z, char[] c, byte[] b, short[] s, int[] i, long[] j, float[] f, double[] d) { }
     public static void primObjArrayArgs(Boolean[] z, Character[] c, Byte[] b, Short[] s, Integer[] i, Long[] j, Float[] f, Double[] d) { }
     public static void objArrayArgs(Object[] l, String[] s) { }
     public static void prim2DArrayArgs(boolean[][] z, char[][] c, int[][] i) { }

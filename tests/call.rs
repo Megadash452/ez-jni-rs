@@ -310,9 +310,9 @@ fn arguments() { run_with_jnienv(|| {
     let j = [1i64, 2];
     let f = [1f32, 2.0];
     let d = [1f64, 2.0];
-    call!(static me.test.Test.primObjArrayArgs([boolean](&z), [char](c), [byte](b), [short](s), [int](i), [long](j), [float](f), [double](d)) -> void);
+    call!(static me.test.Test.primArrayArgs([boolean](&z), [char](c), [byte](b), [short](s), [int](i), [long](j), [float](f), [double](d)) -> void);
     // Array literals
-    call!(static me.test.Test.primObjArrayArgs(
+    call!(static me.test.Test.primArrayArgs(
         [boolean]([true, false]),
         [char](['a', 'b']),
         [byte]([1i8, 2]),
@@ -333,16 +333,16 @@ fn arguments() { run_with_jnienv(|| {
         [Option<float>]([Some(1f32), None]),
         [Option<double>]([Some(1f64), None]),
     ) -> void);
-    // Arrays with Rust primitive as Inner type
-    call!(static me.test.Test.primArrayArgs(
-        [bool]([0 != 0, 1 != 0]),
-        [char](['a', 'b']),
-        [i8]([i8::MIN, i8::MAX]),
-        [i16]([i16::MIN, i16::MAX]),
-        [i32]([i32::MIN, i32::MAX]),
-        [i64]([i64::MIN, i64::MAX]),
-        [f32]([f32::MIN, f32::MAX]),
-        [f64]([f64::MIN, f64::MAX]),
+    // Object primitive Arrays with extreme values
+    call!(static me.test.Test.primObjArrayArgs(
+        [Boolean]([0 != 0, 1 != 0]),
+        [Character](['a', 'b', 'ඞ']),
+        [Byte]([i8::MIN, i8::MAX]),
+        [Short]([i16::MIN, i16::MAX]),
+        [Integer]([i32::MIN, i32::MAX]),
+        [Long]([i64::MIN, i64::MAX]),
+        [Float]([f32::MIN, f32::MAX, f32::INFINITY, f32::NEG_INFINITY, f32::NAN]),
+        [Double]([f64::MIN, f64::MAX, f64::INFINITY, f64::NEG_INFINITY, f64::NAN]),
     ) -> void);
     // Arrays with unsigned Rust integers
     call!(static me.test.Test.primArrayArgs(
