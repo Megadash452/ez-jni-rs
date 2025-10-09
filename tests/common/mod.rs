@@ -3,7 +3,7 @@ pub mod compile_fail;
 
 use std::{panic::{catch_unwind, AssertUnwindSafe, UnwindSafe}, process::Command, sync::LazyLock};
 use jni::{JNIEnv, JavaVM};
-use ez_jni::{call, __throw::PanicPayloadRepr};
+use ez_jni::{__throw::PanicPayloadRepr, call, utils::ResultExt, FromObject, JavaException};
 use utils::CLASS_DIR;
 
 static JVM: LazyLock<JavaVM> = LazyLock::new(|| {
@@ -11,20 +11,12 @@ static JVM: LazyLock<JavaVM> = LazyLock::new(|| {
         .unwrap_or_else(|err| panic!("Error compiling Java file:\n{err}"));
     JavaVM::new(jni::InitArgsBuilder::new()
         .option(format!("-Djava.class.path={CLASS_DIR}"))
+        .option("-ea")
         .build()
         .unwrap()
     )
         .unwrap_or_else(|err| panic!("Error starting JavaVM: {err}"))
 });
-
-// /// Must call it this exact same way: `setup_env!(env)`;
-// #[macro_export]
-// macro_rules! setup_env {
-//     ($var:ident) => {
-//         let mut $var = common::JVM.attach_current_thread_permanently()
-//             .unwrap_or_else(|err| panic!("Error attaching current thread to JavaVM: {err}"));
-//     };
-// }
 
 /// Gets a [`JNIEnv`] from the global [`JVM`][JavaVM].
 /// 
@@ -38,19 +30,20 @@ pub fn get_env<'local>() -> JNIEnv<'local> {
 /// Set up the [`JNIEnv`] from the test [`JVM`][JavaVM] and run some test code `f`.
 /// 
 /// The funciton `f` is allowed to `panic!`.
-/// 
-/// This is NOT the same [`run_with_jnienv`][ez_jni::__throw::run_with_jnienv()] from the library.
-/// It operates completely differently and is only for running tests.
-pub fn run_with_jnienv<'local>(f: impl FnOnce() + UnwindSafe) {
-    // Assign the JNIEnv used for this jni call
-    let stack_env = ::ez_jni::__throw::StackEnv::push(get_env());
+pub fn run_with_jnienv(f: impl FnOnce() + UnwindSafe) {
+    let (result, mut env) = unsafe { ez_jni::__throw::run_with_jnienv_helper(get_env(), |_| f()) };
+    let env = &mut env;
 
-    // Run the function
-    // Pass a reference of the JNIEnv that was just pushed; for conversions
-    let result = f();
-
-    // Remove the JNIEnv when the function finishes running
-    stack_env.pop();
+    if let Err(payload) = result {
+        match payload {
+            PanicPayloadRepr::Message(msg) => panic!("{msg}"),
+            PanicPayloadRepr::Unknown => panic!("{}", PanicPayloadRepr::UNKNOWN_PAYLOAD_TYPE_MSG),
+            PanicPayloadRepr::Object(exception) => {
+                let exception = JavaException::from_object_env(&exception, env).unwrap_display();
+                ez_jni::__throw::panic_exception(exception)
+            }
+        }
+    }
 }
 
 /// Assert that a test (**f**) should **fail** (`panic!`) with a specific **error message**.

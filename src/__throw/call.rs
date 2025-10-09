@@ -1,7 +1,8 @@
 //! These functions are used in [`call!`] and *similar macros*.
+use std::sync::OnceLock;
 use jni::{errors::Error as JNIError, objects::GlobalRef};
 use super::*;
-use crate::{utils::{get_object_class_name, JNI_CALL_GHOST_EXCEPTION}, FromObject, JavaException};
+use crate::{utils::{ResultExt, JNI_CALL_GHOST_EXCEPTION}, FromObject, JavaException};
 
 /// Checks if there is a *pending Exception* that was thrown from a previous JNI call,
 /// and tries to convert it to an `E` and the Exception is caught and cleared.
@@ -34,6 +35,7 @@ pub fn panic_exception(ex: JavaException) -> ! {
         // Otherwise, just panic with the exception message and exit execution.
         // There is no need to inject backtrace if panics are not being caught.
         panic!("{ex}");
+        // TODO: find a way to Inject Java StackTrace to Rust Backtrace and print custom backtrace.
     }
 }
 
@@ -47,8 +49,7 @@ pub fn handle_jni_call_error(error: JNIError, env: &mut JNIEnv<'_>) -> ! {
     match error {
         JNIError::JavaException => {
             let ex = catch_exception(env).expect(JNI_CALL_GHOST_EXCEPTION);
-            let ex = JavaException::from_object_env(&ex, env)
-                .unwrap_or_else(|error| panic!("{error}"));
+            let ex = JavaException::from_object_env(&ex, env).unwrap_display();
             panic_exception(ex)
         },
         error => panic!("{error}")
@@ -57,18 +58,40 @@ pub fn handle_jni_call_error(error: JNIError, env: &mut JNIEnv<'_>) -> ! {
 
 /// Checks if an `Exception` was thrown after calling a Java Method, and returns said `Exception`.
 /// The `Exception` will be cleared so that it will be possible to do other jni_calls to handle the exception (e.g. rethrowing it).
+/// 
+/// If the `Exception` Object is a descendant of `java.lang.Error`,
+/// this function will `panic!` instead of returning the object.
+/// This is because a `java.lang.Error` [should ***never*** be caught](https://docs.oracle.com/javase/8/docs/api/java/lang/Error.html).
 ///
 /// The returned Object will NEVER be NULL.
-///
-/// NOTICE: Can't call any function (including print) between the time when the exception is thrown and when `JNIEnv::exception_clear()` is called.
-/// This means that if a method call could throw, the checks (call, type, and null) should be done AFTER the exception is caught.
 pub fn catch_exception<'local>(env: &mut JNIEnv<'local>) -> Option<JThrowable<'local>> {
+    /// This function checks if the object is of class `java.lang.Error`.
+    /// To make the check faster, **cache** the Class object in memory.
+    static ERROR_CLASS: OnceLock<GlobalRef> = OnceLock::new();
+
     env.exception_occurred().ok().and_then(|ex| {
-        if !ex.is_null() {
-            env.exception_clear().unwrap();
-            Some(ex)
-        } else {
+        // NOTICE: Can't call any function (including print) between the time when the exception is thrown and when `JNIEnv::exception_clear()` is called.
+        // This means that if a method call could throw, the checks (call, type, and null) should be done AFTER the exception is caught.
+        env.exception_clear().unwrap();
+
+        if ex.is_null() {
             None
+        } else {
+            let error_class = ERROR_CLASS.get_or_init(|| {
+                let class = env.find_class("java/lang/Error")
+                    .unwrap_or_else(|error| handle_jni_call_error(error, env));
+                env.new_global_ref(class)
+                    .unwrap_or_else(|error| handle_jni_call_error(error, env))
+            });
+            // java.lang.Error should NOT be caught, as per class documentation.
+            // Instead, it should cause a panic!.
+            if !env.is_instance_of(&ex, error_class)
+                .unwrap_or_else(|error| handle_jni_call_error(error, env))
+            {
+                panic_exception(JavaException::from_object_env(&ex, env).unwrap_display())
+            }
+
+            Some(ex)
         }
     })
 }
@@ -79,12 +102,10 @@ pub fn get_jni_error_msg(error: JNIError, env: &mut JNIEnv<'_>) -> String {
         JNIError::JavaException => {
             let exception = catch_exception(env)
                 .expect(JNI_CALL_GHOST_EXCEPTION);
-
-            call!(env=> exception.getMessage() -> Option<String>)
-                .unwrap_or_else(|| {
-                    let class = get_object_class_name(&exception, env);
-                    panic!("Could not get message from exception {class}");
-                })
+            JavaException::from_object_env(&exception, env)
+                .unwrap_display()
+                .message()
+                .to_string()
         },
         error => error.to_string()
     }

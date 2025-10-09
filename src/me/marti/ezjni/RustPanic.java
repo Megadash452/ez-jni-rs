@@ -1,4 +1,5 @@
 package me.marti.ezjni;
+// TODO: remove the marti from package
 
 // Seems that doing a Location class was veryb hard :/
 // import me.marti.ezjni.PanicLocation;

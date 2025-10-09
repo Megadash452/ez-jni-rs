@@ -11,7 +11,11 @@ use super::*;
 pub struct JavaException {
     exception: GlobalRef,
     class: String,
-    message: String,
+    /// Some (very rare!) exception classes leave the **message** as `null`.
+    /// In the rare case this happens, the **message** must be wrapped with [`Option`].
+    /// 
+    /// Use [`Self::message()`] to get a default string.
+    message: Option<String>,
 }
 impl JavaException {
     /// The Exception object.
@@ -19,7 +23,14 @@ impl JavaException {
     /// The **Class Path** of the Exception Object.
     pub fn class(&self) -> &str { &self.class }
     /// The **message** obtained from the Exception.
-    pub fn message(&self) -> &str { &self.message }
+    /// 
+    /// If the **message** is null, returns the **class name**.
+    pub fn message(&self) -> &str {
+        match &self.message {
+            Some(msg) => msg,
+            None => &self.class,
+        }
+    }
 }
 impl AsRef<JObject<'static>> for JavaException {
     fn as_ref(&self) -> &JObject<'static> {
@@ -34,7 +45,10 @@ impl Into<GlobalRef> for JavaException {
 impl std::error::Error for JavaException {}
 impl Display for JavaException {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: {}", self.class, self.message)
+        match &self.message {
+            Some(msg) => write!(f, "{}: {msg}", self.class),
+            None => write!(f, "{}", self.class)
+        }
     }
 }
 impl Debug for JavaException {
@@ -48,6 +62,10 @@ impl Debug for JavaException {
 }
 impl<'local> FromObject<'_, '_, '_> for JavaException {
     fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
+        if object.is_null() {
+            return Err(FromObjectError::Null);
+        }
+
         let class = get_object_class_name(object, env);
 
         // Check that Object is an Exception
@@ -62,7 +80,7 @@ impl<'local> FromObject<'_, '_, '_> for JavaException {
 
         Ok(Self {
             class,
-            message: call!(env=> object.getMessage() -> String),
+            message: call!(env=> object.getMessage() -> Option<String>),
             exception: env
                 .new_global_ref(&object)
                 .map_err(|err| FromObjectError::Other(get_jni_error_msg(err, env)))?,

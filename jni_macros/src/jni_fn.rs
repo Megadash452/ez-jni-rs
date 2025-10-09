@@ -102,10 +102,10 @@ impl JniFn {
             // Use the _map version of run_with_jnienv() if the return type needs conversion to Java
             tokens.append_all(match self.output.convert_rust_to_java_sys(&quote_spanned!(self.output.span()=> r)) {
                 Some(conversion) => quote_spanned! {self.content.span()=>
-                    ::ez_jni::__throw::run_with_jnienv_map(env, #run, |r, #[allow(unused_variables)] env| #conversion)
+                    unsafe { ::ez_jni::__throw::run_with_jnienv_map(env, #run, |r, #[allow(unused_variables)] env| #conversion) }
                 },
                 None => quote_spanned! {self.content.span()=>
-                    ::ez_jni::__throw::run_with_jnienv(env, #run)
+                    unsafe { ::ez_jni::__throw::run_with_jnienv(env, #run) }
                 }
             });
         });
