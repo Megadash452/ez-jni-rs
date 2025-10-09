@@ -35,11 +35,11 @@ pub fn derive_struct(mut st: ItemStruct) -> syn::Result<TokenStream> {
         impl #st_generics ::ez_jni::FromArrayObject<#env_lt> for #st_ident #st_generics {
             #[inline(always)]
             fn from_array_object(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<#env_lt>) -> ::std::result::Result<::std::boxed::Box<[Self]>, ::ez_jni::FromObjectError> {
-                ::ez_jni::utils::get_object_array_converted(object, |obj, env| <Self as ::ez_jni::FromObject>::from_object_env(&obj, env), env)
+                ::ez_jni::utils::get_object_array_converted::<Self>(object, env)
             }
             #[inline(always)]
             fn from_array_object_nullable(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<#env_lt>) -> ::std::result::Result<::std::boxed::Box<[::std::option::Option<Self>]>, ::ez_jni::FromObjectError> {
-                ::ez_jni::utils::get_object_array_converted(object, |obj, env| <::std::option::Option::<Self> as ::ez_jni::FromObject>::from_object_env(&obj, env), env)
+                ::ez_jni::utils::get_object_array_converted::<::std::option::Option<Self>>(object, env)
             }
         }
         impl #st_generics ::ez_jni::Class for #st_ident #st_generics {
@@ -126,11 +126,11 @@ pub fn derive_enum(mut enm: ItemEnum) -> syn::Result<TokenStream> {
         impl #enm_generics ::ez_jni::FromArrayObject<#env_lt> for #enm_ident #enm_generics {
             #[inline(always)]
             fn from_array_object(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<#env_lt>) -> ::std::result::Result<::std::boxed::Box<[Self]>, ::ez_jni::FromObjectError> {
-                ::ez_jni::utils::get_object_array_converted(object, |obj, env| <Self as ::ez_jni::FromObject>::from_object_env(&obj, env), env)
+                ::ez_jni::utils::get_object_array_converted::<Self>(object, env)
             }
             #[inline(always)]
             fn from_array_object_nullable(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<#env_lt>) -> ::std::result::Result<::std::boxed::Box<[::std::option::Option<Self>]>, ::ez_jni::FromObjectError> {
-                ::ez_jni::utils::get_object_array_converted(object, |obj, env| <::std::option::Option::<Self> as ::ez_jni::FromObject>::from_object_env(&obj, env), env)
+                ::ez_jni::utils::get_object_array_converted::<::std::option::Option<Self>>(object, env)
             }
         }
         #base_class_impl

@@ -1,5 +1,5 @@
 //! Contains helper functions for the To/FromObject implementatios in `/src/object/impl_array.rs`.
-use jni::{objects::{JClass, JObject, JObjectArray, JPrimitiveArray}, sys::jsize, JNIEnv};
+use jni::{objects::{AutoLocal, JObject, JObjectArray, JPrimitiveArray}, sys::jsize, JNIEnv};
 use crate::{utils::get_object_class_name, FromObject, FromObjectError, Primitive};
 
 
@@ -78,47 +78,55 @@ where T: Primitive + for<'a, 'obj, 'local> FromObject<'a, 'obj, 'local> {
     }
 }
 
-/// Creates a Rust [`Vec`] of [`JObject`]s by reading elements from a **Java Array** (**obj**).
+/// Creates a Rust [`Boxed slice`] (*heap-allocated array*) from a *Java Array* and applies a **conversion** to each *element Object*.
 /// 
-/// If the Object should be converted to a *Rust Type* (e.g. `String`),
-/// then use [`get_object_array_converted()`] instead.
-pub fn get_object_array<'local>(obj: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Box<[JObject<'local>]>, FromObjectError> {
+/// Also acts as helper funciton for [`get_object_array()`], [`get_object_array_converted()`], and the macros.
+#[doc(hidden)]
+pub fn get_object_array_owned<'local, T>(
+    obj: &JObject<'_>,
+    conversion: impl Fn(JObject<'local>, &mut JNIEnv<'local>) -> Result<T, FromObjectError>,
+    env: &mut JNIEnv<'local>
+) -> Result<Box<[T]>, FromObjectError> {
     if obj.is_null() {
         return Err(FromObjectError::Null);
     }
 
-    let array = <&JObjectArray>::from(obj);
+    let array = <&JObjectArray<'_>>::from(obj);
 
     let len = env.get_array_length(array)
         .map_err(|err| FromObjectError::Other(format!("Failed to check Array's length: {err}")))?
         as usize;
-    // Allocate array
+
     let mut vec = Vec::with_capacity(len);
 
-    // Fill array
     for i in 0..len {
-        vec.push(env.get_object_array_element(array, i as jsize)
-            .map_err(|err| FromObjectError::ArrayElement { index: i, error: Box::new(FromObjectError::Other(err.to_string())) })?
-        );
+        let elem = env.get_object_array_element(array, i as jsize)
+                .map_err(|err| FromObjectError::ArrayElement { index: i, error: Box::new(FromObjectError::Other(err.to_string())) })?;
+        vec.push(conversion(elem, env)
+            .map_err(|error| FromObjectError::ArrayElement { index: i, error: Box::new(error) })?
+        )
     }
 
     Ok(vec.into_boxed_slice())
 }
-/// Like [`get_object_array()`], but allows passing a function to convert the each [`JObject`] to a *Rust type*.
-pub fn get_object_array_converted<'local, T>(
-    obj: &JObject<'_>,
-    elem_conversion: fn(JObject<'local>, &mut JNIEnv<'local>) -> Result<T, FromObjectError>,
-    env: &mut JNIEnv<'local>
-) -> Result<Box<[T]>, FromObjectError>
-where T: 'local {
-    // TODO: make this more memory efficient by using the get_object_array() implementation and calling elem_conversion and then dropping the object
-    get_object_array(obj, env)?
-        .into_iter()
-        .enumerate()
-        .map(|(i, obj)| elem_conversion(obj, env)
-            .map_err(|err| FromObjectError::ArrayElement { index: i, error: Box::new(err) })
-        )
-        .collect()
+
+/// Creates a Rust [`Boxed slice`] (*heap-allocated array*) of [`JObject`]s by reading elements from a **Java Array** (**obj**).
+/// 
+/// Note: Users should use the [`FromObject`] implementation of `Boxed slice` (e.g. `Box<[String]>::from_object()`) instead of this function.
+/// 
+/// If the Object should be converted to a *Rust Type* (e.g. `String`),
+/// then use [`get_object_array_converted()`] instead.
+pub fn get_object_array<'local>(obj: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Box<[JObject<'local>]>, FromObjectError> {
+    get_object_array_owned(obj, |elem, _| Ok(elem), env)
+}
+/// Like [`get_object_array()`], but converts each [`JObject`] to a *Rust type*.
+/// 
+/// Uses [`AutoLocal`] for elements under the hood, so each *object reference* is deleted after each iteration.
+pub fn get_object_array_converted<'local, T>(obj: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Box<[T]>, FromObjectError>
+where T: for<'a, 'obj> FromObject<'a, 'obj, 'local> + 'local {
+    get_object_array_owned(obj, |elem, env| {
+        T::from_object_env(&AutoLocal::new(elem, env), env)
+    }, env)
 }
 
 /// Creates a Java Array form a [`Vec`] of [`JObject`]s.
@@ -130,7 +138,7 @@ pub fn create_object_array<'local, 'other>(items: &[impl AsRef<JObject<'other>>]
     // Allocate the array
     let array = env.new_object_array(
         items.len() as jsize,
-        JClass::from(JObject::null()),
+        "java/lang/Object", // TODO: class can't be null, but also passing java/lang/Object for all objects might not be a good idea.
         JObject::null()
     )
         .unwrap_or_else(|err| panic!("Failed to create Java Object array: {err}"));

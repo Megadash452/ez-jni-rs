@@ -502,8 +502,8 @@ impl ArrayType {
         // class.convert_java_to_rust(&quote!(_element))
         // ```
         let get_object_arr = |elem_conversion: TokenStream| -> TokenStream {
-            quote_spanned! {value.span() => 
-                ::ez_jni::utils::get_object_array_converted(&(#value), |_element, #[allow(unused_variables)] env| ::std::result::Result::Ok(#elem_conversion), env).unwrap_display()
+            quote_spanned! {value.span() =>
+                ::ez_jni::utils::get_object_array_owned(&(#value), |_element, #[allow(unused_variables)] env| ::std::result::Result::Ok(#elem_conversion), env).unwrap_display()
             }
         };
 
