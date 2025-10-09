@@ -115,9 +115,14 @@ pub trait ResultExt<T> {
 }
 impl<T, E> ResultExt<T> for Result<T, E>
 where E: Debug + Display {
+    #[inline(always)]
+    #[track_caller]
     fn unwrap_display(self) -> T {
-        self.unwrap_or_else(|err| panic!("{err}"))
-    }
+        match self {
+            Ok(t) => t,
+            Err(e) => std::panic::panic_any(e.to_string()),
+        }
+    }   
 }
 
 #[doc(hidden)]
