@@ -147,6 +147,7 @@ impl<'a, 'local> From<ClassRepr<'a, 'local>> for Callee<'a, 'local> {
 /// but not if the code inside the *java method* fails.
 /// 
 /// If built in **debug** mode, may also output a hint on why the call *failed* and suggestions to fix it.
+#[track_caller]
 fn handle_call_error<'local>(
     error: JNIError,
     callee: Callee<'_, '_>,

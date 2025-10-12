@@ -1,6 +1,6 @@
 use super::*;
-use std::{marker::PhantomData, panic::{AssertUnwindSafe, UnwindSafe}, sync::OnceLock};
-use jni::objects::JObject;
+use std::{backtrace::{BacktraceStatus, Backtrace as StdBacktrace}, marker::PhantomData, panic::{AssertUnwindSafe, UnwindSafe}, sync::OnceLock};
+use jni::objects::{JClass, JObject};
 use crate::{compile_java_class, utils::get_env, LOCAL_JNIENV_STACK};
 
 /// Runs a Rust function and returns its value, catching any `panics!` and throwing them as *Java Exceptions*.
@@ -25,7 +25,7 @@ use crate::{compile_java_class, utils::get_env, LOCAL_JNIENV_STACK};
 /// This function is used by [ez_jni_macros::jni_fn].
 // This function ***MUST NOT*** `panic!`.
 pub unsafe fn run_with_jnienv<'local, R: Sized>(mut env: JNIEnv<'local>, f: impl FnOnce(&mut JNIEnv<'local>) -> R) -> R {
-    let result = unsafe { run_with_jnienv_helper(env, f) };
+    let result = unsafe { run_with_jnienv_helper(env, true, f) };
     env = result.1;
 
     match result.0 {
@@ -48,20 +48,45 @@ pub unsafe fn run_with_jnienv_map<'local, R: UnwindSafe, J: Sized>(
     }
 }
 
+#[derive(Debug)]
+pub struct JniRunPanic {
+    /// The location where the `panic!` was triggered.
+    pub location: Location,
+    /// The Backtrace, if [`Captured`][BacktraceStatus::Captured].
+    pub rust_backtrace: Option<Backtrace>,
+    pub panic: PanicType
+}
+
 /// Runs the code for [`run_with_jnienv()`], but returns a [`Result`] instead of a could-be-zeroed of [`R`].
 /// Also returns the [`JNIEnv`] that was passed in.
 /// 
+/// **from_java** is true only when this function is called from a `jni_fn` (i.e. the caller is coming directly from Java).
+/// Only pass `true` if calling from [`run_with_jnienv()`].
+/// This being `true` implies that the `panic!` will be converted to a *Java Exception* and [`JniRunPanic::rust_backtrace`] will always be [`Some`].
+/// 
+/// If **f** `panic!s`, this function will capture all the panic data and return it in the [`Result::Err`].
+/// 
 /// This is also used in integration tests.
 #[doc(hidden)]
-pub unsafe fn run_with_jnienv_helper<'local, R: Sized>(mut env: JNIEnv<'local>, f: impl FnOnce(&mut JNIEnv<'local>) -> R) -> (Result<R, PanicPayloadRepr>, JNIEnv<'local>) {
+pub unsafe fn run_with_jnienv_helper<'local, R: Sized>(mut env: JNIEnv<'local>, from_java: bool, f: impl FnOnce(&mut JNIEnv<'local>) -> R) -> (Result<R, JniRunPanic>, JNIEnv<'local>) {
     #![allow(unused_must_use)]
+    thread_local! {
+        static PANIC_LOCATION: RefCell<Option<Location>> = const { RefCell::new(None) };
+        static PANIC_BACKTRACE: RefCell<Option<StdBacktrace>> = const { RefCell::new(None) };
+    };
+
     // TODO: Investigate bug that doesn't set PANIC_LOCATION sometimes
     // Set panic hook to grab [`PANIC_LOCATION`] data.
-    std::panic::set_hook(Box::new(|info| {
+    std::panic::set_hook(Box::new(move |info| {
         PANIC_LOCATION.set(Some(info.location().unwrap().into()));
-        // Get full Backtrace as a String and store it to process it in `throw_panic()`.
-        PANIC_BACKTRACE.set(Some(Backtrace::force_capture()));
+        PANIC_BACKTRACE.set(Some(if from_java {
+            // Force Backtrace capture if the panic will be converted to an Exception.
+            StdBacktrace::force_capture()
+        } else {
+            StdBacktrace::capture()
+        }));
     }));
+    
     PANIC_HOOK_SET.set(true);
 
     // Assign the JNIEnv used for this jni call
@@ -70,7 +95,33 @@ pub unsafe fn run_with_jnienv_helper<'local, R: Sized>(mut env: JNIEnv<'local>, 
     // Run the function
     // Pass a reference of the JNIEnv that was just pushed; for conversions
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| f(get_env::<'_, 'local>())))
-        .map_err(|payload| PanicPayloadRepr::from(payload));
+        .map_err(|payload| my_catch(|| {
+            let location = PANIC_LOCATION.take()
+                .expect("Panic Hook did not set the value for PANIC_LOCATION");
+            let backtrace = PANIC_BACKTRACE.take()
+                .expect("Panic Hook did not set the value for PANIC_BACKTRACE");
+
+            let rust_backtrace = match backtrace.status() {
+                BacktraceStatus::Captured => Backtrace::parse(backtrace)
+                    .ok()
+                    .or_else(|| if from_java {
+                        // Panic will be converted to Java Exception, which we always inject with a rust backtrace.
+                        // If Backtrace couldn't be obtained, make it the current known Panic Location.
+                        Some(Backtrace::new_unknown(location.clone()))
+                    } else {
+                        None
+                    }),
+                // If Backtrace couldn't be obtained, make it the current known Panic Location.
+                BacktraceStatus::Unsupported
+                | BacktraceStatus::Disabled if from_java => Some(Backtrace::new_unknown(location.clone())),
+                // No Bakctrace
+                _ => None
+            };
+
+            // TODO: if payload is Exception object, inject Java StackTrace to the Backtrace
+            
+            JniRunPanic { location, rust_backtrace, panic: PanicType::from(payload) }
+        }));
 
     // Remove the JNIEnv when the function finishes running
     env = stack_env.pop();
@@ -87,10 +138,10 @@ pub unsafe fn run_with_jnienv_helper<'local, R: Sized>(mut env: JNIEnv<'local>, 
 /// Aborts if a panic occurs.
 fn my_catch<'local, R>(f: impl FnOnce() -> R) -> R {
     std::panic::catch_unwind(AssertUnwindSafe(|| f()))
-        .map_err(|payload| match PanicPayloadRepr::from(payload) {
-            PanicPayloadRepr::Message(msg) => msg,
-            PanicPayloadRepr::Object(_) => panic!("UNREACHABLE"),
-            PanicPayloadRepr::Unknown => Cow::Borrowed(PanicPayloadRepr::UNKNOWN_PAYLOAD_TYPE_MSG)
+        .map_err(|payload| match PanicType::from(payload) {
+            PanicType::Message(msg) => msg,
+            PanicType::Object(_) => panic!("UNREACHABLE"),
+            PanicType::Unknown => Cow::Borrowed(PanicType::UNKNOWN_PAYLOAD_TYPE_MSG)
         })
         .unwrap_or_else(|panic_msg| {
             eprintln!("Aborting due to error in ez_jni::__throw::jni_fn::run_with_jnienv_main():\n{panic_msg}\n");
@@ -146,36 +197,28 @@ impl<'local> StackEnv<'local> {
 
 /// This function is allowed to `panic!`.
 /// However, it should not call any other ez_jni functions.
-fn throw_panic(payload: PanicPayloadRepr, env: &mut JNIEnv<'_>) {
+/// // FIXME: might cause infinite recursion when calling Java methods because of the error handler
+fn throw_panic(panic: JniRunPanic, env: &mut JNIEnv<'_>) {
     /// In-memory cache of custom `Exception` class `me.marti.ez_jni.RustPanic`
     static PANIC_CLASS: OnceLock<GlobalRef> = OnceLock::new();
 
-    let panic_msg = match PanicPayloadRepr::from(payload) {
-        PanicPayloadRepr::Message(msg) => msg,
-        PanicPayloadRepr::Unknown => Cow::Borrowed(PanicPayloadRepr::UNKNOWN_PAYLOAD_TYPE_MSG),
+    let location = panic.location;
+    let backtrace = panic.rust_backtrace.unwrap(); // Bakctrace is always Some in run_with_jnienv().
+
+    let panic_msg = match panic.panic {
+        PanicType::Message(msg) => msg,
+        PanicType::Unknown => Cow::Borrowed(PanicType::UNKNOWN_PAYLOAD_TYPE_MSG),
         // Panicked with an Exception (should be rethrown)
-        PanicPayloadRepr::Object(exception) => {
+        PanicType::Object(exception) => {
             let exception = <&JThrowable>::from(exception.as_obj());
             // Inject Backtrace to Exception
-            let _ = prepare_backtrace().map(|backtrace| {
-                inject_backtrace(exception, &backtrace, env);
-            });
-            // Finally, rethrow the new Exception
+            inject_backtrace(exception, backtrace.as_ref(), env);
+            // Finally, rethrow the Exception
             env.throw(exception)
                 .unwrap_or_else(|err| panic!("Failed to rethrow exception: {err}"));
             return;
         }
     };
-    let location = PANIC_LOCATION.try_with(|loc| {
-        loc.try_borrow()
-            .map_err(|err| format!("Error borrowing PANIC_LOCATION: {err}"))?
-            .as_ref()
-            .map(|loc| loc.clone())
-            .ok_or("value is None".to_string())
-    })
-        .map_err(|err| err.to_string())
-        .flatten()
-        .unwrap_or_else(|err| panic!("Failed to get panic location: {err}"));
 
     env.exception_clear().unwrap();
 
@@ -190,17 +233,14 @@ fn throw_panic(payload: PanicPayloadRepr, env: &mut JNIEnv<'_>) {
                     .expect("Failed to make JClass into GlobalRef")
             });
         } else {
-            let panic_class = jni::objects::JClass::from(JObject::null());
+            let panic_class = JClass::from(JObject::null());
         }
     }
 
-    let panic_class = jni::objects::JClass::from(env.new_local_ref(panic_class).expect("Could not allocate new local reference for RustPanic class"));
-    // TODO: allow macros to take GlobalRef AsRef of JObject and JClass
+    let panic_class = <&JClass>::from(panic_class.as_obj());
     let exception = new!(env=> panic_class(String(location.file), u32(location.line), u32(location.col), String(panic_msg)));
     // Inject Backtrace to Exception
-    let _ = prepare_backtrace().map(|backtrace| {
-        inject_backtrace(<&JThrowable>::from(&exception), &backtrace, env);
-    });
+    inject_backtrace(<&JThrowable>::from(&exception), backtrace.as_ref(), env);
 
     // Finally, throw the new Exception
     env.throw(JThrowable::from(exception)).unwrap();

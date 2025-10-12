@@ -3,7 +3,7 @@ pub mod compile_fail;
 
 use std::{panic::{catch_unwind, AssertUnwindSafe, UnwindSafe}, process::Command, sync::LazyLock};
 use jni::{JNIEnv, JavaVM};
-use ez_jni::{__throw::PanicPayloadRepr, call, utils::ResultExt, FromObject, JavaException};
+use ez_jni::{__throw::{PanicType, JniRunPanic}, call, utils::ResultExt, FromObject, JavaException};
 use utils::CLASS_DIR;
 
 static JVM: LazyLock<JavaVM> = LazyLock::new(|| {
@@ -31,18 +31,56 @@ pub fn get_env<'local>() -> JNIEnv<'local> {
 /// 
 /// The funciton `f` is allowed to `panic!`.
 pub fn run_with_jnienv(f: impl FnOnce() + UnwindSafe) {
-    let (result, mut env) = unsafe { ez_jni::__throw::run_with_jnienv_helper(get_env(), |_| f()) };
+    let (result, mut env) = unsafe { ez_jni::__throw::run_with_jnienv_helper(get_env(), false, |_| f()) };
     let env = &mut env;
 
-    if let Err(payload) = result {
-        match payload {
-            PanicPayloadRepr::Message(msg) => panic!("{msg}"),
-            PanicPayloadRepr::Unknown => panic!("{}", PanicPayloadRepr::UNKNOWN_PAYLOAD_TYPE_MSG),
-            PanicPayloadRepr::Object(exception) => {
+
+    /// This is allowed to panic
+    fn create_panic_stmnt(panic: JniRunPanic, env: &mut JNIEnv<'_>) -> String {
+        let mut backtrace = panic.rust_backtrace;
+        
+        let thread_name = match std::thread::current().name() {
+            Some(name) => &format!(" '{name}'"),
+            None => ""
+        };
+        let msg = match &panic.panic {
+            PanicType::Message(msg) => &msg,
+            PanicType::Unknown => PanicType::UNKNOWN_PAYLOAD_TYPE_MSG,
+            PanicType::Object(exception) => {
                 let exception = JavaException::from_object_env(&exception, env).unwrap_display();
-                ez_jni::__throw::panic_exception(exception)
+                // Inject Java StackTrace to Rust Backtrace
+                if let Some(backtrace) = &mut backtrace {
+                    backtrace.append_stacktrace(exception.as_ref(), env);
+                }
+                
+                &exception.to_string()
             }
-        }
+        };
+
+        let backtrace = match backtrace {
+            Some(backtrace) => &backtrace.to_string(),
+            None => ""
+        };
+
+        format!("thread{thread_name} panicked at {loc}:\n{msg}\n{backtrace}", loc=panic.location)
+    }
+
+    
+
+    if let Err(panic) = result {
+        // Catch a panic caused by generating the panic print
+        match catch_unwind(AssertUnwindSafe(|| create_panic_stmnt(panic, env))) {
+            Ok(panic) => {
+                // Display panic info
+                std::panic::set_hook(Box::new(|_| {})); // Disable panic hook to print my own panic info
+                // After Panic Hook is disabled, a panic! won't print anything.
+                // So we print it manually.
+                print!("{panic}");
+                panic!()
+            },
+            Err(payload) => std::panic::resume_unwind(payload)
+        };
+
     }
 }
 
@@ -54,10 +92,10 @@ pub fn fail_with(f: impl Fn(), expected_error: &str) {
     std::panic::take_hook();
 
     let msg = result
-        .map_err(|payload| match PanicPayloadRepr::from(payload) {
-            PanicPayloadRepr::Message(msg) => msg.to_string(),
-            PanicPayloadRepr::Object(exception) => call!(exception.getMessage() -> String),
-            PanicPayloadRepr::Unknown => panic!("{}", PanicPayloadRepr::UNKNOWN_PAYLOAD_TYPE_MSG),
+        .map_err(|payload| match PanicType::from(payload) {
+            PanicType::Message(msg) => msg.to_string(),
+            PanicType::Object(exception) => call!(exception.getMessage() -> String),
+            PanicType::Unknown => panic!("{}", PanicType::UNKNOWN_PAYLOAD_TYPE_MSG),
         })
         .expect_err("Expected function to fail, but it succeeded");
 

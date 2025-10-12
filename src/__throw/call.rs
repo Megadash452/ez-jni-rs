@@ -25,6 +25,7 @@ where E: for<'a> FromObject<'a, 'local, 'local> {
 /// This will panic with the **Exception Object** instead of a regular `panic!` message.
 /// In this case, the panic payload will be a [`GlobalRef`][jni::objects::GlobalRef].
 /// Otherwise, the panic payload will be a [`String`].
+#[track_caller]
 pub fn panic_exception(ex: JavaException) -> ! {
     // If the panic hook was set, this means that the panic payload will be thrown to Java,
     // so the payload should be the exception itself.
@@ -35,7 +36,6 @@ pub fn panic_exception(ex: JavaException) -> ! {
         // Otherwise, just panic with the exception message and exit execution.
         // There is no need to inject backtrace if panics are not being caught.
         panic!("{ex}");
-        // TODO: find a way to Inject Java StackTrace to Rust Backtrace and print custom backtrace.
     }
 }
 
@@ -45,6 +45,7 @@ pub fn panic_exception(ex: JavaException) -> ! {
 /// If that's the case, and the current stack frame is in a [`jni_fn!`][crate::jni_fn],
 /// this will `panic!` with the Exception and it will be *rethrown* to Java.
 /// Otherwise this will just panic with the *Exception's message*.
+#[track_caller]
 pub fn handle_jni_call_error(error: JNIError, env: &mut JNIEnv<'_>) -> ! {
     match error {
         JNIError::JavaException => {
@@ -77,6 +78,8 @@ pub fn catch_exception<'local>(env: &mut JNIEnv<'local>) -> Option<JThrowable<'l
         if ex.is_null() {
             None
         } else {
+            // FIXME: This causes problems with call error handling because they expect to catch NoSuchMethodError, but this prevents that.
+            //        Perhaps I need to make catch_throwable() ??
             let error_class = ERROR_CLASS.get_or_init(|| {
                 let class = env.find_class("java/lang/Error")
                     .unwrap_or_else(|error| handle_jni_call_error(error, env));

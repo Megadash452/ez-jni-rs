@@ -37,6 +37,11 @@ impl AsRef<JObject<'static>> for JavaException {
         self.exception.as_ref()
     }
 }
+impl AsRef<JThrowable<'static>> for JavaException {
+    fn as_ref(&self) -> &JThrowable<'static> {
+        <&JThrowable>::from(self.exception.as_obj())
+    }
+}
 impl Into<GlobalRef> for JavaException {
     fn into(self) -> GlobalRef {
         self.exception
