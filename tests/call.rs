@@ -248,6 +248,11 @@ fn return_arrays_other() { run_with_jnienv(|| {
 
 #[test]
 fn return_fail() { run_with_jnienv(|| {
+    // Should panic if the method throws, but user did not indicate that the constructor could throw
+    fail_with(
+        || { call!(static me.test.Test.throwPrim() -> bool); },
+        "java.lang.Exception: exception"
+    );
     // Returned Object should NOT be NULL
     fail_with(
         || { call!(static me.test.Test.nullable() -> java.lang.Object); },

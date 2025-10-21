@@ -86,15 +86,15 @@ pub fn run_with_jnienv(f: impl FnOnce() + UnwindSafe) {
 
 /// Assert that a test (**f**) should **fail** (`panic!`) with a specific **error message**.
 pub fn fail_with(f: impl Fn(), expected_error: &str) {
-    // Set hook to prevent printing of the payload
-    std::panic::set_hook(Box::new(|info| { }));
     let result = catch_unwind(AssertUnwindSafe(f));
-    std::panic::take_hook();
 
     let msg = result
         .map_err(|payload| match PanicType::from(payload) {
             PanicType::Message(msg) => msg.to_string(),
-            PanicType::Object(exception) => call!(exception.getMessage() -> String),
+            PanicType::Object(exception) => {
+                let exception = JavaException::from_object_env(&exception, ez_jni::utils::get_env()).unwrap_display();
+                exception.to_string()
+            },
             PanicType::Unknown => panic!("{}", PanicType::UNKNOWN_PAYLOAD_TYPE_MSG),
         })
         .expect_err("Expected function to fail, but it succeeded");
