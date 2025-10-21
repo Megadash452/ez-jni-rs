@@ -7,7 +7,7 @@ use jni::{
     JNIEnv
 };
 use utils::first_char_uppercase;
-use crate::{FromObject, JavaException, __throw::{catch_exception, try_catch}, utils::ResultExt};
+use crate::{FromObject, JavaException, __throw::{catch_throwable, try_catch_throwable, panic_exception}, utils::ResultExt};
 use super::{JNI_CALL_GHOST_EXCEPTION, MethodNotFound, FieldNotFound};
 
 
@@ -171,19 +171,22 @@ fn handle_call_error<'local>(
             crate::__throw::handle_jni_call_error(error, env)
         },
         JNIError::JavaException => {
-            let ex = catch_exception(env)
+            let ex = catch_throwable(env)
                 .expect(JNI_CALL_GHOST_EXCEPTION);
             let exception = JavaException::from_object_env(&ex, env).unwrap_display();
 
-            // Only panic if Exception is MethodNotFound
-            if let Ok(MethodNotFound) = MethodNotFound::from_object_env(&ex, env) {
-                cfg_if::cfg_if! {
-                    if #[cfg(debug_assertions)] {
+            cfg_if::cfg_if! {
+                if #[cfg(debug_assertions)] {
+                    if let Ok(MethodNotFound) = MethodNotFound::from_object_env(&ex, env) {
                         check_method_existence(env);
                     }
                 }
+            }
+
+            // Only panic if Exception is actually java.lang.Error
+            if crate::__throw::is_error(&ex, env) {
                 // Panic with the Exception as the payload
-                crate::__throw::panic_exception(exception)
+                panic_exception(exception)
             }
 
             exception
@@ -320,7 +323,7 @@ pub(super) fn field_helper<'local>(
                 if let JNIError::MethodNotFound { .. } = err {
                     crate::hints::print_field_existence_report(&class, name, ty, callee.is_static(), env);
                 } else if let JNIError::JavaException = err {
-                    let exception = catch_exception(env)
+                    let exception = catch_throwable(env)
                         .expect(JNI_CALL_GHOST_EXCEPTION);
                     if MethodNotFound::from_object_env(&exception, env).is_ok() {
                         crate::hints::print_field_existence_report(&class, name, ty, callee.is_static(), env);
@@ -343,7 +346,7 @@ pub(super) fn field_helper<'local>(
                 }
             } },
             JNIError::JavaException => {
-                if let Some(FieldNotFound) = try_catch(env) {
+                if let Some(FieldNotFound) = try_catch_throwable(env) {
                     // Try calling Getter/Setter if Field was not found
                     cfg_if::cfg_if! {
                         if #[cfg(debug_assertions)] {
