@@ -398,9 +398,9 @@ impl Parse for InnerType {
 
             // Disallowed symbols
             match ident_str.as_str() {
-                "void" => return Err(syn::Error::new(ident.span(), "'void' is not allowed here.")),
+                "void" => return Err(syn::Error::new(ident.span(), "'void' is not allowed in arguments or within 'Option' in the return type.")),
                 "Result" => return Err(syn::Error::new(ident.span(), "'Result' is not allowed as an inner type, it must be the outermost type.")),
-                "Option" => return Err(syn::Error::new(ident.span(), "'Option' is not allowed here.")),
+                "Option" => return Err(syn::Error::new(ident.span(), "'Option' is not allowed to be nested within itself.")),
                 _ => {}
             };
 
