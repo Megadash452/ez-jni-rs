@@ -88,7 +88,7 @@ pub fn catch_exception<'local>(env: &mut JNIEnv<'local>) -> Option<JThrowable<'l
             });
             // java.lang.Error should NOT be caught, as per class documentation.
             // Instead, it should cause a panic!.
-            if !env.is_instance_of(&ex, error_class)
+            if env.is_instance_of(&ex, error_class)
                 .unwrap_or_else(|error| handle_jni_call_error(error, env))
             {
                 panic_exception(JavaException::from_object_env(&ex, env).unwrap_display())

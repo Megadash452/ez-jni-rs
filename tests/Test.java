@@ -92,7 +92,20 @@ public final class Test {
     public static void objArgs(Object l, String s) { }
     public static void otherArgs(Class c, Exception e) {  }
     public static void primArrayArgs(boolean[] z, char[] c, byte[] b, short[] s, int[] i, long[] j, float[] f, double[] d) { }
-    public static void primObjArrayArgs(Boolean[] z, Character[] c, Byte[] b, Short[] s, Integer[] i, Long[] j, Float[] f, Double[] d) { }
+    public static void primObjArrayArgs(Boolean[] z, Character[] c, Byte[] b, Short[] s, Integer[] i, Long[] j, Float[] f, Double[] d) {
+        // This might be weird, but ez_jni::utils::create_object_array() can set the elem_class to an arbitrary class super class,
+        // making the class of one of the arguments that arbitrary class (e.g. `Boolean[] z` can be `Object[] z` when checked).
+        // Although this is fine in most cases, this can cause problems in more fringe cases.
+        // So, a test is required that checks the array class and element class at runtime.
+        assert z.getClass().equals(java.lang.Boolean[].class);
+        assert c.getClass().equals(java.lang.Character[].class);
+        assert b.getClass().equals(java.lang.Byte[].class);
+        assert s.getClass().equals(java.lang.Short[].class);
+        assert i.getClass().equals(java.lang.Integer[].class);
+        assert j.getClass().equals(java.lang.Long[].class);
+        assert f.getClass().equals(java.lang.Float[].class);
+        assert d.getClass().equals(java.lang.Double[].class);
+    }
     public static void objArrayArgs(Object[] l, String[] s) { }
     public static void prim2DArrayArgs(boolean[][] z, char[][] c, int[][] i) { }
     public static void prim3DArrayArgs(int[][][] i, float[][][] f) { }

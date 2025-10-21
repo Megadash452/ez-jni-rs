@@ -117,11 +117,10 @@ impl Type {
     pub fn convert_rvalue_to_jvalue(&self, value: &TokenStream) -> TokenStream {
         // Get a concrete Rust type to tell ToJValue to use
         let ty = match self {
-            // Check if the Array's inner type is also Array:
-            // Arrays above 1 dimensions don't have ToJValue implementations and require generated conversion code
+            // Some cases with Array should not be converted with ToJValue because the type will be incorrect.
             Self::Assertive(InnerType::Array(array))
             | Self::Option { ty: InnerType::Array(array), .. }
-            if matches!(&*array.ty, Type::Assertive(InnerType::Array(_)) | Type::Option { ty: InnerType::Array(_), .. }) => {
+            if array.manually_converted_to_java() => {
                 // Wrap the conversion code in a JValue so it can be passed to the arguments
                 let conversion = array.convert_rust_to_java(&value);
                 return quote_spanned! {value.span()=> ::jni::objects::JValue::Object(&(#conversion)) }
@@ -477,6 +476,32 @@ impl ArrayType {
         unsafe { NonZeroU32::new_unchecked(dimensions) } // Safety: Obiously
     }
 
+
+    /// Whether the [`ArrayType`] must convert the *Rust value* to a *Java Object* by **manually** converting each *array dimension* one at a time.
+    /// 
+    /// This is used because some [`Types`][Type] have ambiguous *Rust representations*.
+    /// For instance, `[[String]]` could be represented in Rust as `[&[&str]]`, or `[Vec<&str>]`, or `[&[String]]`, etc.
+    pub fn manually_converted_to_java(&self) -> bool {
+        match self.ty.as_ref() {
+            /* In Rust, multi-dimensional Arrays have strict inner types.
+               So when the array is multi-dimensionsal,
+               the array conversion must be done manually to allow use of `Box<[_]>`, `Vec<_>`, `&[_]`. */
+            Type::Assertive(InnerType::Array(_))
+            | Type::Option { ty: InnerType::Array(_), .. } => true,
+            /* When the inner type of the array is String (for any number of dimensions),
+               the array conversion must be done manually to allow use of both `String` and `&str`. */
+            Type::Assertive(InnerType::Object(class))
+            | Type::Option { ty: InnerType::Object(class), .. }
+            if class.rust_type() == ClassRustType::String => true,
+            /* Arrays of Primitive Objects should be manually converted.
+            The default implementation converts Arrays of Rust primitives to Java primitives, but an Object is required. */
+            Type::Assertive(InnerType::Object(Class::PrimitiveObject { .. }))
+            | Type::Option { ty: InnerType::Object(Class::PrimitiveObject { .. }), .. } => true,
+            // All other types can use the ToObject implementation normally
+            _ => false,
+        }
+    }
+
     /// Returns code that converts a *Java Array* to a *Rust [`Box`]*.
     /// 
     /// If array is *one dimensional*, it defers to the [`ez_jni::FromObject`] implementation.
@@ -539,33 +564,23 @@ impl ArrayType {
         /// ```ignore
         /// class.convert_rust_to_java(&quote!(_element))
         /// ```
-        fn create_obj_array(elem_conversion: TokenStream, value: &TokenStream) -> TokenStream {
+        fn create_obj_array(inner_ty: &Type, value: &TokenStream) -> TokenStream {
+            let elem_conversion = inner_ty.convert_rust_to_java(&quote_spanned! {value.span()=> _element}).unwrap();
+            let elem_class = inner_ty.sig_type();
+            
             quote_spanned! {value.span()=>
                 ::ez_jni::utils::create_object_array_converted(
-                    ::std::convert::AsRef::<[_]>::as_ref(&(#value)),
+                    ::std::convert::AsRef::<[_]>::as_ref(&(#value)), // No need to include the type in the AsRef because the elem_conversion already enforces the element Type.
                     |_element, #[allow(unused_variables)] env| #elem_conversion,
+                    #elem_class,
                 env)
             }
         }
 
-        match self.ty.as_ref() {
-            // When the array is multi-dimensionsal the array conversion must be done manually with create_obj_array() to allow use of `Box<[_]>`, `Vec<_>`, `&[_]`.
-            // Recursion happens here -v
-            Type::Assertive(InnerType::Array(_))
-            | Type::Option { ty: InnerType::Array(_), .. } => create_obj_array(
-                self.ty.convert_rust_to_java(&quote_spanned! {value.span()=> _element}).unwrap(),
-                value
-            ),
-            /* When the inner type of the array is String (for any number of dimensions),
-               the array conversion must be done manually with create_obj_array() to allow use of both `String` and `&str`. */
-            Type::Assertive(InnerType::Object(class))
-            | Type::Option { ty: InnerType::Object(class), .. }
-            if class.rust_type() == ClassRustType::String => create_obj_array(
-                self.ty.convert_rust_to_java(&quote_spanned! {value.span()=> _element}).unwrap(),
-                value
-            ),
-            // All other types can use the ToObject implementation normally
-            ty => to_object(ty, value),
+        if self.manually_converted_to_java() {
+            create_obj_array(&self.ty, value)
+        } else {
+            to_object(&self.ty, value)
         }
     }
 }

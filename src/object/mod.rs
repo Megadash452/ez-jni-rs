@@ -27,7 +27,7 @@ pub enum FromObjectError {
     FieldNotFound { name: String, ty: String, target_class: String },
     #[error("Could not find class \"{0}\"")]
     ClassNotFound(String),
-    #[error("Could not instantiate Type from element in Java Object Array at index {index}: {error}")]
+    #[error("Could not instantiate Type from element in Java Object Array at index {index}:\n    {error}")]
     ArrayElement { index: usize, error: Box<Self> },
     #[error("{}", match actual_len.cmp(expected_len) {
         Ordering::Equal => panic!("UNREACHABLE"),

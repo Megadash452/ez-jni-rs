@@ -282,8 +282,9 @@ fn from_object() { run_with_jnienv(|| {
         MyEnumClass::from_object(&object).unwrap(),
         MyEnumClass::Variant2 { str: S.to_string() }
     );
-
+    
     // -- Other implementations for user-defined types
+    let env = &mut ez_jni::utils::get_env();
     // Option
     object = Some(new!(me.test.Test(int(VAL)))).to_object();
     assert_eq!(
@@ -294,7 +295,8 @@ fn from_object() { run_with_jnienv(|| {
     object = create_object_array_converted(
         &[new!(me.test.Test(int(1))), new!(me.test.Test(int(2))), new!(me.test.Test(int(3)))],
         |obj, env| obj.to_object_env(env),
-    ez_jni::utils::get_env());
+        "me/test/Test",
+    env);
     assert_eq!(
         [MyClass { member_field: 1 }, MyClass { member_field: 2 }, MyClass { member_field: 3 }],
         Box::<[MyClass]>::from_object(&object).unwrap().as_ref()
@@ -303,7 +305,8 @@ fn from_object() { run_with_jnienv(|| {
     object = create_object_array_converted(
         &[None, Some(new!(me.test.Test(int(1)))), None],
         |obj, env| obj.to_object_env(env),
-    ez_jni::utils::get_env());
+        "me/test/Test",
+    env);
     assert_eq!(
         [None, Some(MyClass { member_field: 1 }), None],
         Box::<[Option<MyClass>]>::from_object(&object).unwrap().as_ref()
@@ -312,7 +315,8 @@ fn from_object() { run_with_jnienv(|| {
     object = Some(create_object_array_converted(
         &[new!(me.test.Test(int(1))), new!(me.test.Test(int(2))), new!(me.test.Test(int(3)))],
         |obj, env| obj.to_object_env(env),
-    ez_jni::utils::get_env())).to_object();
+        "me/test/Test",
+    env)).to_object();
     assert_eq!(
         Some(Box::new([MyClass { member_field: 1 }, MyClass { member_field: 2 }, MyClass { member_field: 3 }]) as Box<[_]>),
         Option::<Box<[MyClass]>>::from_object(&object).unwrap()
@@ -324,7 +328,8 @@ fn from_object() { run_with_jnienv(|| {
             [new!(me.test.Test(int(4))), new!(me.test.Test(int(5))), new!(me.test.Test(int(6)))],
         ],
         |objs, env| objs.to_object_env(env),
-    ez_jni::utils::get_env());
+        "[Lme/test/Test;",
+    env);
     assert_eq!(
         Box::<[Box<[MyClass]>]>::from_object(&object).unwrap().as_ref(),
         [
@@ -338,9 +343,9 @@ fn from_object() { run_with_jnienv(|| {
             [None, Some(new!(me.test.Test(int(1)))), None],
             [Some(new!(me.test.Test(int(2)))), None, Some(new!(me.test.Test(int(3))))],
         ],
-    |objs, env| objs.to_object_env(env),
-        ez_jni::utils::get_env(),
-    );
+        |objs, env| objs.to_object_env(env),
+        "[Lme/test/Test;",
+    env);
     assert_eq!(
         [
             Box::new([None, Some(MyClass { member_field: 1 }), None]) as Box<[_]>,
@@ -355,8 +360,8 @@ fn from_object() { run_with_jnienv(|| {
             Some([new!(me.test.Test(int(3))), new!(me.test.Test(int(4)))]),
         ],
         |obj, env| obj.to_object_env(env),
-        ez_jni::utils::get_env(),
-    );
+        "[Lme/test/Test;",
+    env);
     assert_eq!(
         [
             Some(Box::new([MyClass { member_field: 1 }, MyClass { member_field: 2 }]) as Box<[_]>),

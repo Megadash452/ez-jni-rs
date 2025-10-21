@@ -49,7 +49,7 @@ where Self: Sized + 'local {
 /// because *primitives* must have a different implementation than every other type.
 /// Users SHOULD NOT use this trait other than for implementing it.
 pub trait ToArrayObject
-where Self: ToObject + Sized {
+where Self: ToObject + Class + Sized {
     /// Creates an *Object Array* from a `slice` of a Type that can be converted **[to a Java Object][ToObject]**.
     /// 
     /// Users should NOT use this trait method.
@@ -57,7 +57,7 @@ where Self: ToObject + Sized {
     #[inline(always)]
     // TODO: use T: AsRef<> for the element type
     fn to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>) -> JObject<'local> {
-        create_object_array_converted(slice, Self::to_object_env, env)
+        create_object_array_converted(slice, Self::to_object_env, &Self::class(), env)
     }
 }
 
@@ -119,17 +119,17 @@ where T: FromArrayObject<'local> + 'local {
     }
 }
 impl<T> ToObject for [Option<T>]
-where T: ToObject {
+where T: ToObject + Class {
     #[inline(always)]
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        create_object_array_converted(self, Option::<T>::to_object_env, env)
+        create_object_array_converted(self, Option::<T>::to_object_env, &T::class(), env)
     }
 }
 impl<T> ToObject for [&Option<T>]
-where T: ToObject {
+where T: ToObject + Class {
     #[inline(always)]
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        create_object_array_converted(self, <&Option::<T>>::to_object_env, env)
+        create_object_array_converted(self, <&Option::<T>>::to_object_env, &T::class(), env)
     }
 }
 
@@ -194,7 +194,7 @@ macro_rules! impl_obj_array {
         impl<'local> ToArrayObject for $ty {
             #[inline(always)]
             fn to_array_object<'env>(slice: &[Self], env: &mut JNIEnv<'env>) -> JObject<'env> {
-                crate::utils::create_object_array(slice, env)
+                crate::utils::create_object_array(slice, &<Self as Class>::class(), env)
             }
         }
     };

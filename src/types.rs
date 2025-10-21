@@ -94,6 +94,7 @@ where T: Class {
         <[T] as Class>::class()
     }
 }
+impl_class!(<T> for &[T] => [T]);
 impl_class!(<T> for Box<[T]> => [T]);
 impl_class!(<T> for Vec<T> => [T]);
 

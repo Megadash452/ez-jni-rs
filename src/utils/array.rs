@@ -1,13 +1,13 @@
 //! Contains helper functions for the To/FromObject implementatios in `/src/object/impl_array.rs`.
 use jni::{objects::{AutoLocal, JObject, JObjectArray, JPrimitiveArray}, sys::jsize, JNIEnv};
-use crate::{utils::get_object_class_name, FromObject, FromObjectError, Primitive};
+use crate::{utils::get_object_class_name, FromObject, FromObjectError, Primitive, __throw::get_jni_error_msg};
 
 
 /// Create a Java **Array** from a Rust [slice](https://doc.rust-lang.org/std/primitive.slice.html),
 /// where the element `T` is a [`Primitive`].
 /// 
 /// This funciton automatically handles the conversion between the *Rust type* and the *Java type* (e.g. bool -> u8).
-pub(crate) fn create_java_prim_array<'local, T>(slice: &[T], env: &JNIEnv<'local>) -> JObject<'local>
+pub(crate) fn create_java_prim_array<'local, T>(slice: &[T], env: &mut JNIEnv<'local>) -> JObject<'local>
 where T: Primitive {
     let slice = match T::CONVERT_RUST_TO_JAVA {
         // If the type declares that it requires a conversion between itself and its Java Type,
@@ -21,10 +21,10 @@ where T: Primitive {
 
     // Allocate the array
     let array = T::array_alloc(slice.len() as jsize, env)
-        .unwrap_or_else(|err| panic!("Failed to create {} Array: {err}", T::JNAME));
+        .unwrap_or_else(|err| panic!("Failed to create {} Array: {}", T::JNAME, get_jni_error_msg(err, env)));
     // Fill the Array
     T::array_filler(&array, slice, env)
-        .unwrap_or_else(|err| panic!("Error filling {} Array: {err}", T::JNAME));
+        .unwrap_or_else(|err| panic!("Error filling {} Array: {}", T::JNAME, get_jni_error_msg(err, env)));
 
     array.into()
 }
@@ -47,14 +47,14 @@ where T: Primitive + for<'a, 'obj, 'local> FromObject<'a, 'obj, 'local> {
     if array_class == format!("[{}", T::JSIG) {
         // Array contains primitives
         let len = env.get_array_length(array)
-            .map_err(|err| FromObjectError::Other(format!("Failed to check Array's length: {err}")))?
+            .map_err(|err| FromObjectError::Other(format!("Failed to check Array's length: {}", get_jni_error_msg(err, env))))?
             as usize;
         // Allocate boxed slice
         let mut vec = vec![unsafe { std::mem::zeroed() }; len].into_boxed_slice();
 
         // Fill slice
         T::slice_filler(&array, &mut vec, env)
-            .map_err(|err| FromObjectError::Other(format!("Failed to read Array elements: {err}")))?;
+            .map_err(|err| FromObjectError::Other(format!("Failed to read Array elements: {}", get_jni_error_msg(err, env))))?;
 
         Ok(match T::CONVERT_JAVA_TO_RUST {
             Some(elem_conversion) => vec.into_iter()
@@ -94,14 +94,14 @@ pub fn get_object_array_owned<'local, T>(
     let array = <&JObjectArray<'_>>::from(obj);
 
     let len = env.get_array_length(array)
-        .map_err(|err| FromObjectError::Other(format!("Failed to check Array's length: {err}")))?
+        .map_err(|err| FromObjectError::Other(format!("Failed to check Array's length: {}", get_jni_error_msg(err, env))))?
         as usize;
 
     let mut vec = Vec::with_capacity(len);
 
     for i in 0..len {
         let elem = env.get_object_array_element(array, i as jsize)
-                .map_err(|err| FromObjectError::ArrayElement { index: i, error: Box::new(FromObjectError::Other(err.to_string())) })?;
+                .map_err(|err| FromObjectError::ArrayElement { index: i, error: Box::new(FromObjectError::Other(get_jni_error_msg(err, env))) })?;
         vec.push(conversion(elem, env)
             .map_err(|error| FromObjectError::ArrayElement { index: i, error: Box::new(error) })?
         )
@@ -131,22 +131,30 @@ where T: for<'a, 'obj> FromObject<'a, 'obj, 'local> + 'local {
 
 /// Creates a Java Array form a [`Vec`] of [`JObject`]s.
 /// 
+/// The **items** slice can contain any Objects whose classes are *descendants* of **elem_class**.
+/// 
+/// **elem_class** sets the array Object's class when it is created
+/// (e.g. if elem_class="java/lang/String", then the array will be class "[Ljava/lang/String;").
+/// 
+/// > Note: The **elem_class** should be set to the expected type of a *Java method* parameter.
+/// Setting it to a different super class (e.g. `java.lang.Object`) can cause problems if the called method checks the object class of the array.
+/// 
 /// If the *Rust Type* should be converted before being added to the *Java Array*
 /// (e.g. the slice is `String`, so it must be converted to `JObject`),
 /// then use [`create_object_array_converted()`] instead.
-pub fn create_object_array<'local, 'other>(items: &[impl AsRef<JObject<'other>>], env: &mut JNIEnv<'local>) -> JObject<'local> {
+pub fn create_object_array<'local, 'other>(items: &[impl AsRef<JObject<'other>>], elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
     // Allocate the array
     let array = env.new_object_array(
         items.len() as jsize,
-        "java/lang/Object", // TODO: class can't be null, but also passing java/lang/Object for all objects might not be a good idea.
+        elem_class, // elem_class MUST be passed here, or else the created Object will have an invalid class when queried.
         JObject::null()
     )
-        .unwrap_or_else(|err| panic!("Failed to create Java Object array: {err}"));
+        .unwrap_or_else(|err| panic!("Failed to create Java Object array: {}", get_jni_error_msg(err, env)));
 
     // Fill the array
     for (i, element) in items.iter().enumerate() {
         env.set_object_array_element(&array, i as jsize, element)
-            .unwrap_or_else(|err| panic!("Failed to set the value of Object array at index {i}: {err}"));
+            .unwrap_or_else(|err| panic!("Failed to set the value of Object array at index {i}:\n    {}", get_jni_error_msg(err, env)));
     }
 
     array.into()
@@ -160,6 +168,7 @@ pub fn create_object_array<'local, 'other>(items: &[impl AsRef<JObject<'other>>]
 pub fn create_object_array_converted<'local, T>(
     slice: &[T],
     elem_conversion: for<'other> fn(&T, &mut JNIEnv<'other>) -> JObject<'other>,
+    elem_class: &str,
     env: &mut JNIEnv<'local>
 ) -> JObject<'local> {
     // Push a new Local Frame because the elem_conversion will need to create new Objects that should be dropped when this call finishes.
@@ -167,6 +176,6 @@ pub fn create_object_array_converted<'local, T>(
         let items = slice.iter()
             .map(#[inline] |t| elem_conversion(t, env))
             .collect::<Box<[_]>>(); // Must collect in box to consume iterator, which holds a refernce to env
-        Ok(create_object_array(&items, env))
+        Ok(create_object_array(&items, elem_class, env))
     }).unwrap()
 }
