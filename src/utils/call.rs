@@ -7,7 +7,7 @@ use jni::{
     JNIEnv
 };
 use utils::first_char_uppercase;
-use crate::{FromObject, JavaException, __throw::{catch_throwable, try_catch_throwable, panic_exception}, utils::ResultExt};
+use crate::{FromObject, JavaException, utils::ResultExt as _, __throw::{catch_throwable, try_catch_throwable, panic_throwable}};
 use super::{JNI_CALL_GHOST_EXCEPTION, MethodNotFound, FieldNotFound};
 
 
@@ -171,9 +171,10 @@ fn handle_call_error<'local>(
             crate::__throw::handle_jni_call_error(error, env)
         },
         JNIError::JavaException => {
+            // This block is essentailly the same as `catch_exception()` but with extra steps in debug mode.
+
             let ex = catch_throwable(env)
                 .expect(JNI_CALL_GHOST_EXCEPTION);
-            let exception = JavaException::from_object_env(&ex, env).unwrap_display();
 
             cfg_if::cfg_if! {
                 if #[cfg(debug_assertions)] {
@@ -186,10 +187,10 @@ fn handle_call_error<'local>(
             // Only panic if Exception is actually java.lang.Error
             if crate::__throw::is_error(&ex, env) {
                 // Panic with the Exception as the payload
-                panic_exception(exception)
+                panic_throwable(&ex, env)
             }
 
-            exception
+            JavaException::from_object_env(&ex, env).unwrap_display()
         },
         err => crate::__throw::handle_jni_call_error(err, env)
     }

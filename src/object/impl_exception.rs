@@ -1,7 +1,7 @@
 use crate::{__throw::get_jni_error_msg, utils::get_object_class_name};
 use ez_jni_macros::new;
 use jni::objects::GlobalRef;
-use std::{io, fmt::{Debug, Display}};
+use std::{fmt::{Debug, Display}, io, ops::Deref};
 
 use super::*;
 
@@ -31,6 +31,21 @@ impl JavaException {
             None => &self.class,
         }
     }
+
+    /// Like [`Self::from_object()`], but allows any [] objects.
+    /// 
+    /// This function does *not* do any checks on its own,
+    /// and will `panic!` if something is wrong.
+    /// 
+    /// Not for **`public`** use, as it can cause confusion.
+    pub(crate) fn from_throwable(object: &JThrowable<'_>, env: &mut JNIEnv<'_>) -> Self {
+        Self {
+            class: get_object_class_name(object, env),
+            message: call!(env=> object.getMessage() -> Option<String>),
+            exception: env.new_global_ref(&object)
+                .unwrap_or_else(|err| crate::__throw::handle_jni_call_error(err, env)),
+        }
+    }
 }
 impl AsRef<JObject<'static>> for JavaException {
     fn as_ref(&self) -> &JObject<'static> {
@@ -40,6 +55,13 @@ impl AsRef<JObject<'static>> for JavaException {
 impl AsRef<JThrowable<'static>> for JavaException {
     fn as_ref(&self) -> &JThrowable<'static> {
         <&JThrowable>::from(self.exception.as_obj())
+    }
+}
+impl Deref for JavaException {
+    type Target = JThrowable<'static>;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_ref()
     }
 }
 impl Into<GlobalRef> for JavaException {
@@ -86,8 +108,7 @@ impl<'local> FromObject<'_, '_, '_> for JavaException {
         Ok(Self {
             class,
             message: call!(env=> object.getMessage() -> Option<String>),
-            exception: env
-                .new_global_ref(&object)
+            exception: env.new_global_ref(&object)
                 .map_err(|err| FromObjectError::Other(get_jni_error_msg(err, env)))?,
         })
     }
