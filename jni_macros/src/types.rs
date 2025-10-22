@@ -492,7 +492,10 @@ impl ArrayType {
                the array conversion must be done manually to allow use of both `String` and `&str`. */
             Type::Assertive(InnerType::Object(class))
             | Type::Option { ty: InnerType::Object(class), .. }
-            if class.rust_type() == ClassRustType::String => true,
+            if class.rust_type() == ClassRustType::String
+            /* When the inner type of the array is a Java Class Path,
+               the array must be converted manually to provide an elem_class. */
+            || (matches!(class, Class::Path { .. }) && class.rust_type() == ClassRustType::JObject) => true,
             /* Arrays of Primitive Objects should be manually converted.
             The default implementation converts Arrays of Rust primitives to Java primitives, but an Object is required. */
             Type::Assertive(InnerType::Object(Class::PrimitiveObject { .. }))
@@ -507,7 +510,7 @@ impl ArrayType {
     /// If array is *one dimensional*, it defers to the [`ez_jni::FromObject`] implementation.
     /// If array is *multidimensional*, it will generate code to manually convert the Array.
     /// 
-    /// See [`origin`](SpecialCaseConversion::convert_java_to_rust()).
+    /// See [`origin`](Conversion::convert_java_to_rust()).
     fn convert_java_to_rust(&self, value: &TokenStream) -> TokenStream {
         // DRY helpers
         /// Converts an Object to a Rust slice by calling the respective FromObject implementation.
@@ -541,10 +544,11 @@ impl ArrayType {
     }
     /// Returns code that converts a *Rust slice* to a *Java Array*.
     /// 
-    /// If array is *one dimensional*, it defers to the [`ez_jni::ToObject`] implementation.
-    /// If array is *multidimensional*, it will generate code to manually convert the Array.
+    /// Can return the [`ez_jni::ToObject`] implementation,
+    /// or can generate code to manualyl convert the Array.
+    /// This depends on the criteria set by [`ArrayType::manually_converted_to_java()`]. 
     /// 
-    /// See [`origin`](SpecialCaseConversion::convert_java_to_rust()).
+    /// See [`origin`](Conversion::convert_java_to_rust()).
     fn convert_rust_to_java(&self, value: &TokenStream) -> TokenStream {
         // DRY helpers
         /// Converts a Rust slice to an Object by calling the respective ToObject implementation.
@@ -556,7 +560,8 @@ impl ArrayType {
             }
         }
 
-        /// Build a *Java Array* from a Rust *slice* in which the inner type is an **Object**.
+        /// Build a *Java Array* from a Rust *slice*.
+        /// The Array' inner type is **Object**.
         /// 
         /// **elem_conversion** is code that applies a conversion to each element to convert it from a *Rust Type* to a *Java Object*.
         /// The conversion must use an [`Ident`] **`_element`** as the value.
@@ -564,10 +569,7 @@ impl ArrayType {
         /// ```ignore
         /// class.convert_rust_to_java(&quote!(_element))
         /// ```
-        fn create_obj_array(inner_ty: &Type, value: &TokenStream) -> TokenStream {
-            let elem_conversion = inner_ty.convert_rust_to_java(&quote_spanned! {value.span()=> _element}).unwrap();
-            let elem_class = inner_ty.sig_type();
-            
+        fn create_obj_array(elem_class: &LitStr, elem_conversion: TokenStream, value: &TokenStream) -> TokenStream {
             quote_spanned! {value.span()=>
                 ::ez_jni::utils::create_object_array_converted(
                     ::std::convert::AsRef::<[_]>::as_ref(&(#value)), // No need to include the type in the AsRef because the elem_conversion already enforces the element Type.
@@ -578,7 +580,40 @@ impl ArrayType {
         }
 
         if self.manually_converted_to_java() {
-            create_obj_array(&self.ty, value)
+            let elem_class = self.ty.sig_type();
+
+            match &*self.ty {
+                // Here there is no elem_conversion since the elements are already JObject.
+                Type::Assertive(InnerType::Object(class))
+                if (matches!(class, Class::Path { .. }) && class.rust_type() == ClassRustType::JObject) => quote_spanned! {value.span()=>
+                    ::ez_jni::utils::create_object_array(
+                        ::std::convert::AsRef::<[_]>::as_ref(&(#value)),
+                        #elem_class,
+                    env)
+                },
+                /* Converting Option<JObject> within elem_conversion is tricky because the closure actually takes a `&Option<JObject>`.
+                   This can be mitigated by manually matching the Option and calling `env.new_local_ref()`.
+                   Creating the `new_local_ref()` is ok because `create_object_array_converted()` creates a new_local_frame,
+                   where those new references are contained in and are deleted after. */
+                Type::Option { ty: InnerType::Object(class), .. }
+                if (matches!(class, Class::Path { .. })) => create_obj_array(
+                    &elem_class,
+                    quote_spanned! {value.span()=>
+                        match _element {
+                            ::std::option::Option::Some(obj) => ::jni::JNIEnv::new_local_ref(env, obj)
+                                .unwrap_or_else(|err| ::ez_jni::__throw::handle_jni_call_error(err, env)),
+                            ::std::option::Option::None => ::jni::objects::JObject::null(),
+                        }
+                    },
+                    value
+                ),
+                // Convert elements using the Type's Conversion.
+                _ => create_obj_array(
+                    &elem_class,
+                    self.ty.convert_rust_to_java(&quote_spanned! {value.span()=> _element}).unwrap(),
+                    value
+                )
+            }
         } else {
             to_object(&self.ty, value)
         }

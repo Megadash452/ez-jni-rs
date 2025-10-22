@@ -177,5 +177,5 @@ pub fn create_object_array_converted<'local, T>(
             .map(#[inline] |t| elem_conversion(t, env))
             .collect::<Box<[_]>>(); // Must collect in box to consume iterator, which holds a refernce to env
         Ok(create_object_array(&items, elem_class, env))
-    }).unwrap()
+    }).unwrap_or_else(|err| panic!("Failed to create new local frame: {}", get_jni_error_msg(err, env)))
 }
