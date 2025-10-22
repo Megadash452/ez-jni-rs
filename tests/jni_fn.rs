@@ -2,7 +2,7 @@ mod common;
 
 use std::{path::PathBuf, process::Command, sync::LazyLock};
 use utils::{CLASS_DIR, absolute_path, run};
-use common::{get_env, run_with_jnienv};
+use common::get_env;
 
 static NATIVE_TEST_DIR: LazyLock<PathBuf> = LazyLock::new(|| absolute_path("./tests/native_test"));
 
@@ -37,13 +37,16 @@ fn jni_fn() {
 #[test]
 fn throw_panic() {
     unsafe { ez_jni::__throw::run_with_jnienv::<()>(get_env(), |_| panic!("Release me!")) };
-    let exception = ez_jni::__throw::try_catch::<String>(&mut get_env()).unwrap();
-    assert_eq!(exception, "me.marti.ezjni.RustPanic: Release me!");
-
-    run_with_jnienv(|| {
+    let exception = ez_jni::__throw::catch_exception(&mut get_env()).unwrap();
+    assert_eq!(exception.to_string(), "me.marti.ezjni.RustPanic: Release me!");
+}
+/// Tests the same as [`throw_panic()`], but with a [`catch_unwind`] inside.
+#[test]
+fn throw_panic_catch() {
+    unsafe { ez_jni::__throw::run_with_jnienv(get_env(), |_| {
         let err = std::panic::catch_unwind(|| {
             panic!("Release me!")
         }).unwrap_err();
         assert_eq!(&"Release me!", err.downcast::<&'static str>().unwrap().as_ref());
-    });
+    }) };
 }
