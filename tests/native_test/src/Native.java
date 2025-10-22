@@ -39,18 +39,18 @@ public final class Native {
         // native_test_ulong(u64);
         Boolean   z_o = native_test_bool_obj(new Boolean(true));
         Character c_o = native_test_char_obj(new Character('a'));
-        Byte      b_o = native_test_byte_obj(new Byte(3));
-        Short     s_o = native_test_short_obj(new Short(3));
+        Byte      b_o = native_test_byte_obj(new Byte((byte)3));
+        Short     s_o = native_test_short_obj(new Short((short)3));
         Integer   i_o = native_test_int_obj(new Integer(3));
-        Long      j_o = native_test_long_obj(new Long(3));
-        Float     f_o = native_test_float_obj(new Float(3.3));
+        Long      j_o = native_test_long_obj(new Long(3L));
+        Float     f_o = native_test_float_obj(new Float(3.3f));
         Double    d_o = native_test_double_obj(new Double(3.3));
         assert z_o.equals(new Boolean(true));
         assert c_o.equals(new Character('a'));
-        assert b_o.equals(new Byte(3));
-        assert s_o.equals(new Short(3));
+        assert b_o.equals(new Byte((byte)3));
+        assert s_o.equals(new Short((short)3));
         assert i_o.equals(new Integer(3));
-        assert j_o.equals(new Long(3));
+        assert j_o.equals(new Long(3L));
         assert f_o.equals(new Float(3.3f));
         assert d_o.equals(new Double(3.3));
 
