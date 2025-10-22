@@ -38,7 +38,8 @@ impl JavaException {
     /// and will `panic!` if something is wrong.
     /// 
     /// Not for **`public`** use, as it can cause confusion.
-    pub(crate) fn from_throwable(object: &JThrowable<'_>, env: &mut JNIEnv<'_>) -> Self {
+    #[doc(hidden)]
+    pub fn from_throwable(object: &JThrowable<'_>, env: &mut JNIEnv<'_>) -> Self {
         Self {
             class: get_object_class_name(object, env),
             message: call!(env=> object.getMessage() -> Option<String>),
