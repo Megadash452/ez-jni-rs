@@ -1,7 +1,7 @@
-use crate::{__throw::get_jni_error_msg, utils::get_object_class_name};
-use ez_jni_macros::new;
 use jni::objects::GlobalRef;
 use std::{fmt::{Debug, Display}, io, ops::Deref};
+use ez_jni_macros::new;
+use crate::{__throw::get_jni_error_msg, utils::{get_object_class_name, JniResultExt as _}};
 
 use super::*;
 
@@ -43,8 +43,7 @@ impl JavaException {
         Self {
             class: get_object_class_name(object, env),
             message: call!(env=> object.getMessage() -> Option<String>),
-            exception: env.new_global_ref(&object)
-                .unwrap_or_else(|err| crate::__throw::handle_jni_call_error(err, env)),
+            exception: env.new_global_ref(&object).unwrap_jni(env),
         }
     }
 }
@@ -116,8 +115,7 @@ impl<'local> FromObject<'_, '_, '_> for JavaException {
 }
 impl ToObject for JavaException {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        env.new_local_ref(&self.exception)
-            .unwrap_or_else(|err| crate::__throw::handle_jni_call_error(err, env))
+        env.new_local_ref(&self.exception).unwrap_jni(env)
     }
 }
 

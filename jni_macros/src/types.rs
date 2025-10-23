@@ -102,7 +102,7 @@ impl Type {
                 if class.is_jobject()
             ) */
                 // Unwrap JValue to JObject and generate conversion code
-                => return array.convert_java_to_rust(&quote_spanned! {value.span()=> (#value).l().unwrap() }),
+                => return array.convert_java_to_rust(&quote_spanned! {value.span()=> (#value).l().unwrap_jni(env) }),
             // Use special trait to unwrap Owned version of Object
             Self::Assertive(InnerType::Object(class))
             | Self::Option { ty: InnerType::Object(class), .. }
@@ -480,7 +480,6 @@ impl ArrayType {
         unsafe { NonZeroU32::new_unchecked(dimensions) } // Safety: Obiously
     }
 
-
     /// Whether the [`ArrayType`] must convert the *Rust value* to a *Java Object* by **manually** converting each *array dimension* one at a time.
     /// 
     /// This is used because some [`Types`][Type] have ambiguous *Rust representations*.
@@ -615,8 +614,7 @@ impl ArrayType {
                     &elem_class,
                     quote_spanned! {value.span()=>
                         match _element {
-                            ::std::option::Option::Some(obj) => ::jni::JNIEnv::new_local_ref(env, obj)
-                                .unwrap_or_else(|err| ::ez_jni::__throw::handle_jni_call_error(err, env)),
+                            ::std::option::Option::Some(obj) => ::jni::JNIEnv::new_local_ref(env, obj).unwrap_jni(env),
                             ::std::option::Option::None => ::jni::objects::JObject::null(),
                         }
                     },
@@ -625,7 +623,8 @@ impl ArrayType {
                 // Convert elements using the Type's Conversion.
                 _ => create_obj_array(
                     &elem_class,
-                    self.ty.convert_rust_to_java(&quote_spanned! {value.span()=> _element}).unwrap(),
+                    self.ty.convert_rust_to_java(&quote_spanned! {value.span()=> _element})
+                        .expect("Array inner Type must have a conversion to have made it to this point"),
                     value
                 )
             }

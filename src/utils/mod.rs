@@ -9,7 +9,7 @@ pub use call::*;
 pub use object::*;
 pub use array::*;
 
-use jni::{objects::JObject, JNIEnv};
+use jni::{objects::JObject, errors::Error as JniError, JNIEnv};
 use crate::{call, FromObject, LOCAL_JNIENV_STACK};
 
 #[doc(hidden)]
@@ -105,7 +105,7 @@ pub fn get_env<'a, 'local>() -> &'a mut JNIEnv<'local> {
 /// `panic!`s if there is an error.
 pub fn get_object_class_name(object: &JObject<'_>, env: &mut JNIEnv<'_>) -> String {
     let class = env.get_object_class(object)
-        .unwrap_or_else(|err| crate::__throw::handle_jni_call_error(err, env));
+        .unwrap_jni(env);
     call!(env=> class.getName() -> String)
 }
 
@@ -121,6 +121,24 @@ where E: Debug + Display {
         match self {
             Ok(t) => t,
             Err(e) => std::panic::panic_any(e.to_string()),
+        }
+    }   
+}
+
+pub trait JniResultExt<T> {
+    /// The same as [`Result::unwrap()`], but gets the full **error** message from the [`JniError`].
+    /// 
+    /// This can catch *exceptions* and print out the class and message,
+    /// so the [`JNIEnv`] is required for this method.
+    fn unwrap_jni(self, env: &mut JNIEnv<'_>) -> T;
+}
+impl<T> JniResultExt<T> for Result<T, JniError> {
+    #[inline(always)]
+    #[track_caller]
+    fn unwrap_jni(self, env: &mut JNIEnv<'_>) -> T {
+        match self {
+            Ok(t) => t,
+            Err(error) => ez_jni::__throw::handle_jni_call_error(error, env),
         }
     }   
 }

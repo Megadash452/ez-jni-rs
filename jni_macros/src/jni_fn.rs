@@ -2,7 +2,11 @@ use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
 use syn::{braced, ext::IdentExt as _, parenthesized, parse::{Parse, ParseStream}, punctuated::Punctuated, token::{Brace, Paren}, Attribute, GenericParam, Generics, Ident, Lifetime, LitStr, Token};
 use utils::java_method_to_symbol;
-use crate::{types::{Class, ClassRustType, Conversion as _, InnerType, JavaPrimitive, RustPrimitive, SigType, Type}, utils::{gen_signature, merge_errors, take_class_attribute_required, Spanned}};
+use crate::{
+    call::Env,
+    types::{Class, ClassRustType, Conversion as _, InnerType, JavaPrimitive, RustPrimitive, SigType, Type},
+    utils::{gen_signature, merge_errors, ops_prelude, take_class_attribute_required, Spanned}
+};
 
 /// Processes the input for [`crate::jni_fns`].
 /// Converts the parsed [`JniFn`] to a regular function used in Rust.
@@ -98,11 +102,15 @@ impl JniFn {
         self.brace_token.surround(tokens, |tokens| {
             tokens.append_all(self.user_function());
             let run = self.convert_arguments();
+            let ops_prelude = ops_prelude(Env::Argument);
 
             // Use the _map version of run_with_jnienv() if the return type needs conversion to Java
             tokens.append_all(match self.output.convert_rust_to_java_sys(&quote_spanned!(self.output.span()=> r)) {
                 Some(conversion) => quote_spanned! {self.content.span()=>
-                    unsafe { ::ez_jni::__throw::run_with_jnienv_map(env, #run, |r, #[allow(unused_variables)] env| #conversion) }
+                    unsafe { ::ez_jni::__throw::run_with_jnienv_map(env, #run, |r, #[allow(unused_variables)] env| {
+                        #ops_prelude
+                        #conversion
+                    }) }
                 },
                 None => quote_spanned! {self.content.span()=>
                     unsafe { ::ez_jni::__throw::run_with_jnienv(env, #run) }
@@ -155,6 +163,7 @@ impl JniFn {
     /// The generated closure is also what calls the [`user_function`][Self::user_function()] at the end and passes the arguments to it.
     fn convert_arguments<'a>(&self) -> TokenStream {
         let user_function_ident = Ident::new(Self::USER_FUNCTION_NAME, Span::call_site());
+        let ops_prelude = ops_prelude(Env::Argument);
 
         let receiver = Ident::new(match &self.static_token {
             Some(_) => "class",
@@ -175,11 +184,8 @@ impl JniFn {
             .collect::<TokenStream>();
 
         quote! {
-            /* #[allow(noop_method_call)] */ move | #[allow(unused_variables)] env | {
-                #[allow(unused_imports)] use ::std::borrow::Borrow;
-                #[allow(unused_imports)] use ::ez_jni::utils::ResultExt as _;
-                // #[allow(unused_variables)]
-                // let env: &mut ::jni::JNIEnv = #env;
+            #[allow(noop_method_call)] move | #[allow(unused_variables)] env | {
+                #ops_prelude
                 #conversions
                 #user_function_ident(#receiver, #arg_names)
             }

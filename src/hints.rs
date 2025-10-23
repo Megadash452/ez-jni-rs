@@ -3,7 +3,7 @@
 use jni::{JNIEnv, objects::{JObject, JClass}};
 use std::fmt::Display;
 use itertools::Itertools;
-use crate::{call, utils::{check_object_class, ResultExt}, Class, FromObject};
+use crate::{call, utils::{check_object_class, ResultExt as _, JniResultExt as _}, Class, FromObject};
 
 pub fn print_method_existence_report(class: &JClass<'_>, method_name: &'static str, method_sig: &str, is_static: bool, env: &mut JNIEnv<'_>) {
     println!("{}", MethodHintReport::check_method_existence(class, method_name, method_sig, is_static, env))
@@ -370,13 +370,10 @@ impl Display for Type {
 /// `panic!`s if the JNI function returns an error.
 fn get_superclasses<'local>(class: &JClass<'_>, env: &mut JNIEnv<'local>) -> Box<[JClass<'local>]> {
     // new_local_ref() is ok here because it is only used once with no recursion or anything else fancy
-    let first = env.new_local_ref(class)
-        .unwrap_or_else(|err| crate::__throw::handle_jni_call_error(err, env));
+    let first = env.new_local_ref(class).unwrap_jni(env);
 
     let mut classes = vec![JClass::from(first)];
-    while let Some(class) = env.get_superclass(classes.last().unwrap())
-        .unwrap_or_else(|err| crate::__throw::handle_jni_call_error(err, env))
-    {
+    while let Some(class) = env.get_superclass(classes.last().unwrap()).unwrap_jni(env) {
         classes.push(class);
     }
 

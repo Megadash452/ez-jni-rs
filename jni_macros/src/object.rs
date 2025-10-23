@@ -6,14 +6,16 @@ use syn::{parse::{Parse, ParseStream, Parser}, token::Bracket, AngleBracketedGen
 use itertools::Itertools as _;
 use std::{cell::RefCell, collections::{HashMap, HashSet}};
 use crate::{
-    types::{Class, SigType}, utils::{merge_errors, take_class_attribute, take_class_attribute_required, Spanned}
+    call::Env,
+    types::{Class, SigType},
+    utils::{merge_errors, ops_prelude, take_class_attribute, take_class_attribute_required, Spanned}
 };
 
 /// Outputs the trait Implementation of [`FromObject`][https://docs.rs/ez_jni/0.5.2/ez_jni/trait.FromObject.html] for **structs**.
 pub fn derive_struct(mut st: ItemStruct) -> syn::Result<TokenStream> {
     let class = take_class_attribute_required(&mut st.attrs, st.ident.span())?
         .to_jni_class_path();
-    
+    let ops_prelude = ops_prelude(Env::Argument);
     let env_lt = get_local_lifetime(Either::Left(&st));
     let st_ident = st.ident;
     let st_generics = st.generics;
@@ -25,9 +27,7 @@ pub fn derive_struct(mut st: ItemStruct) -> syn::Result<TokenStream> {
         }
         impl #st_generics ::ez_jni::FromObject<'_, '_, #env_lt> for #st_ident #st_generics {
             fn from_object_env(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<#env_lt>) -> ::std::result::Result<Self, ::ez_jni::FromObjectError> {
-                #[allow(unused_imports)] use ::std::borrow::Borrow;
-                #[allow(unused_imports)] use ::ez_jni::utils::ResultExt as _;
-
+                #ops_prelude
                 ::ez_jni::utils::check_object_class(object, &<Self as ::ez_jni::Class>::class(), env)?;
                 Ok(Self #st_ctor)
             }
@@ -67,7 +67,7 @@ pub fn derive_enum(mut enm: ItemEnum) -> syn::Result<TokenStream> {
     let base_class_check = base_class.as_ref()
         .map(|_| quote_spanned! {enm.ident.span()=> {
             let class = <Self as ::ez_jni::Class>::class();
-            if !env.is_instance_of(object, &class).unwrap() {
+            if !env.is_instance_of(object, &class).unwrap_jni(env) {
                 return Err(::ez_jni::FromObjectError::ClassMismatch {
                     obj_class: __class,
                     target_class: Some(::std::borrow::Cow::into_owned(class))
@@ -82,6 +82,7 @@ pub fn derive_enum(mut enm: ItemEnum) -> syn::Result<TokenStream> {
 
     merge_errors(errors)?;
 
+    let ops_prelude = ops_prelude(Env::Argument);
     let env_lt = get_local_lifetime(Either::Right(&enm));
     let enm_ident = &enm.ident;
     let enm_generics = &enm.generics;
@@ -104,8 +105,7 @@ pub fn derive_enum(mut enm: ItemEnum) -> syn::Result<TokenStream> {
         }
         impl #enm_generics ::ez_jni::FromObject<'_, '_, #env_lt> for #enm_ident #enm_generics {
             fn from_object_env(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<#env_lt>) -> ::std::result::Result<Self, ::ez_jni::FromObjectError> {
-                #[allow(unused_imports)] use ::std::borrow::Borrow;
-                #[allow(unused_imports)] use ::ez_jni::utils::ResultExt as _;
+                #ops_prelude
 
                 if object.is_null() {
                     return Err(::ez_jni::FromObjectError::Null);
@@ -545,7 +545,7 @@ fn construct_variants<'a>(variants: impl Iterator<Item = &'a mut Variant> + 'a) 
             let _if = if i == 0 { quote!(if) } else { quote!(else if) };
             // Check if Exception is the class that this Variant uses, and construct the variant
             Ok(quote_spanned! {variant.span()=>
-                #_if env.is_instance_of(object, #class).unwrap() {
+                #_if env.is_instance_of(object, #class).unwrap_jni(env) {
                     Ok(Self::#ident #ctor)
                 }
             })

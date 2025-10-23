@@ -6,12 +6,12 @@ use syn::{
 };
 use crate::{
     types::{Class, ClassRustType, InnerType, SigType, Type, NULL_KEYWORD},
-    utils::{gen_signature, join_spans, Spanned, StepResult, TokenTreeExt as _}
+    utils::{gen_signature, join_spans, ops_prelude, Spanned, StepResult, TokenTreeExt as _}
 };
 
 /// Processes input for macro call [super::call!].
 pub fn jni_call(call: MethodCall) -> TokenStream {
-    let env = &call.env;
+    let ops_prelude = ops_prelude(call.env);
     // The class or object that the method is being called on.
     let callee = match &call.call_type {
         CallType::Static(ClassRepr::String(class)) => {
@@ -52,9 +52,7 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
         quote!(::ez_jni::utils::call_obj_method)
     };
     quote! { {
-        #[allow(unused_imports)] use ::std::borrow::Borrow;
-        #[allow(unused_imports)] use ::ez_jni::utils::ResultExt as _;
-        let env: &mut ::jni::JNIEnv = #env;
+        #ops_prelude
         #[allow(noop_method_call)]
         #jni_method(#callee, #name, #signature, #arguments, env)
             .map(|v| #return_conversion)
@@ -64,7 +62,7 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
 
 /// Processes input for macro call [super::new!].
 pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
-    let env = &call.env;
+    let ops_prelude = ops_prelude(call.env);
     // The Class/ClassObject that the constructor was called for
     let callee = match &call.class {
         ClassRepr::String(class) => {
@@ -86,9 +84,7 @@ pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
     };
 
     quote! { {
-        #[allow(unused_imports)] use ::std::borrow::Borrow;
-        #[allow(unused_imports)] use ::ez_jni::utils::ResultExt as _;
-        let env: &mut ::jni::JNIEnv = #env;
+        #ops_prelude
         #[allow(noop_method_call)]
         ::ez_jni::utils::create_object(#callee, #signature, #arguments, env)
             #error_handler
@@ -97,7 +93,7 @@ pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
 
 /// Processes input for macro call [super::field!].
 pub fn field(call: FieldCall) -> TokenStream {
-    let env = &call.env;
+    let ops_prelude = ops_prelude(call.env);
     // The class or object that the method is being called on.
     let callee = match &call.call_type {
         CallType::Static(ClassRepr::String(class)) => {
@@ -121,9 +117,7 @@ pub fn field(call: FieldCall) -> TokenStream {
             // Convert Rust value to JValue for argument
             let val = call.ty.convert_rvalue_to_jvalue(&val.to_token_stream());
             quote! { {
-                #[allow(unused_imports)] use ::std::borrow::Borrow;
-                #[allow(unused_imports)] use ::ez_jni::utils::ResultExt as _;
-                let env: &mut ::jni::JNIEnv = #env;
+                #ops_prelude
                 #[allow(noop_method_call)]
                 #jni_method(#callee, #name, #ty_sig, #val, env)
             } }
@@ -137,9 +131,7 @@ pub fn field(call: FieldCall) -> TokenStream {
             // Convert jvalue returned from call
             let call = call.ty.convert_jvalue_to_rvalue(&quote! { #jni_method(#callee, #name, #ty_sig, env) });
             quote! { {
-                #[allow(unused_imports)] use ::std::borrow::Borrow;
-                #[allow(unused_imports)] use ::ez_jni::utils::ResultExt as _;
-                let env: &mut ::jni::JNIEnv = #env;
+                #ops_prelude
                 #[allow(noop_method_call)]
                 #call
             } }
@@ -149,14 +141,12 @@ pub fn field(call: FieldCall) -> TokenStream {
 
 /// Processes input for macro call [super::class!].
 pub fn get_class(env: Env, class: Class) -> TokenStream {
+    let ops_prelude = ops_prelude(env);
     let class = class.to_jni_class_path();
     quote! { {
-        #[allow(unused_imports)] use ::std::borrow::Borrow;
-        #[allow(unused_imports)] use ::ez_jni::utils::ResultExt as _;
-        let env: &mut ::jni::JNIEnv = #env;
+        #ops_prelude
         #[allow(noop_method_call)]
-        env.find_class(#class)
-            .unwrap_or_else(|err| ::ez_jni::__throw::handle_jni_call_error(err, env))
+        env.find_class(#class).unwrap_jni(env)
     } }
 }
 
@@ -678,38 +668,35 @@ impl Debug for Return {
     }
 }
 
-/// An *explicit declaration* of the [`JNIEnv`][jni::JNIEnv] value passed into one of the macros.
+/// Handles the declaration of the [`JNIEnv`][jni::JNIEnv] used in the macros.
+/// 
+/// This can take the form of either a **local variable** declared within the *macro block*,
+/// or an **argument** that is passed externally.
+/// Regardless of the form, a *local* `env: &mut JNIEnv<'_>` MUST be *in scope* in all generated code by the macros.
 /// 
 /// # Parsing
-/// Parses the starting tokens to find the *explicit declaration* of the [`JNIEnv`][jni::JNIEnv].
+/// Parses the beginnning tokens of the [`crate::call`] macros to find an *[`Explicit`][Env::Explicit] declaration* of the [`JNIEnv`][jni::JNIEnv].
 /// 
 /// Takes all tokens until it finds the symbol `=>`.
 /// All tokens before that symbol are the expression that resolves to the [`JNIEnv`][jni::JNIEnv].
 /// 
-/// Returns `None` if the pattern was not found.
-/// Returns `Err` if the tokens can't be parsed into an [`Expression`][syn::Expr].
+/// Returns [`None`][Env::None] if the pattern was not found.
+/// Returns `Err` if the tokens could't be parsed into an [`Expression`][syn::Expr].
 /// 
 /// ## Example
 /// ```ignore
 /// call!(env=> myfn() -> void)
 /// ```
-#[derive(Default)]
-pub struct Env(Option<Expr>);
-#[allow(unused)]
-impl Env {
-    /// Create an [`Env`] type that holds the tokens `env` so that it.
-    /// If [`Env`] should hold no tokens, use the [`Default::default()`] implementation instead.
-    /// 
-    /// > Note: When this is used by something that DOES NOT take direct imput from a macro caller
-    /// (e.g. is used to create a method_call internally),
-    /// then [`Env`] MUST be the tokens `env`.
-    pub fn new() -> Self {
-        Self::new_custom(quote!(env))
-    }
-    /// Like [`Self::new()`], but allows changing the `env` tokens to something else.
-    pub fn new_custom(tokens: TokenStream) -> Self {
-        Self(Some(Expr::Verbatim(tokens)))
-    }
+pub enum Env {
+    /// The `env` is evaluated from a custom [`Expression`][Expr] passed in by the macro user.
+    /// The caller macro still needs to create a local `env: &mut JNIEnv<'_>` to store the reference.
+    Explicit(Expr),
+    /// The `env` is in scope because it is an **argument**,
+    /// so the caller macro doesn't need to generate `env` local.
+    Argument,
+    /// No `env` available.
+    /// The caller macro has to create its own `env` local by calling [`get_env()`][ez_jni::utils::get_env()].
+    None
 }
 impl Parse for Env {
     fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -721,26 +708,32 @@ impl Parse for Env {
         ])
             .map(|result| result.pre_tokens.into_iter().collect::<TokenStream>())
             .ok()
-            .map(|tokens| syn::parse2(tokens))
+            .map(|tokens| syn::parse2::<Expr>(tokens))
             .transpose()
-            .map(|r| Self(r))
+            .map(|expr| match expr {
+                Some(expr) => Self::Explicit(expr),
+                None => Self::None
+            })
     }
 }
 impl ToTokens for Env {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        tokens.append_all(
-            match &self.0 {
-                Some(expr) => expr.to_token_stream(),
-                None => quote!(::ez_jni::utils::get_env()),
-            }
-        );
+        tokens.append_all(match self {
+            Self::Explicit(expr) => quote! { let env: &mut ::jni::JNIEnv<'_> = #expr; },
+            Self::Argument => quote!(),
+            Self::None => quote! { let env: &mut ::jni::JNIEnv<'_> = ::ez_jni::utils::get_env(); },
+        })
     }
+}
+impl Default for Env {
+    fn default() -> Self { Self::Argument }
 }
 impl Debug for Env {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.0 {
-            Some(_) => write!(f, "Some"),
-            None => write!(f, "None")
+        match self {
+            Self::Explicit(expr) => f.write_str(&format!("Env::Explicit({})", expr.to_token_stream().to_string())),
+            Self::Argument => f.write_str("Env::Argument"),
+            Self::None => write!(f, "Env::None")
         }
     }
 }
