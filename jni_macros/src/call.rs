@@ -472,8 +472,8 @@ impl Parse for Parameter {
         match &value {
             // null can be used for Object and Array only.
             ParamValue::Null(null) => match &ty {
-                Type::Assertive(InnerType::JavaPrimitive { .. } | InnerType::RustPrimitive { .. })
-                | Type::Option { ty: InnerType::JavaPrimitive { .. } | InnerType::RustPrimitive { .. }, .. }
+                Type::Assertive(InnerType::Primitive(_))
+                | Type::Option { ty: InnerType::Primitive(_), .. }
                     => return Err(syn::Error::new(null.span(), format!("Can't use '{NULL_KEYWORD}' as value of primitive argument type."))),
                 Type::Assertive(InnerType::Object(_) | InnerType::Array(_))
                 | Type::Option {  .. } => { },
@@ -569,7 +569,7 @@ impl Return {
     }
 }
 impl SigType for Return {
-        fn sig_type(&self) -> LitStr {
+    fn sig_type(&self) -> LitStr {
         match self {
             Self::Assertive(ReturnableType::Void(ident))
             | Self::Result { ty: ReturnableType::Void(ident), .. } => LitStr::new("V", ident.span()),

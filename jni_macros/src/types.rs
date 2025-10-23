@@ -72,9 +72,9 @@ impl Type {
     /// Returns whether the [`InnerType`] of the type is a *primitive*.
     /// Returns `false` if this is an [`Array`][Type::Array].
     #[allow(unused)]
-    pub fn is_primitive(&self) -> bool {
+    pub fn is_pure_primitive(&self) -> bool {
         match self {
-            Self::Assertive(InnerType::RustPrimitive { .. } | InnerType::JavaPrimitive { .. }) => true,
+            Self::Assertive(InnerType::Primitive(_)) => true,
             _ => false,
         }
     }
@@ -167,9 +167,7 @@ impl SigType for Type {
         match self {
             Self::Assertive(ty) => ty.sig_type(),
             // Option with primitive is actually a class
-            Self::Option { ty: InnerType::JavaPrimitive { ident, .. }, .. } => Class::Short(ident.clone()).sig_type(),
-            Self::Option { ty: InnerType::RustPrimitive { ident, ty }, .. }
-                => Class::Short(Ident::new(&JavaPrimitive::from(*ty).class_name(), ident.span())).sig_type(),
+            Self::Option { ty: InnerType::Primitive(prim), .. } => prim.to_class().sig_type(),
             Self::Option { ty, .. } => ty.sig_type(),
         }
     }
@@ -295,16 +293,14 @@ impl Display for Type {
 /// A **Type** that can be used as the **inner type** of a generic [`Type`].
 #[derive(Debug, Clone)]
 pub enum InnerType {
-    JavaPrimitive { ident: Ident, ty: JavaPrimitive },
-    RustPrimitive { ident: Ident, ty: RustPrimitive },
+    Primitive(Primitive),
     Object(Class),
     Array(ArrayType),
 }
 impl Spanned for InnerType {
     fn span(&self) -> Span {
         match self {
-            Self::JavaPrimitive { ident, .. }
-            | Self::RustPrimitive { ident, .. } => ident.span(),
+            Self::Primitive(prim) => prim.span(),
             Self::Object(class) => class.span(),
             Self::Array(array) => array.span(),
         }
@@ -313,16 +309,7 @@ impl Spanned for InnerType {
 impl SigType for InnerType {
     fn sig_type(&self) -> LitStr {
         match self {
-            Self::JavaPrimitive { ident, ty } => {
-                let mut sig_type = ty.sig_type();
-                sig_type.set_span(ident.span());
-                sig_type
-            },
-            Self::RustPrimitive { ident, ty } => {
-                let mut sig_type = JavaPrimitive::from(*ty).sig_type();
-                sig_type.set_span(ident.span());
-                sig_type
-            },
+            Self::Primitive(prim) => prim.sig_type(),
             Self::Object(class) => class.sig_type(),
             Self::Array(array) => array.sig_type(),
         }
@@ -331,26 +318,23 @@ impl SigType for InnerType {
 impl Conversion for InnerType {
     fn convert_java_to_rust(&self, value: &TokenStream) -> Option<TokenStream> {
         match self {
-            Self::JavaPrimitive { ty, .. } => RustPrimitive::from(*ty).convert_java_to_rust(value),
-            Self::RustPrimitive { ty, .. } => ty.convert_java_to_rust(value),
+            Self::Primitive(prim) => prim.convert_java_to_rust(value),
             Self::Object(class) => class.convert_java_to_rust(value),
             Self::Array(array) => <ArrayType as Conversion>::convert_java_to_rust(array, value),
         }
     }
     fn convert_rust_to_java(&self, value: &TokenStream) -> Option<TokenStream> {
         match self {
-            Self::JavaPrimitive { ty, .. } => RustPrimitive::from(*ty).convert_rust_to_java(value),
-            Self::RustPrimitive { ty, .. } => ty.convert_rust_to_java(value),
-            Self::Object(object) => object.convert_rust_to_java(value),
+            Self::Primitive(prim) => prim.convert_rust_to_java(value),
+            Self::Object(class) => class.convert_rust_to_java(value),
             Self::Array(array) => <ArrayType as Conversion>::convert_rust_to_java(array, value),
         }
     }
     fn type_tokens(&self, as_ref: bool, is_nested: bool, lifetime: Option<syn::Lifetime>) -> TokenStream {
         match self {
-            InnerType::JavaPrimitive { ident, ty } => RustPrimitive::from(*ty).to_tokens_spanned(ident.span()),
-            InnerType::RustPrimitive { ident, ty } => ty.to_tokens_spanned(ident.span()),
-            InnerType::Object(class) => class.type_tokens(as_ref, is_nested, lifetime),
-            InnerType::Array(array) => array.type_tokens(as_ref, is_nested, lifetime),
+            Self::Primitive(prim) => prim.type_tokens(as_ref, is_nested, lifetime),
+            Self::Object(class) => class.type_tokens(as_ref, is_nested, lifetime),
+            Self::Array(array) => array.type_tokens(as_ref, is_nested, lifetime),
         }
     }
 }
@@ -365,7 +349,13 @@ impl Parse for InnerType {
             Ok(class) => return Ok(Self::Object(class)),
             Err(err) => err
         };
-        // Parse an Ident, attempt a primitive or some other known symbol
+
+        // Parse primitive
+        if let Ok(prim) = input.parse::<Primitive>() {
+            return Ok(Self::Primitive(prim));
+        }
+
+        // Parse an Ident, attempt some other known symbol...
         if let Ok(ident) = input.parse::<Ident>() {
             let ident_str = ident.to_string();
 
@@ -375,26 +365,17 @@ impl Parse for InnerType {
                 "Result" => return Err(syn::Error::new(ident.span(), "'Result' is not allowed as an inner type, it must be the outermost type.")),
                 "Option" => return Err(syn::Error::new(ident.span(), "'Option' is not allowed to be nested within itself.")),
                 _ => {}
-            };
-
-            // Parse primitive
-            if let Ok(ty) = RustPrimitive::from_str(&ident_str) {
-                return Ok(Self::RustPrimitive { ident, ty });
-            } else if let Ok(ty) = JavaPrimitive::from_str(&ident_str) {
-                return Ok(Self::JavaPrimitive { ident, ty });
             }
         }
 
         // All types failed to parse, return Class parse error
-        Err(syn::Error::new(class_err.span(), format!("Could not parse a known Type or Class: {class_err}")))
+        Err(syn::Error::new(class_err.span(), format!("Tokens did not match any known Type or a Class: {class_err}")))
     }
 }
 impl Display for InnerType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::JavaPrimitive { ty, .. } => Display::fmt(ty, f),
-            // Convert form Rust to Java
-            Self::RustPrimitive { ty, .. } => Display::fmt(&JavaPrimitive::from(*ty), f),
+            Self::Primitive(prim) => Display::fmt(prim, f),
             Self::Object(class) => Display::fmt(class, f),
             Self::Array(array) => Display::fmt(array, f),
         }
@@ -668,7 +649,7 @@ impl Debug for ArrayType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClassRustType {
     JObject, JClass, JThrowable, JString, String,
-    Primitive(JavaPrimitive)
+    Primitive(RustPrimitive)
 }
 impl FromStr for ClassRustType {
     type Err = ();
@@ -681,7 +662,7 @@ impl FromStr for ClassRustType {
             "Exception" => Ok(Self::JThrowable),
             "String"    => Ok(Self::String),
             _ => JavaPrimitive::from_class_name(class)
-                .map(|prim| Self::Primitive(prim))
+                .map(|prim| Self::Primitive(RustPrimitive::from(prim)))
                 .ok_or(()),
         }
     }
@@ -694,7 +675,7 @@ impl Display for ClassRustType {
             Self::JThrowable => "Throwable",
             Self::JString    => "JString",
             Self::String     => "String",
-            Self::Primitive(prim) => prim.class_name()
+            Self::Primitive(prim) => JavaPrimitive::from(*prim).class_name()
         })
     }
 }
@@ -1013,6 +994,113 @@ impl Debug for Class {
     }
 }
 
+/// A [`Primitive`] can be represented in the macros as either a [`RustPrimitive`] or a [`JavaPrimitive`].
+/// 
+/// These are **pure primitives**.
+/// *Object Primitives* can be stored with [`Class::Short`].
+#[derive(Debug, Clone)]
+pub enum Primitive {
+    Java { ident: Ident, ty: JavaPrimitive },
+    Rust { ident: Ident, ty: RustPrimitive }
+}
+impl Primitive {
+    /// Returns a [`Class`] that represents this [`Primitive`] as an **Object Primitive**.
+    pub fn to_class(&self) -> Class {
+        let ident = match self {
+            Self::Java { ident, ty } => Ident::new(ty.class_name(), ident.span()),
+            Self::Rust { ident, ty } => Ident::new(JavaPrimitive::from(*ty).class_name(), ident.span()),
+        };
+        Class::Short(ident)
+    }
+
+    /// Returns a [`JavaPrimitive`].
+    /// 
+    /// Even if the the underlying type is [`RustPrimitive`],
+    /// this will map it to a [`JavaPrimitive`].
+    pub fn java_prim(&self) -> JavaPrimitive {
+        match self {
+            Self::Java { ty, .. } => *ty,
+            Self::Rust { ty, .. } => JavaPrimitive::from(*ty)
+        }
+    }
+    /// Returns a [`RustPrimitive`].
+    /// 
+    /// Even if the the underlying type is [`JavaPrimitive`],
+    /// this will map it to a [`RustPrimitive`].
+    #[allow(unused)]
+    pub fn rust_prim(&self) -> RustPrimitive {
+        match self {
+            Self::Java { ty, .. } => RustPrimitive::from(*ty),
+            Self::Rust { ty, .. } => *ty
+        }
+    }
+}
+impl Spanned for Primitive {
+    fn span(&self) -> Span {
+        match self {
+            Self::Java { ident, .. } | Self::Rust { ident, .. } => ident.span(),
+        }
+    }
+}
+impl SigType for Primitive {
+    fn sig_type(&self) -> LitStr {
+        match self {
+            Self::Java { ident, ty } => {
+                let mut sig_type = ty.sig_type();
+                sig_type.set_span(ident.span());
+                sig_type
+            },
+            Self::Rust { ident, ty } => {
+                let mut sig_type = JavaPrimitive::from(*ty).sig_type();
+                sig_type.set_span(ident.span());
+                sig_type
+            },
+        }
+    }
+}
+impl Conversion for Primitive {
+    fn convert_java_to_rust(&self, value: &TokenStream) -> Option<TokenStream> {
+        match self {
+            Self::Java { ty, .. } => RustPrimitive::from(*ty).convert_java_to_rust(value),
+            Self::Rust { ty, .. } => ty.convert_java_to_rust(value),
+        }
+    }
+    fn convert_rust_to_java(&self, value: &TokenStream) -> Option<TokenStream> {
+        match self {
+            Self::Java { ty, .. } => RustPrimitive::from(*ty).convert_rust_to_java(value),
+            Self::Rust { ty, .. } => ty.convert_rust_to_java(value),
+        }
+    }
+    fn type_tokens(&self, _: bool, _: bool, _: Option<syn::Lifetime>) -> TokenStream {
+        match self {
+            Primitive::Java { ident, ty } => RustPrimitive::from(*ty).to_tokens_spanned(ident.span()),
+            Primitive::Rust { ident, ty } => ty.to_tokens_spanned(ident.span()),
+        }
+    }
+}
+impl Parse for Primitive {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let ident = input.parse::<Ident>()?;
+        let ident_str = &ident.to_string();
+
+        if let Ok(ty) = RustPrimitive::from_str(ident_str) {
+            Ok(Self::Rust { ident, ty })
+        } else if let Ok(ty) = JavaPrimitive::from_str(ident_str) {
+            Ok(Self::Java { ident, ty })
+        } else {
+            Err(syn::Error::new(ident.span(), "Tokens did not match any Rust or Java primitives."))
+        }
+    }
+}
+impl Display for Primitive {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Java { ty, .. } => Display::fmt(ty, f),
+            Self::Rust { ty, .. } => Display::fmt(&JavaPrimitive::from(*ty), f),
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum RustPrimitive {
     Bool, Char,
@@ -1121,7 +1209,7 @@ pub enum JavaPrimitive {
     Float, Double
 }
 impl JavaPrimitive {
-    /// Returns the name of the **class** that wraps this **primitive** in Java.
+    /// Returns the *[`Class`] name* that represents this [`JavaPrimitive`].
     pub fn class_name(self) -> &'static str {
         match self {
             Self::Boolean => "Boolean",
@@ -1134,7 +1222,7 @@ impl JavaPrimitive {
             Self::Double  => "Double",
         }
     }
-    /// Like [`JavaPrimitive::from_str()`], but the string is the *name* of a Java **class** that wraps a **primitive**.
+    /// Like [`JavaPrimitive::from_str()`], but the string is a *[`Class`] name* that represents a [`JavaPrimitive`].
     pub fn from_class_name(class: &str) -> Option<Self> {
         match class {
             "Boolean"   => Some(Self::Boolean),
