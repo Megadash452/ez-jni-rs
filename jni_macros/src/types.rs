@@ -10,13 +10,33 @@ pub static NULL_KEYWORD: &str = "null";
 
 /// Indicates that a type is data about Java Type signature, such as a *parameter type* or *return type*
 pub trait SigType {
-    /// The name of the function that maps from a `JValue` to a concrete type.
-    /// This will always be a single *lowercase character*.
-    /// Must be one of the single-letter functions found in [`JValueGen`][https://docs.rs/jni/latest/jni/objects/enum.JValueGen.html#method.l].
-    fn sig_char(&self) -> Ident;
     /// The Type that is used in the signature of the method call. e.g. `"V"` or `"Ljava/lang/String;"`.
-    /// It is the *uppercase [`SigType::sig_char`]*, and if it is `L` it is followed by the ClassPath and a `;`.
     fn sig_type(&self) -> LitStr;
+    /// The name of the **function** that maps from a [`JValue`] to a concrete *Rust type*.
+    /// 
+    /// The returned [`Ident`] will always be a single *lowercase character*, hence the function name.
+    /// Must be one of the single-letter functions found in [`JValueGen`](https://docs.rs/jni/latest/jni/objects/enum.JValueGen.html#method.l).
+    /// 
+    /// This method is essentially the *function* that **unwraps** a [`JValue`] given its [*type signature*][SigType::sig_type()].
+    /// 
+    /// [`JValue`]: jni::objects::JValue
+    #[allow(unused)]
+    fn sig_char(&self) -> Ident {
+        let sig_type = self.sig_type();
+        let c = match sig_type.value()
+            .chars()
+            .next()
+            .expect("SigType::sig_type() returned an empty String")
+        {
+            // '[' returns 'l' because Arrays are Objects.
+            '[' | 'L' => 'l',
+            // Primitives
+            c if "BZCSIJFD".contains(c) => c.to_lowercase().next().unwrap(),
+            // In the case that the sig_type was just the Class Path with no L, it can still be allowed.
+            _ => 'l'
+        };
+        Ident::new(&c.to_string(), sig_type.span())
+    }
 }
 
 /// Generate code to perform some kind of necessary conversion between *Rust* and *Java* values.
@@ -168,16 +188,6 @@ impl Spanned for Type {
     }
 }
 impl SigType for Type {
-    fn sig_char(&self) -> Ident {
-        match self {
-            Self::Assertive(ty) => ty.sig_char(),
-            // Option with primitive is actually a class
-            Self::Option { ty: InnerType::JavaPrimitive { ident, .. }, .. } => Class::Short(ident.clone()).sig_char(),
-            Self::Option { ty: InnerType::RustPrimitive { ident, ty }, .. }
-                => Class::Short(Ident::new(&JavaPrimitive::from(*ty).class_name(), ident.span())).sig_char(),
-            Self::Option { ty, .. } => ty.sig_char(),
-        }
-    }
     fn sig_type(&self) -> LitStr {
         match self {
             Self::Assertive(ty) => ty.sig_type(),
@@ -326,22 +336,6 @@ impl Spanned for InnerType {
     }
 }
 impl SigType for InnerType {
-    fn sig_char(&self) -> Ident {
-        match self {
-            Self::JavaPrimitive { ident, ty } => {
-                let mut sig_char = ty.sig_char();
-                sig_char.set_span(ident.span());
-                sig_char
-            },
-            Self::RustPrimitive { ident, ty, .. } => {
-                let mut sig_char = JavaPrimitive::from(*ty).sig_char();
-                sig_char.set_span(ident.span());
-                sig_char
-            },
-            Self::Object(class) => class.sig_char(),
-            Self::Array(array) => array.sig_char(),
-        }
-    }
     fn sig_type(&self) -> LitStr {
         match self {
             Self::JavaPrimitive { ident, ty } => {
@@ -639,11 +633,6 @@ impl Spanned for ArrayType {
     }
 }
 impl SigType for ArrayType {
-    /// Returns 'l' because Arrays are Objects.
-    /// See [`origin`](SigType::sig_char()).
-    fn sig_char(&self) -> Ident {
-        Ident::new("l", self.span())
-    }
     fn sig_type(&self) -> LitStr {
         let sig_type = self.ty.sig_type();
         LitStr::new(&format!("[{}", sig_type.value()), sig_type.span())
@@ -881,9 +870,6 @@ impl Class {
     }
 }
 impl SigType for Class {
-    fn sig_char(&self) -> Ident {
-        Ident::new("l", self.span())
-    }
     fn sig_type(&self) -> LitStr {
         LitStr::new(&format!("L{};", self.to_jni_class_path()), self.span())
     }
@@ -1189,31 +1175,18 @@ impl JavaPrimitive {
     }
 }
 impl SigType for JavaPrimitive {
-    fn sig_char(&self) -> Ident {
-        let c = match self {
-            Self::Byte    => 'b',
-            Self::Boolean => 'z',
-            Self::Char    => 'c',
-            Self::Short   => 's',
-            Self::Int     => 'i',
-            Self::Long    => 'j',
-            Self::Float   => 'f',
-            Self::Double  => 'd',
-        };
-        Ident::new(&c.to_string(), Span::call_site())
-    }
     fn sig_type(&self) -> LitStr {
-        LitStr::new(
-            self.sig_char()
-                .to_string()
-                .chars()
-                .next()
-                .unwrap()
-                .to_uppercase()
-                .collect::<String>()
-                .as_str(),
-            Span::call_site()
-        )
+        let c = match self {
+            Self::Byte    => 'B',
+            Self::Boolean => 'Z',
+            Self::Char    => 'C',
+            Self::Short   => 'S',
+            Self::Int     => 'I',
+            Self::Long    => 'J',
+            Self::Float   => 'F',
+            Self::Double  => 'D',
+        };
+        LitStr::new(&c.to_string(), Span::call_site())
     }
 }
 impl FromStr for JavaPrimitive {

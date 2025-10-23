@@ -444,9 +444,6 @@ impl Spanned for Parameter {
     }
 }
 impl SigType for Parameter {
-    fn sig_char(&self) -> Ident {
-        self.ty.sig_char()
-    }
     fn sig_type(&self) -> LitStr {
         self.ty.sig_type()
     }
@@ -572,15 +569,7 @@ impl Return {
     }
 }
 impl SigType for Return {
-    fn sig_char(&self) -> Ident {
-        match self {
-            Self::Assertive(ReturnableType::Void(ident))
-            | Self::Result { ty: ReturnableType::Void(ident), .. } => Ident::new("v", ident.span()),
-            Self::Assertive(ReturnableType::Type(ty))
-            | Self::Result { ty: ReturnableType::Type(ty), .. } => ty.sig_char(),
-        }
-    }
-    fn sig_type(&self) -> LitStr {
+        fn sig_type(&self) -> LitStr {
         match self {
             Self::Assertive(ReturnableType::Void(ident))
             | Self::Result { ty: ReturnableType::Void(ident), .. } => LitStr::new("V", ident.span()),

@@ -399,9 +399,6 @@ impl Spanned for ClassAttr {
     }
 }
 impl SigType for ClassAttr {
-    fn sig_char(&self) -> Ident {
-        Ident::new("l", self.span())
-    }
     fn sig_type(&self) -> LitStr {
         LitStr::new(&format!("{}{}", "[".repeat(self.dimensions as usize), self.class.sig_type().value()), self.span())
     }

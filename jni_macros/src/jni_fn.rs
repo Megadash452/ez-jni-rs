@@ -427,12 +427,6 @@ impl JniReturn {
     }
 }
 impl SigType for JniReturn {
-    fn sig_char(&self) -> Ident {
-        match self {
-            Self::Void => Ident::new("v", Span::call_site()),
-            Self::Type { ty, .. } => ty.sig_char()
-        }
-    }
     fn sig_type(&self) -> LitStr {
         match self {
             Self::Void => LitStr::new("V", Span::call_site()),
