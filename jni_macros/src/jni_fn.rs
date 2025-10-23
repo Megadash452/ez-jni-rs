@@ -341,7 +341,7 @@ impl JniFnArg {
         }
         // Variants of JObject are used as the native function parameter types (only at top-level of the type),
         // so conversion (e.g. JString) is not necessary.
-        if matches!(&self.ty, Type::Assertive(InnerType::Object(class)) if class.is_jobject()) {
+        if matches!(&self.ty, Type::Assertive(InnerType::Object(class)) if class.is_object_ref()) {
             return TokenStream::new();
         }
         self.ty.convert_java_to_rust(&name.to_token_stream())

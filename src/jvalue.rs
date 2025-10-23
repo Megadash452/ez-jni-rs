@@ -1,7 +1,7 @@
 use std::fmt::Display;
-use jni::{objects::{JClass, JObject, JThrowable, JValue, JValueGen, JValueOwned}, JNIEnv};
+use jni::{objects::{JClass, JObject, JString, JThrowable, JValue, JValueGen, JValueOwned}, JNIEnv};
 use thiserror::Error;
-use crate::{utils::get_env, FromObject, FromObjectError, Primitive, ToObject};
+use crate::{utils::get_env, FromObject, FromObjectError, ObjectArray, Primitive, ToObject};
 
 /// Get a **Rust** value from a **Java** value.
 /// 
@@ -252,8 +252,8 @@ impl<'a, 'obj, 'local> FromJValue<'a, 'obj, 'local> for &'a JClass<'obj> { impl_
 impl ToJValue for &JClass<'_> { impl_to_jvalue_env!(); }
 impl<'a, 'obj, 'local> FromJValue<'a, 'obj, 'local> for &'a JThrowable<'obj> { impl_from_jvalue_env!(<'a, 'obj, 'local>); }
 impl ToJValue for &JThrowable<'_> { impl_to_jvalue_env!(); }
-// TODO: impl<'a, 'obj, 'local> FromJValue<'a, 'obj, 'local> for &'a JString<'obj> { impl_from_jvalue_env!(); }
-// TODO: impl ToJValue for &JString<'_> { impl_to_jvalue_env!(); }
+impl<'a, 'obj, 'local> FromJValue<'a, 'obj, 'local> for &'a JString<'obj> { impl_from_jvalue_env!(<'a, 'obj, 'local>); }
+impl ToJValue for &JString<'_> { impl_to_jvalue_env!(); }
 
 impl<T> ToJValue for &T
 where T: ToJValue {
@@ -282,3 +282,13 @@ impl<T> ToJValue for &[T]
 where Self: ToObject { impl_to_jvalue_env!(); }
 impl<const N: usize, T> ToJValue for [T; N]
 where Self: ToObject { impl_to_jvalue_env!(); }
+
+impl<'local, T, Array> FromJValue<'_, '_, 'local> for ObjectArray<'local, T, Array>
+where Self: for<'a, 'obj> FromObject<'a, 'obj, 'local>,
+      Array: AsRef<[T]>,
+          T: for<'obj> AsRef<JObject<'obj>>
+{ impl_from_jvalue_env!(<'_, '_, 'local>); }
+impl<T, Array> ToJValue for ObjectArray<'_, T, Array>
+where Array: AsRef<[T]>,
+          T: for<'obj> AsRef<JObject<'obj>>
+{ impl_to_jvalue_env!(); }

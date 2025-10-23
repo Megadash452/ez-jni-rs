@@ -1,6 +1,9 @@
 use std::borrow::Cow;
 use jni::{
-    errors::Result as JniResult, objects::{JClass, JObject, JPrimitiveArray, JString, JThrowable}, sys::{jboolean, jbyte, jchar, jdouble, jfloat, jint, jlong, jshort, jsize}, JNIEnv
+    JNIEnv,
+    errors::Result as JniResult,
+    objects::{JClass, JPrimitiveArray, JString, JThrowable},
+    sys::{jboolean, jbyte, jchar, jdouble, jfloat, jint, jlong, jshort, jsize},
 };
 
 /// A trait that allows a *base* **Java Class** to be assigned to a *Rust Type*.
@@ -64,7 +67,7 @@ impl_class!(for String => "java/lang/String");
 impl_class!(for str => String);
 impl_class!(for &str => String);
 impl_class!(for JString<'_> => String);
-impl_class!(for JObject<'_> => "java/lang/Object");
+// impl_class!(for JObject<'_> => "java/lang/Object");
 impl_class!(for JClass<'_> => "java/lang/Class");
 impl_class!(for crate::JavaException => "java/lang/Exception");
 impl_class!(for JThrowable<'_> => crate::JavaException);

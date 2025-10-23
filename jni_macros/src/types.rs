@@ -95,12 +95,18 @@ impl Type {
             Self::Assertive(InnerType::Array(array))
             | Self::Option { ty: InnerType::Array(array), .. }
             if matches!(&*array.ty, Type::Assertive(InnerType::Array(_)) | Type::Option { ty: InnerType::Array(_), .. })
+            // Do not enable this because the macros should return standard Rust array types
+            /* // Arrays of Object refs must be converted using ObjectArray
+            || matches!(&*array.ty,
+                Type::Assertive(InnerType::Object(class)) | Type::Option { ty: InnerType::Object(class), .. }
+                if class.is_jobject()
+            ) */
                 // Unwrap JValue to JObject and generate conversion code
                 => return array.convert_java_to_rust(&quote_spanned! {value.span()=> (#value).l().unwrap() }),
             // Use special trait to unwrap Owned version of Object
             Self::Assertive(InnerType::Object(class))
             | Self::Option { ty: InnerType::Object(class), .. }
-            if class.is_jobject() => {
+            if class.is_object_ref() => {
                 let ty = self.type_tokens(false, false, None);
                 return quote_spanned! {value.span()=> <#ty as ::ez_jni::utils::FromJValueOwned>::from_jvalue_owned_env(#value, env) }
             },
@@ -134,7 +140,7 @@ impl Type {
             // Wrap in JValue if type is JObject; no need to allocate another object
             Self::Assertive(InnerType::Object(class))
             | Self::Option { ty: InnerType::Object(class), .. }
-            if class.is_jobject() => {
+            if class.is_object_ref() => {
                 // JClass or JThrowable can be converted to JObject, which is converted to JValue
                 let converted = class.convert_rust_to_java(value);
                 let converted = converted.as_ref().unwrap_or(value);
@@ -194,7 +200,7 @@ impl Conversion for Type {
                 let ty_tokens = self.type_tokens(false, false, None);
                 match ty {
                     // Use FromObjectOwned implementation
-                    InnerType::Object(class) if class.is_jobject() =>
+                    InnerType::Object(class) if class.is_object_ref() =>
                         quote_spanned! {value.span()=> <#ty_tokens as ::ez_jni::FromObjectOwned>::from_object_owned_env(#value, env) },
                     // Use regular FromObject implementation
                     _ => quote_spanned! {value.span()=> <#ty_tokens as ::ez_jni::FromObject>::from_object_env(&(#value), env).unwrap_display() }
@@ -235,7 +241,7 @@ impl Conversion for Type {
 
                 match ty {
                     // Manually conver Option<JObject> and its variants
-                    InnerType::Object(class) if class.is_jobject() => match_option(class.convert_rust_to_java(option_value)),
+                    InnerType::Object(class) if class.is_object_ref() => match_option(class.convert_rust_to_java(option_value)),
                     /* If the InnerType of the Option is a multi-dimensional Array or an Array of String,
                     do the conversion manually to allow use of both the borrowed and owned types (e.g. &str and String, &[_] and Box<[_]>) */
                     InnerType::Array(array) => match array.ty.as_ref() {
@@ -495,7 +501,7 @@ impl ArrayType {
             if class.rust_type() == ClassRustType::String
             /* When the inner type of the array is a Java Class Path,
                the array must be converted manually to provide an elem_class. */
-            || (matches!(class, Class::Path { .. }) && class.rust_type() == ClassRustType::JObject) => true,
+            || class.is_jobject() => true,
             /* Arrays of Primitive Objects should be manually converted.
             The default implementation converts Arrays of Rust primitives to Java primitives, but an Object is required. */
             Type::Assertive(InnerType::Object(Class::PrimitiveObject { .. }))
@@ -538,6 +544,16 @@ impl ArrayType {
         match self.ty.as_ref() {
             // Recursion happens here -v
             Type::Assertive(InnerType::Array(array)) => get_object_arr(array.convert_java_to_rust(&quote_spanned!(value.span()=> _element))),
+            Type::Option { ty: InnerType::Array(array), .. } => todo!("is this not tested?"),
+
+            // Do not enable this because the macros should return standard Rust array types
+            /* // Use the FromObject implementation, but specificalyl return an ObjectArray to keep the class data.
+            Type::Assertive(InnerType::Object(class))
+            | Type::Option { ty: InnerType::Object(class), .. }
+            if class.is_jobject() => quote_spanned! {value.span()=>
+                <::ez_jni::ObjectArray<'_> as ::ez_jni::FromObject>::from_object_env(&(#value), env).unwrap_display()
+            }, */
+
             // Convert the java value using the FromObject trait
             ty => from_object(ty.type_tokens(false, true, None), value),
         }
@@ -585,10 +601,12 @@ impl ArrayType {
             match &*self.ty {
                 // Here there is no elem_conversion since the elements are already JObject.
                 Type::Assertive(InnerType::Object(class))
-                if (matches!(class, Class::Path { .. }) && class.rust_type() == ClassRustType::JObject) => quote_spanned! {value.span()=>
-                    ::ez_jni::utils::create_object_array(
-                        ::std::convert::AsRef::<[_]>::as_ref(&(#value)),
-                        #elem_class,
+                if class.is_jobject() => quote_spanned! {value.span()=>
+                    ::ez_jni::ToObject::to_object_env(
+                        &::ez_jni::ObjectArray::<'_, _, &[_]>::from(
+                            ::std::convert::AsRef::<[_]>::as_ref(&(#value)),
+                            #elem_class
+                        ),
                     env)
                 },
                 /* Converting Option<JObject> within elem_conversion is tricky because the closure actually takes a `&Option<JObject>`.
@@ -596,7 +614,7 @@ impl ArrayType {
                    Creating the `new_local_ref()` is ok because `create_object_array_converted()` creates a new_local_frame,
                    where those new references are contained in and are deleted after. */
                 Type::Option { ty: InnerType::Object(class), .. }
-                if (matches!(class, Class::Path { .. })) => create_obj_array(
+                if class.is_jobject() => create_obj_array(
                     &elem_class,
                     quote_spanned! {value.span()=>
                         match _element {
@@ -788,17 +806,25 @@ impl Class {
             _ => ClassRustType::JObject,
         }
     }
-    /// Whether the Rust type of the [`Class`] is a [`JObject`][jni::objects::JObject] or one of its **wrappers**,
+    /// Whether the *Rust type* of the [`Class`] is a [`JObject`][jni::objects::JObject] or one of its **wrappers**,
     /// or if it's another Rust type.
     /// 
     /// See [`Class::rust_type`].
-    pub fn is_jobject(&self) -> bool {
+    pub fn is_object_ref(&self) -> bool {
         match self.rust_type() {
             ClassRustType::JObject | ClassRustType::JClass | ClassRustType::JThrowable | ClassRustType::JString => true,
-            ClassRustType::String => false,
+            ClassRustType::String | ClassRustType::Primitive(_) => false,
         }
     }
     
+    /// Whether the *Rust type* of the [`Class`] is specifically [`JObject`][jni::objects::JObject].
+    pub fn is_jobject(&self) -> bool {
+        match self.rust_type() {
+            ClassRustType::JObject => true,
+            _ => false,
+        }
+    }
+
     /// Whether the [`Class`] can be used for an `Exception`.
     /// 
     /// Returns an [`Error`][syn::Error] if the [`Class`] can't be used.
@@ -960,18 +986,18 @@ impl Conversion for Class {
             Self::PrimitiveObject { ident, ty } => {
                 let ty = RustPrimitive::from(*ty).to_tokens_spanned(ident.span());
                 quote_spanned! {value.span()=>
-                    <#ty as ::ez_jni::FromObject>::from_object_env(&(#value), env).unwrap_display()
+                <#ty as ::ez_jni::FromObject>::from_object_env(&(#value), env).unwrap_display()
                 }
             },
             _ => {
                 let ty = self.type_tokens(false, false, None);
                 if self.is_jobject() {
                     quote_spanned! {value.span()=>
-                        <#ty as ::ez_jni::FromObjectOwned>::from_object_owned_env(#value, env).unwrap_display()
+                <#ty as ::ez_jni::FromObjectOwned>::from_object_owned_env(#value, env).unwrap_display()
                     }
                 } else {
                     quote_spanned! {value.span()=>
-                        <#ty as ::ez_jni::FromObject>::from_object_env(&(#value), env).unwrap_display()
+                <#ty as ::ez_jni::FromObject>::from_object_env(&(#value), env).unwrap_display()
                     }
                 }
             }
@@ -986,17 +1012,17 @@ impl Conversion for Class {
                 }
             }),
             _ => {
-                let ty = self.type_tokens(true, false, None);
-                match self.rust_type() {
-                    ClassRustType::JObject => None,
-                    ClassRustType::JClass
-                    | ClassRustType::JThrowable
-                    | ClassRustType::JString => Some(quote_spanned! {value.span()=>
-                        <#ty as Into<::jni::objects::JObject<'_>>>::into(#value)
-                    }),
-                    ClassRustType::String => Some(quote_spanned! {value.span()=>
-                        <#ty as ::ez_jni::ToObject>::to_object_env(::std::convert::AsRef::<str>::as_ref(&(#value)), env)
-                    }),
+        let ty = self.type_tokens(true, false, None);
+        match self.rust_type() {
+            ClassRustType::JObject => None,
+            ClassRustType::JClass
+            | ClassRustType::JThrowable
+            | ClassRustType::JString => Some(quote_spanned! {value.span()=>
+                <#ty as Into<::jni::objects::JObject<'_>>>::into(#value)
+            }),
+            ClassRustType::String => Some(quote_spanned! {value.span()=>
+                <#ty as ::ez_jni::ToObject>::to_object_env(::std::convert::AsRef::<str>::as_ref(&(#value)), env)
+            }),
                 }
             }
         }
@@ -1010,15 +1036,15 @@ impl Conversion for Class {
                 ClassRustType::JClass => quote_spanned! {self.span()=> ::jni::objects::JClass::<#lifetime> },
                 ClassRustType::JThrowable => quote_spanned! {self.span()=> ::jni::objects::JThrowable::<#lifetime> },
                 ClassRustType::JString => quote_spanned! {self.span()=> ::jni::objects::JString::<#lifetime> },
-                ClassRustType::String =>
-                    if as_ref && is_nested {
-                        // str nested in another type must be used with Reference (&)
+            ClassRustType::String =>
+                if as_ref && is_nested {
+                    // str nested in another type must be used with Reference (&)
                         quote_spanned! {self.span()=> &str }
-                    } else if as_ref {
+                } else if as_ref {
                         quote_spanned! {self.span()=> str }
-                    } else {
+                } else {
                         quote_spanned! {self.span()=> String }
-                    },
+                },
             }
         }
     }

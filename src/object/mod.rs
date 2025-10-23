@@ -11,7 +11,7 @@ use crate::{utils::get_env, Class};
 #[doc(hidden)]
 pub use r#impl::FromObjectOwned;
 pub use impl_exception::JavaException;
-pub use impl_array::{FromArrayObject, ToArrayObject};
+pub use impl_array::{ObjectArray, FromArrayObject, ToArrayObject};
 
 
 #[derive(Debug, Error)]

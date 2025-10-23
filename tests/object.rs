@@ -1,8 +1,7 @@
 mod common;
 
-use ez_jni::{call, new, utils::create_object_array_converted, Class, FromObject, ToObject};
-use jni::{objects::{JObject, JValue}, JNIEnv};
-
+use ez_jni::{call, new, utils::{create_object_array, create_object_array_converted}, Class, FromObject, ObjectArray, ToObject};
+use jni::{objects::{JObject, JString, JValue}, JNIEnv};
 use crate::common::run_with_jnienv;
 
 /// Tests the implementations of FromObject, etc. for *standard library* types.
@@ -72,13 +71,13 @@ fn implementations() { run_with_jnienv(|| {
         Box::<[Option<String>]>::from_object(&obj).unwrap().as_ref()
     );
     // Object Array
-    obj = ["Hello".to_object(), "World".to_object()].to_object();
+    obj = ObjectArray::from(["Hello".to_object(), "World".to_object()], "java/lang/String").to_object();
     assert_eq!(
         ["Hello", "World"],
         Box::<[String]>::from_object(&obj).unwrap().as_ref()
     );
     let _ = Box::<[JObject]>::from_object(&obj).unwrap();
-    obj = ["Hello".to_object(), JObject::null()].to_object();
+    obj = ObjectArray::from(["Hello".to_object(), JObject::null()], "java/lang/String").to_object();
     assert_eq!(
         [Some("Hello".to_string()), None],
         Box::<[Option<String>]>::from_object(&obj).unwrap().as_ref()
@@ -191,19 +190,15 @@ struct MyClass2<'local> {
 
 #[derive(FromObject)]
 #[class(me.test.Test)]
-struct MyClass3 {
+struct MyClass3<'local> {
     #[field(call = memberObject, class = java.lang.Integer)]
     member: Option<i32>,
+    array_field: Box<[Option<JString<'local>>]>
 }
 
 /// Test field FromObject for custom structs
 #[derive(Debug)]
 struct IntWrapper(i32);
-#[derive(Debug, FromObject)]
-#[class(me.test.Test)]
-struct MyWrapperClass {
-    member: IntWrapper
-}
 impl ::ez_jni::FromJValue<'_, '_, '_> for IntWrapper {
     fn from_jvalue_env(val: JValue<'_, '_>, env: &mut JNIEnv<'_>) -> Result<Self, ez_jni::FromJValueError> {
         Ok(Self(i32::from_jvalue_env(val, env)?))
@@ -218,6 +213,12 @@ impl Class for IntWrapper {
     fn class() -> std::borrow::Cow<'static, str> {
         std::borrow::Cow::Borrowed("java/lang/Integer")
     }
+}
+
+#[derive(Debug, FromObject)]
+#[class(me.test.Test)]
+struct MyWrapperClass {
+    member_field: IntWrapper
 }
 
 #[derive(Debug, FromObject, PartialEq, Eq)]
@@ -246,6 +247,7 @@ fn from_object() { run_with_jnienv(|| {
     let mut object = new!(me.test.Test(int(VAL)));
 
     assert_eq!(MyClass::from_object(&object).unwrap().member_field, VAL);
+
     assert_eq!(MyClass1::from_object(&object).unwrap().member, VAL);
     assert_eq!(
         MyClass1::from_object(&object).unwrap()
@@ -256,6 +258,7 @@ fn from_object() { run_with_jnienv(|| {
             .as_ref(),
         ARRAY_VAL
     );
+
     let int = MyClass2::from_object(&object).unwrap().member;
     assert_eq!(call!(int.intValue() -> int), VAL);
     assert_eq!(
@@ -267,8 +270,19 @@ fn from_object() { run_with_jnienv(|| {
             .as_ref(),
         ARRAY_VAL
     );
+
     assert_eq!(MyClass3::from_object(&object).unwrap().member, Some(VAL));
-    assert_eq!(MyWrapperClass::from_object(&object).unwrap().member.0, VAL);
+    assert_eq!(
+        MyClass3::from_object(&object).unwrap()
+            .array_field
+            .iter()
+            .map(|s| String::from_object(s.as_ref().unwrap()).unwrap())
+            .collect::<Box<[_]>>()
+            .as_ref(),
+        ARRAY_VAL
+    );
+
+    assert_eq!(MyWrapperClass::from_object(&object).unwrap().member_field.0, VAL);
 
     object = new!(me.test.Test$SumClass$SumClass1(int(VAL)));
     assert_eq!(
@@ -284,6 +298,7 @@ fn from_object() { run_with_jnienv(|| {
     );
     
     // -- Other implementations for user-defined types
+    // TODO: do all of this with ObjectArray instead of create_object_array()
     let env = &mut ez_jni::utils::get_env();
     // Option
     object = Some(new!(me.test.Test(int(VAL)))).to_object();
@@ -292,9 +307,8 @@ fn from_object() { run_with_jnienv(|| {
         Some(MyClass { member_field: VAL })
     );
     // Array
-    object = create_object_array_converted(
+    object = create_object_array(
         &[new!(me.test.Test(int(1))), new!(me.test.Test(int(2))), new!(me.test.Test(int(3)))],
-        |obj, env| obj.to_object_env(env),
         "me/test/Test",
     env);
     assert_eq!(
@@ -312,9 +326,8 @@ fn from_object() { run_with_jnienv(|| {
         Box::<[Option<MyClass>]>::from_object(&object).unwrap().as_ref()
     );
     // Option Array
-    object = Some(create_object_array_converted(
+    object = Some(create_object_array(
         &[new!(me.test.Test(int(1))), new!(me.test.Test(int(2))), new!(me.test.Test(int(3)))],
-        |obj, env| obj.to_object_env(env),
         "me/test/Test",
     env)).to_object();
     assert_eq!(
@@ -327,7 +340,7 @@ fn from_object() { run_with_jnienv(|| {
             [new!(me.test.Test(int(1))), new!(me.test.Test(int(2))), new!(me.test.Test(int(3)))],
             [new!(me.test.Test(int(4))), new!(me.test.Test(int(5))), new!(me.test.Test(int(6)))],
         ],
-        |objs, env| objs.to_object_env(env),
+        |objs, env| create_object_array(objs, "me/test/Test", env),
         "[Lme/test/Test;",
     env);
     assert_eq!(
@@ -343,7 +356,7 @@ fn from_object() { run_with_jnienv(|| {
             [None, Some(new!(me.test.Test(int(1)))), None],
             [Some(new!(me.test.Test(int(2)))), None, Some(new!(me.test.Test(int(3))))],
         ],
-        |objs, env| objs.to_object_env(env),
+        |objs, env| create_object_array_converted(objs, |obj, env| obj.to_object_env(env), "me/test/Test", env),
         "[Lme/test/Test;",
     env);
     assert_eq!(
@@ -359,7 +372,10 @@ fn from_object() { run_with_jnienv(|| {
             None,
             Some([new!(me.test.Test(int(3))), new!(me.test.Test(int(4)))]),
         ],
-        |obj, env| obj.to_object_env(env),
+        |objs, env| match objs {
+            Some(objs) => create_object_array_converted(objs, |obj, env| obj.to_object_env(env), "me/test/Test", env),
+            None => JObject::null(),
+        },
         "[Lme/test/Test;",
     env);
     assert_eq!(
