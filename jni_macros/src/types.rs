@@ -12,31 +12,6 @@ pub static NULL_KEYWORD: &str = "null";
 pub trait SigType {
     /// The Type that is used in the signature of the method call. e.g. `"V"` or `"Ljava/lang/String;"`.
     fn sig_type(&self) -> LitStr;
-    /// The name of the **function** that maps from a [`JValue`] to a concrete *Rust type*.
-    /// 
-    /// The returned [`Ident`] will always be a single *lowercase character*, hence the function name.
-    /// Must be one of the single-letter functions found in [`JValueGen`](https://docs.rs/jni/latest/jni/objects/enum.JValueGen.html#method.l).
-    /// 
-    /// This method is essentially the *function* that **unwraps** a [`JValue`] given its [*type signature*][SigType::sig_type()].
-    /// 
-    /// [`JValue`]: jni::objects::JValue
-    #[allow(unused)]
-    fn sig_char(&self) -> Ident {
-        let sig_type = self.sig_type();
-        let c = match sig_type.value()
-            .chars()
-            .next()
-            .expect("SigType::sig_type() returned an empty String")
-        {
-            // '[' returns 'l' because Arrays are Objects.
-            '[' | 'L' => 'l',
-            // Primitives
-            c if "BZCSIJFD".contains(c) => c.to_lowercase().next().unwrap(),
-            // In the case that the sig_type was just the Class Path with no L, it can still be allowed.
-            _ => 'l'
-        };
-        Ident::new(&c.to_string(), sig_type.span())
-    }
 }
 
 /// Generate code to perform some kind of necessary conversion between *Rust* and *Java* values.
