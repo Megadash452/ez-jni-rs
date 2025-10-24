@@ -14,7 +14,7 @@ pub trait FromJValueOwned<'obj, 'local> {
 
 /// The same as [`FromJValueOwned`], but used only to convert **fields** in the [`FromObject`] derive macro.
 /// 
-/// This separate is necessary because `call!` does not need to check the *return* Object's **Class**,
+/// This separate trait is necessary because `call!` does not need to check the *return* Object's **Class**,
 /// but the check is needed on a [`JObject`] or [`JThrowable`] field in the [`FromObject`] derive.
 /// To enforce this check, [`JObject`] or [`JThrowable`] do NOT implement this trait, but do implement [`FromJValueOwned`].
 pub trait FieldFromJValue<'obj, 'local> {

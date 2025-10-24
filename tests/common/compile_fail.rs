@@ -30,31 +30,46 @@ pub struct ErrorContent {
     pub preview: &'static str,
 }
 
-/// Attempts to compile the Rust code passed in as a `.rs` file and `panic!`s if compilation succeeds.
-pub fn assert_compile_fail(t: &TestCases, name: &str, input: &str, error: Option<ErrorContent>) {
+/// Attempts to compile the *Rust* **code** passed in as a `.rs` file and `panic!`s if compilation succeeds.
+/// 
+/// Runs [`TestCases::compile_fail()`] for the test.
+pub fn assert_compile_fail(t: &TestCases, name: &str, code: &str, errors: impl AsRef<[ErrorContent]>) {
+    let errors = errors.as_ref();
     let dir = PathBuf::from("./target/tmp/compile_fail");
+
     // Gather resources
     std::fs::create_dir_all(&dir).unwrap();
     let file_path = dir.join(format!("{name}.rs"));
     let error_path = dir.join(format!("{name}.stderr"));
+
     // Write Rust file content
     std::fs::File::create(&file_path)
-        .unwrap_or_else(|err| panic!("Error opeining compile_fail file: {err}"))
+        .unwrap_or_else(|err| panic!("Error opening compile_fail file: {err}"))
         // .write_all(format!("fn main() {{ #[allow(unused, invalid_value)] let env: &mut ::jni::JNIEnv<'_> = unsafe{{std::mem::zeroed()}};\n\n{input}\n\n}}").as_bytes())
-        .write_all(format!("fn main() {{\n\n{input}\n\n}}").as_bytes())
+        .write_all(format!("fn main() {{\n\n{code}\n\n}}").as_bytes())
         .unwrap_or_else(|err| panic!("Error writing to file: {err}"));
+
+    // Set up error file
+    let mut error_file = std::fs::File::create(&error_path)
+        .unwrap_or_else(|err| panic!("Error opening error file: {err}"));
+
     // Write error content
-    if let Some(error) = &error {
+    for (i, error) in errors.iter().enumerate() {
         let code = match error.code {
             Some(code) => format!("[{code}]"),
             None => String::new(),
         };
 
-        std::fs::File::create(&error_path)
-            .unwrap_or_else(|err| panic!("Error opening error file: {err}"))
-            .write_all(format!("error{code}: {}\n --> {}:{}\n{}", error.msg, absolute_path(&file_path).display(), error.loc, error.preview).as_bytes())
+        error_file.write_all(format!("error{code}: {}\n --> {}:{}\n{}", error.msg, absolute_path(&file_path).display(), error.loc, error.preview).as_bytes())
             .unwrap_or_else(|err| panic!("Error writing to error file: {err}"));
+
+        // Put empty line between each error in the file.
+        if i < errors.len() - 1 {
+            error_file.write_all("\n".as_bytes())
+                .unwrap_or_else(|err| panic!("Error writing to error file: {err}"));
+        }
     }
+
     // Run test
     t.compile_fail(&file_path);
 }

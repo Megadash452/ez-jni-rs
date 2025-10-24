@@ -279,6 +279,7 @@ fn return_fail() { run_with_jnienv(|| {
         FromObjectError::Null.to_string().as_str()
     );
     // Incorrect Error Class
+    // FIXME: prevent Java from printing the exception error
     fail_with(
         || { call!(static me.test.Test.throwPrimArray() -> Result<[bool], java.lang.WrongException>).unwrap_err(); },
         FromObjectError::ClassNotFound("java/lang/WrongException".to_string()).to_string().as_str()

@@ -17,7 +17,7 @@ fn from_object_derive() {
             #[field(name = myMember, call = memberField)]
             member: String,
         }
-    "), Some(ErrorContent {
+    "), [ErrorContent {
         code: None,
         msg: "The field attributes 'name' and 'call' are mutually exclusive; only one can be used.",
         loc: "8:6",
@@ -25,7 +25,7 @@ fn from_object_derive() {
           |
         8 |     #[field(name = myMember, call = memberField)]
           |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    ")}));
+    ")}]);
     assert_compile_fail(t, "jobject_require_class", indoc!("
         use ez_jni::FromObject;
         use jni::objects::JObject;
@@ -35,20 +35,44 @@ fn from_object_derive() {
         struct MyClass<'local> {
             member: JObject<'local>,
         }
-    "), Some(ErrorContent {
-        code: Some("E0277"),
-        msg: "the trait bound `JObject<'local>: FieldFromJValue<'_, '_>` is not satisfied",
-        loc: "9:13",
-        preview: indoc!("
-          |
-        9 |     member: JObject<'local>,
-          |             ^^^^^^^^^^^^^^^ the trait `for<'a> FromJValue<'a, '_, '_>` is not implemented for `JObject<'local>`
-          |
-          = help: the trait `FromJValue<'a, '_, '_>` is not implemented for `JObject<'local>`
-                  but trait `FromJValue<'_, '_, '_>` is implemented for `&JObject<'_>`
-          = help: for that trait implementation, expected `&JObject<'_>`, found `JObject<'local>`
-          = note: required for `JObject<'local>` to implement `FieldFromJValue<'_, '_>`
-    ")}));
+    "), [
+        ErrorContent {
+            code: Some("E0277"),
+            msg: "the trait bound `JObject<'local>: FieldFromJValue<'_, '_>` is not satisfied",
+            loc: "9:13",
+            preview: indoc!("
+              |
+            9 |     member: JObject<'local>,
+              |             ^^^^^^^^^^^^^^^ the trait `for<'a> FromJValue<'a, '_, '_>` is not implemented for `JObject<'local>`
+              |
+              = help: the trait `FromJValue<'a, '_, '_>` is not implemented for `JObject<'local>`
+                      but trait `FromJValue<'_, '_, '_>` is implemented for `&JObject<'_>`
+              = help: for that trait implementation, expected `&JObject<'_>`, found `JObject<'local>`
+              = note: required for `JObject<'local>` to implement `FieldFromJValue<'_, '_>`
+        ")},
+        ErrorContent {
+            code: Some("E0277"),
+            msg: "the trait bound `JObject<'local>: FieldFromJValue<'_, '_>` is not satisfied",
+            loc: "9:13",
+            preview: indoc!("
+              |
+            9 |     member: JObject<'local>,
+              |             ^^^^^^^^^^^^^^^ the trait `Class` is not implemented for `JObject<'local>`
+              |
+              = help: the following other types implement trait `Class`:
+                        &T
+                        &[T]
+                        &str
+                        (dyn std::error::Error + 'static)
+                        Box<(dyn std::error::Error + 'static)>
+                        Box<[T]>
+                        JClass<'_>
+                        JString<'_>
+                      and $N others
+              = note: required for `JObject<'local>` to implement `FieldFromJValue<'_, '_>`
+        ")},
+
+    ]);
     assert_compile_fail(t, "jthrowable_require_class", indoc!("
         use ez_jni::FromObject;
         use jni::objects::JThrowable;
@@ -58,7 +82,7 @@ fn from_object_derive() {
         struct MyClass<'local> {
             member: JThrowable<'local>,
         }
-    "), Some(ErrorContent {
+    "), [ErrorContent {
         code: Some("E0277"),
         msg: "the trait bound `JThrowable<'local>: FieldFromJValue<'_, '_>` is not satisfied",
         loc: "9:13",
@@ -71,5 +95,5 @@ fn from_object_derive() {
                   but trait `FromJValue<'_, '_, '_>` is implemented for `&JThrowable<'_>`
           = help: for that trait implementation, expected `&JThrowable<'_>`, found `JThrowable<'local>`
           = note: required for `JThrowable<'local>` to implement `FieldFromJValue<'_, '_>`
-    ")}));
+    ")}]);
 }

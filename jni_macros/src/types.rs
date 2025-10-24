@@ -108,6 +108,7 @@ impl Type {
             _ => self.type_tokens(false, false, None),
         };
         // use the FromJValue implementation
+        // NOTE that using FromJValue is much simpler than using ToJValue in these macros.
         quote_spanned! {value.span()=> <#ty as ::ez_jni::FromJValue>::from_jvalue_env((#value).borrow(), env).unwrap_display() }
     }
 
@@ -132,10 +133,9 @@ impl Type {
             if class.rust_type() == ClassRustType::String => return quote_spanned! {value.span()=>
                 ::jni::objects::JValueGen::borrow(&::ez_jni::ToJValue::to_jvalue_env(::std::convert::AsRef::<str>::as_ref(&(#value)), env))
             },
-            // Wrap in JValue if type is JObject; no need to allocate another object
+            // Force conversion with `ToObject` instead of `ToJValue` if the Type is a Object.
             Self::Assertive(InnerType::Object(class))
-            | Self::Option { ty: InnerType::Object(class), .. }
-            if class.is_object_ref() => {
+            | Self::Option { ty: InnerType::Object(class), .. } => {
                 // JClass or JThrowable can be converted to JObject, which is converted to JValue
                 let converted = class.convert_rust_to_java(value);
                 let converted = converted.as_ref().unwrap_or(value);
@@ -487,10 +487,11 @@ impl ArrayType {
             }
         };
 
+        let elem_val = &quote_spanned!(value.span()=> _element);
         match self.ty.as_ref() {
             // Recursion happens here -v
-            Type::Assertive(InnerType::Array(array)) => get_object_arr(array.convert_java_to_rust(&quote_spanned!(value.span()=> _element))),
-            Type::Option { ty: InnerType::Array(array), .. } => todo!("is this not tested?"),
+            Type::Assertive(InnerType::Array(array)) => get_object_arr(array.convert_java_to_rust(elem_val)),
+            Type::Option { ty: InnerType::Array(_), .. } => get_object_arr(self.ty.convert_java_to_rust(elem_val).unwrap() /* Type::Option always returns Some */),
 
             // Do not enable this because the macros should return standard Rust array types
             /* // Use the FromObject implementation, but specificalyl return an ObjectArray to keep the class data.
@@ -1080,16 +1081,22 @@ impl Conversion for Primitive {
 }
 impl Parse for Primitive {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let ident = input.parse::<Ident>()?;
+        // Speculative parsing is needed because when the Ident is not a Primitive, the input MUST NOT be advanced.
+        let fork = &input.fork();
+
+        let ident = fork.parse::<Ident>()?;
         let ident_str = &ident.to_string();
 
-        if let Ok(ty) = RustPrimitive::from_str(ident_str) {
-            Ok(Self::Rust { ident, ty })
+        let prim = if let Ok(ty) = RustPrimitive::from_str(ident_str) {
+            Self::Rust { ident, ty }
         } else if let Ok(ty) = JavaPrimitive::from_str(ident_str) {
-            Ok(Self::Java { ident, ty })
+            Self::Java { ident, ty }
         } else {
-            Err(syn::Error::new(ident.span(), "Tokens did not match any Rust or Java primitives."))
-        }
+            return Err(syn::Error::new(ident.span(), "Tokens did not match any Rust or Java primitives."));
+        };
+
+        input.advance_to(fork);
+        Ok(prim)
     }
 }
 impl Display for Primitive {

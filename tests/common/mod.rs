@@ -85,12 +85,12 @@ pub fn run_with_jnienv(f: impl FnOnce() + UnwindSafe) {
 }
 
 /// Assert that a test (**f**) should **fail** (`panic!`) with a specific **error message**.
-pub fn fail_with(f: impl Fn(), expected_error: &str) {
-    let result = catch_unwind(AssertUnwindSafe(f));
+pub fn fail_with(f: impl FnOnce() + UnwindSafe, expected_error: &str) {
+    let (result, env) = unsafe { ez_jni::__throw::run_with_jnienv_helper(get_env(), false, |_| f()) };
 
     let msg = result
-        .map_err(|payload| match PanicType::from(payload) {
-            PanicType::Message(msg) => msg.to_string(),
+        .map_err(|panic| match panic.panic {
+            PanicType::Message(msg) => msg.into_owned(),
             PanicType::Object(exception) => {
                 JavaException::from_throwable(<&JThrowable>::from(exception.as_obj()), ez_jni::utils::get_env())
                     .to_string()

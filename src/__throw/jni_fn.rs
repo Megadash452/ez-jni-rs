@@ -24,7 +24,7 @@ use crate::{compile_java_class, utils::get_env, LOCAL_JNIENV_STACK};
 /// All that said, this function is NOT meant to be used by users of the library (thus it's hidden).
 /// This function is used by [ez_jni_macros::jni_fn].
 // This function ***MUST NOT*** `panic!`.
-pub unsafe fn run_with_jnienv<'local, R: Sized>(mut env: JNIEnv<'local>, f: impl FnOnce(&mut JNIEnv<'local>) -> R) -> R {
+pub unsafe fn run_with_jnienv<'local, R: Sized>(mut env: JNIEnv<'local>, f: impl FnOnce(&mut JNIEnv<'local>) -> R + UnwindSafe) -> R {
     let result = unsafe { run_with_jnienv_helper(env, true, f) };
     env = result.1;
 
@@ -37,7 +37,7 @@ pub unsafe fn run_with_jnienv<'local, R: Sized>(mut env: JNIEnv<'local>, f: impl
     }
 }
 /// Same as [`run_with_jnienv()`], but maps the returned `R` to a Java value `J`.
-pub unsafe fn run_with_jnienv_map<'local, R: UnwindSafe, J: Sized>(
+pub unsafe fn run_with_jnienv_map<'local, R, J: Sized>(
     env: JNIEnv<'local>,
     f: impl FnOnce(&mut JNIEnv<'local>) -> R + UnwindSafe,
     // map function should not capture variables
@@ -68,7 +68,11 @@ pub struct JniRunPanic {
 /// 
 /// This is also used in integration tests.
 #[doc(hidden)]
-pub unsafe fn run_with_jnienv_helper<'local, R: Sized>(mut env: JNIEnv<'local>, from_java: bool, f: impl FnOnce(&mut JNIEnv<'local>) -> R) -> (Result<R, JniRunPanic>, JNIEnv<'local>) {
+pub unsafe fn run_with_jnienv_helper<'local, R: Sized>(
+    mut env: JNIEnv<'local>,
+    from_java: bool,
+    f: impl FnOnce(&mut JNIEnv<'local>) -> R + UnwindSafe
+) -> (Result<R, JniRunPanic>, JNIEnv<'local>) {
     #![allow(unused_must_use)]
     thread_local! {
         static PANIC_LOCATION: RefCell<Option<Location>> = const { RefCell::new(None) };
