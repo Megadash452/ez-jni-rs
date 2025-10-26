@@ -167,7 +167,7 @@ pub fn create_object_array<'local, 'other>(items: &[impl AsRef<JObject<'other>>]
 /// which allocates new object references, without unnecessary leakage.
 pub fn create_object_array_converted<'local, T>(
     slice: &[T],
-    elem_conversion: for<'other> fn(&T, &mut JNIEnv<'other>) -> JObject<'other>,
+    elem_conversion: impl for<'other> Fn(&T, &mut JNIEnv<'other>) -> JObject<'other>, // I don't understand why I can't use 'local here, but random lifetime works :/
     elem_class: &str,
     env: &mut JNIEnv<'local>
 ) -> JObject<'local> {

@@ -1,6 +1,7 @@
 mod r#impl;
 mod impl_array;
 mod impl_exception;
+pub(crate) mod array;
 
 use std::cmp::Ordering;
 use jni::{objects::{JObject, JThrowable}, JNIEnv};
@@ -11,8 +12,8 @@ use crate::{utils::get_env, Class};
 #[doc(hidden)]
 pub use r#impl::FromObjectOwned;
 pub use impl_exception::JavaException;
-pub use impl_array::{ObjectArray, FromArrayObject, ToArrayObject};
-
+pub use impl_array::{FromArrayObject, ToArrayObject};
+pub use array::ObjectArray;
 
 #[derive(Debug, Error)]
 pub enum FromObjectError {

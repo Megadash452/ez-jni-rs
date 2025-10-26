@@ -2,6 +2,7 @@ use std::fmt::Display;
 use jni::{objects::{JClass, JObject, JString, JThrowable, JValue, JValueGen, JValueOwned}, JNIEnv};
 use thiserror::Error;
 use crate::{utils::get_env, FromObject, FromObjectError, ObjectArray, Primitive, ToObject};
+use crate::object::array::ObjectArrayElement;
 
 /// Get a **Rust** value from a **Java** value.
 /// 
@@ -286,9 +287,9 @@ where Self: ToObject { impl_to_jvalue_env!(); }
 impl<'local, T, Array> FromJValue<'_, '_, 'local> for ObjectArray<'local, T, Array>
 where Self: for<'a, 'obj> FromObject<'a, 'obj, 'local>,
       Array: AsRef<[T]>,
-          T: for<'obj> AsRef<JObject<'obj>>
+          T: for<'obj> ObjectArrayElement<'obj>
 { impl_from_jvalue_env!(<'_, '_, 'local>); }
 impl<T, Array> ToJValue for ObjectArray<'_, T, Array>
 where Array: AsRef<[T]>,
-          T: for<'obj> AsRef<JObject<'obj>>
+          T: for<'obj> ObjectArrayElement<'obj>
 { impl_to_jvalue_env!(); }

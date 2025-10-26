@@ -298,51 +298,60 @@ fn from_object() { run_with_jnienv(|| {
     );
     
     // -- Other implementations for user-defined types
-    // TODO: do all of this with ObjectArray instead of create_object_array()
-    let env = &mut ez_jni::utils::get_env();
+    
     // Option
     object = Some(new!(me.test.Test(int(VAL)))).to_object();
     assert_eq!(
         Option::<MyClass>::from_object(&object).unwrap(),
         Some(MyClass { member_field: VAL })
     );
-    // Array
-    object = create_object_array(
-        &[new!(me.test.Test(int(1))), new!(me.test.Test(int(2))), new!(me.test.Test(int(3)))],
-        "me/test/Test",
-    env);
-    assert_eq!(
-        [MyClass { member_field: 1 }, MyClass { member_field: 2 }, MyClass { member_field: 3 }],
-        Box::<[MyClass]>::from_object(&object).unwrap().as_ref()
-    );
-    // Array Option
-    object = create_object_array_converted(
-        &[None, Some(new!(me.test.Test(int(1)))), None],
-        |obj, env| obj.to_object_env(env),
-        "me/test/Test",
-    env);
-    assert_eq!(
-        [None, Some(MyClass { member_field: 1 }), None],
-        Box::<[Option<MyClass>]>::from_object(&object).unwrap().as_ref()
-    );
+
     // Option Array
-    object = Some(create_object_array(
+    object = Some(ObjectArray::from(
         &[new!(me.test.Test(int(1))), new!(me.test.Test(int(2))), new!(me.test.Test(int(3)))],
         "me/test/Test",
-    env)).to_object();
+    )).to_object();
     assert_eq!(
         Some(Box::new([MyClass { member_field: 1 }, MyClass { member_field: 2 }, MyClass { member_field: 3 }]) as Box<[_]>),
         Option::<Box<[MyClass]>>::from_object(&object).unwrap()
     );
+}) }
+
+#[test]
+fn from_object_array() {
+    let mut object;
+
+    // 1-Dimensional Array
+    object = ObjectArray::from(
+        &[ new!(me.test.Test(int(1))), new!(me.test.Test(int(2))), new!(me.test.Test(int(3))) ],
+        "me/test/Test"
+    ).to_object();
+    assert_eq!(
+        [MyClass { member_field: 1 }, MyClass { member_field: 2 }, MyClass { member_field: 3 }],
+        Box::<[MyClass]>::from_object(&object).unwrap().as_ref()
+    );
+    // FIXME: Why do I need to specify JObject here if the Default T is already JObject???
+    ObjectArray::<'_, JObject<'_>>::from_object(&object).unwrap();
+
+    // Array Option
+    object = ObjectArray::from(
+        &[None, Some(new!(me.test.Test(int(1)))), None],
+        "me/test/Test",
+    ).to_object();
+    assert_eq!(
+        Box::<[Option<MyClass>]>::from_object(&object).unwrap().as_ref(),
+        [None, Some(MyClass { member_field: 1 }), None]
+    );
+    ObjectArray::<'_, Option<JObject<'_>>>::from_object(&object).unwrap();
+
     // Multidimensional Array
-    object = create_object_array_converted(
+    object = ObjectArray::from(
         &[
             [new!(me.test.Test(int(1))), new!(me.test.Test(int(2))), new!(me.test.Test(int(3)))],
             [new!(me.test.Test(int(4))), new!(me.test.Test(int(5))), new!(me.test.Test(int(6)))],
         ],
-        |objs, env| create_object_array(objs, "me/test/Test", env),
         "[Lme/test/Test;",
-    env);
+    ).to_object();
     assert_eq!(
         Box::<[Box<[MyClass]>]>::from_object(&object).unwrap().as_ref(),
         [
@@ -350,40 +359,41 @@ fn from_object() { run_with_jnienv(|| {
             Box::new([MyClass { member_field: 4 }, MyClass { member_field: 5 }, MyClass { member_field: 6 }]) as Box<[_]>,
         ]
     );
-    // Multidimensional Option Array
-    object = create_object_array_converted(
+    ObjectArray::<'_, Box<[JObject<'_>]>>::from_object(&object).unwrap();
+
+    // 2-Dimensional Option Array
+    object = ObjectArray::from(
         &[
             [None, Some(new!(me.test.Test(int(1)))), None],
             [Some(new!(me.test.Test(int(2)))), None, Some(new!(me.test.Test(int(3))))],
         ],
-        |objs, env| create_object_array_converted(objs, |obj, env| obj.to_object_env(env), "me/test/Test", env),
         "[Lme/test/Test;",
-    env);
+    ).to_object();
     assert_eq!(
+        Box::<[Box<[Option<MyClass>]>]>::from_object(&object).unwrap().as_ref(),
         [
             Box::new([None, Some(MyClass { member_field: 1 }), None]) as Box<[_]>,
             Box::new([Some(MyClass { member_field: 2 }), None, Some(MyClass { member_field: 3 })]) as Box<[_]>,
-        ],
-        Box::<[Box<[Option<MyClass>]>]>::from_object(&object).unwrap().as_ref()
+        ]
     );
-    object = create_object_array_converted(
+    ObjectArray::<'_, Box<[Option<JObject<'_>>]>>::from_object(&object).unwrap();
+
+    // 2-Dimensional Option Array
+    object = ObjectArray::from(
         &[
             Some([new!(me.test.Test(int(1))), new!(me.test.Test(int(2)))]),
             None,
             Some([new!(me.test.Test(int(3))), new!(me.test.Test(int(4)))]),
         ],
-        |objs, env| match objs {
-            Some(objs) => create_object_array_converted(objs, |obj, env| obj.to_object_env(env), "me/test/Test", env),
-            None => JObject::null(),
-        },
         "[Lme/test/Test;",
-    env);
+    ).to_object();
     assert_eq!(
+        Box::<[Option<Box<[MyClass]>>]>::from_object(&object).unwrap().as_ref(),
         [
             Some(Box::new([MyClass { member_field: 1 }, MyClass { member_field: 2 }]) as Box<[_]>),
             None,
             Some(Box::new([MyClass { member_field: 3 }, MyClass { member_field: 4 }]) as Box<[_]>),
-        ],
-        Box::<[Option<Box<[MyClass]>>]>::from_object(&object).unwrap().as_ref()
+        ]
     );
-}) }
+    ObjectArray::<'_, Option<Box<[JObject<'_>]>>>::from_object(&object).unwrap();
+}
