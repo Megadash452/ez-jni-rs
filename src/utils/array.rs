@@ -1,12 +1,81 @@
 //! Contains helper functions for the To/FromObject implementatios in `/src/object/impl_array.rs`.
-use jni::{objects::{AutoLocal, JObject, JObjectArray, JPrimitiveArray}, sys::jsize, JNIEnv};
-use crate::{utils::get_object_class_name, FromObject, FromObjectError, Primitive, __throw::get_jni_error_msg};
+use std::any::{Any, TypeId};
+use jni::{objects::{AutoLocal, JClass, JObject, JObjectArray, JPrimitiveArray, JString, JThrowable}, sys::jsize, JNIEnv};
+use crate::{call, utils::get_object_class_name, FromObject, FromObjectError, FromObjectOwned, Primitive, ToObject, __throw::get_jni_error_msg};
 
+/// TODO: doc
+/// 
+/// This function is certainly a hack, but it's teh only way to do it in stable rust atm
+pub fn get_array_object<'local, T>(obj: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Box<[T]>, FromObjectError>
+where T: for<'a, 'obj> FromObject<'a, 'obj, 'local>
+{
+    match_t::match_t! { match T {
+        bool    | char
+        | u8    | i8
+        | u16   | i16
+        | u32   | i32
+        | u64   | i64
+        | usize | isize
+        | f32   | f64
+            => unsafe { *(&get_java_prim_array::<$T>(obj,env) as &Result<Box<[$T]>, FromObjectError> as *const _ as *const Result<Box<[T]>, FromObjectError>) },
+        JObject | JThrowable | JClass | JString
+            => get_object_array_owned(obj, |obj, env| <$T as FromObjectOwned>::from_object_owned_env(obj, env), env),
+        Option<JObject> | Option<JThrowable> | Option<JClass> | Option<JString>
+            => get_object_array_owned(obj, |obj, env| Ok(if !obj.is_null() {
+                Some(<$T as FromObjectOwned>::from_object_owned_env(obj, env)?)
+            } else {
+                None
+            }), env),
+        _ => get_object_array_converted(obj, env),
+    } }
+}
+
+pub fn create_array_object<'local, T>(slice: &[T], elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local>
+where T: ToObject {
+    match_t::match_t! { match T {
+        bool    | char  | &bool   | &char
+        | u8    | i8    | &u8     | &i8
+        | u16   | i16   | &u16    | &i16
+        | u32   | i32   | &u32    | &i32
+        | u64   | i64   | &u64    | &i64
+        | usize | isize | &usize  | &isize
+        | f32   | f64   | &f32    | &i64
+            => create_java_prim_array(slice as [$T], env),
+        JObject | JThrowable | JClass | JString
+        | &JObject | &JThrowable | &JClass | &JString
+        // TODO: implement metacast (as $T)
+            => create_object_array(slice as [$T], elem_class, env),
+        Option<JObject> | Option<JThrowable> | Option<JClass> | Option<JString>
+        | Option<&JObject> | Option<&JThrowable> | Option<&JClass> | Option<&JString>
+        | &Option<JObject> | &Option<JThrowable> | &Option<JClass> | &Option<JString>
+        | &Option<&JObject> | &Option<&JThrowable> | &Option<&JClass> | &Option<&JString>
+            => todo!(),
+        _ => create_object_array_converted(slice, |t, env| <T as ToObject>::to_object_env(t, env), elem_class, env),
+    } }
+}
+
+/// Get the **element class** of an *Array Object*.
+/// 
+/// Returns a [`ClassMismatch`][FromObjectError::ClassMismatch] error if the object was *not* an *Array Object*.
+pub(crate) fn get_elem_class(obj: &JObject<'_>, env: &mut JNIEnv<'_>) -> Result<String, FromObjectError> {
+    // Get the class of the Array Object.
+    let obj_class = env.get_object_class(obj)
+        .map_err(|err| FromObjectError::Other(format!("Could not get Object's class: {}", get_jni_error_msg(err, env))))?;
+    
+    match call!(obj_class.getComponentType() -> Option<Class>) {
+        Some(elem_class) => Ok(call!(elem_class.getName() -> String)),
+        // When getComponentType() returns null, the class was not an Array class.
+        None => Err(FromObjectError::ClassMismatch {
+            obj_class: call!(obj_class.getName() -> String),
+            target_class: Some("<Object>[]".to_string())
+        })
+    }
+}
 
 /// Create a Java **Array** from a Rust [slice](https://doc.rust-lang.org/std/primitive.slice.html),
 /// where the element `T` is a [`Primitive`].
 /// 
-/// This funciton automatically handles the conversion between the *Rust type* and the *Java type* (e.g. bool -> u8).
+/// This funciton automatically handles the conversion between the *Rust type* and the *Java type* (e.g. u8 -> u8).
 pub(crate) fn create_java_prim_array<'local, T>(slice: &[T], env: &mut JNIEnv<'local>) -> JObject<'local>
 where T: Primitive {
     let slice = match T::CONVERT_RUST_TO_JAVA {

@@ -20,14 +20,24 @@ pub use cfg_if;
 pub(crate) static JNI_CALL_GHOST_EXCEPTION: &str = "JNI Call returned with Error::JavaException, but no exception was found.";
 
 /// A wrapper type for a `java.lang.NoSuchFieldError` **Exception**.
-#[derive(FromObject)]
-#[class(java.lang.NoSuchFieldError)]
+// #[derive(FromObject)]
+// #[class(java.lang.NoSuchFieldError)]
 struct FieldNotFound;
+impl FromObject<'_, '_, '_> for FieldNotFound {
+    fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Self, crate::FromObjectError> {
+        todo!()
+    }
+}
 
 /// A wrapper type for a `java.lang.NoSuchMethodError` **Exception**.
-#[derive(FromObject)]
-#[class(java.lang.NoSuchMethodError)]
+// #[derive(FromObject)]
+// #[class(java.lang.NoSuchMethodError)]
 struct MethodNotFound;
+impl FromObject<'_, '_, '_> for MethodNotFound {
+    fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Self, crate::FromObjectError> {
+        todo!()
+    }
+}
 
 #[cfg(target_os = "android")]
 pub use android::*;

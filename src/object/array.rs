@@ -1,7 +1,6 @@
 use std::{borrow::Cow, marker::PhantomData, ops::{Deref, DerefMut}};
 use jni::objects::{GlobalRef, JClass, JString};
-
-use crate::{__throw::get_jni_error_msg};
+use crate::utils::get_elem_class;
 use super::*;
 
 // TODO: doc
@@ -158,40 +157,18 @@ where Array: AsRef<[T]>,
     pub fn elem_class(&self) -> &str {
         &self.elem_class
     }
-    
-    /// Get the **element class** of an *Array Object*.
-    /// 
-    /// Returns a [`ClassMismatch`][FromObjectError::ClassMismatch] error if the object was *not* an *Array Object*.
-    fn get_elem_class(obj: &JObject<'_>, env: &mut JNIEnv<'_>) -> Result<String, FromObjectError> {
-        // Get the class of the Array Object.
-        let obj_class = env.get_object_class(obj)
-            .map_err(|err| FromObjectError::Other(format!("Could not get Object's class: {}", get_jni_error_msg(err, env))))?;
-        
-        match call!(obj_class.getComponentType() -> Option<Class>) {
-            Some(elem_class) => Ok(call!(elem_class.getName() -> String)),
-            // When getComponentType returns null, the class was not an Array class.
-            None => Err(FromObjectError::ClassMismatch {
-                obj_class: call!(obj_class.getName() -> String),
-                target_class: Some("".to_string())
-            })
-        }
-    }
 }
 impl<'local, T> FromObject<'_, '_, 'local> for ObjectArray<'local, T, Box<[T]>>
-where T: ObjectArrayElement<'local>
-       + FromArrayObject<'local>
-{
+where T: ObjectArrayElement<'local> {
     fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
         // Get the elem_class early to do the class check.
-        let elem_class = Self::get_elem_class(object, env)?;
+        let elem_class = get_elem_class(object, env)?;
         let array = <Box<[T]> as FromObject>::from_object_env(object, env)?;
         Ok(Self::new(array, Cow::Owned(elem_class)))
     }
 }
 impl<'local, T> FromObject<'_, '_, 'local> for ObjectArray<'local, T, Vec<T>>
-where T: ObjectArrayElement<'local>
-       + FromArrayObject<'local>
-{
+where T: ObjectArrayElement<'local> {
     fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
         Ok(ObjectArray::<'local, T, Box<[T]>>::from_object_env(object, env)?
             .convert_array(Vec::from)
@@ -205,9 +182,7 @@ where Array: AsRef<[T]>,
 {
     #[inline(always)]
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        // FIXME: disabling this until i can figure it out
-        // <T as ObjectArrayElement>::create_object_array(self.array.as_ref(), &self.elem_class, env)
-        todo!()
+        crate::utils::create_array_object(&self.array, self.elem_class(), env)
     }
 }
 // impl<T, Array> Class for ObjectArray<'_, T, Array>

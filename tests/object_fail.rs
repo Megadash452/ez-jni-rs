@@ -97,3 +97,21 @@ fn from_object_derive() {
           = note: required for `JThrowable<'local>` to implement `FieldFromJValue<'_, '_>`
     ")}]);
 }
+
+#[test]
+fn no_impl_for_obj_refs() {
+    assert_compile_fail(t, "no_impl_for_jobject", indoc!("
+        use jni::objects::JObject;
+        use ez_jni::{FromObject, ToObject};
+
+        <JObject<'_> as ez_jni::FromObject>::from_object();
+        <JObject<'_> as ez_jni::ToObject>::to_object(&JObject::null());
+    "), [ErrorContent {
+        code: Some(""),
+        msg: "",
+        loc: "",
+        preview: indoc!("
+        
+    ")}]);
+    // TODO: test for other object ref types
+}

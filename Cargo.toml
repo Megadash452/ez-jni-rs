@@ -30,6 +30,7 @@ ez_jni_macros = { path = "./jni_macros", version = "0.7.1" }
 thiserror = "1.0.63"
 utils = { workspace = true }
 itertools = { workspace = true }
+match_t = "0.1.2"
 
 [dev-dependencies]
 jni = { workspace = true }

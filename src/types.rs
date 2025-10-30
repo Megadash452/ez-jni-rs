@@ -128,6 +128,7 @@ impl_class!(for u8 => i8);
 impl_class!(for u16 => i16);
 impl_class!(for u32 => i32);
 impl_class!(for u64 => i64);
+// TODO: isize usize??
 
 impl Primitive for bool {
     const JNAME: &'static str = "boolean";
