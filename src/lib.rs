@@ -42,7 +42,6 @@
 //! so you will only be able to print from functions that have the `env` passed into them.
 
 #[doc(hidden)]
-/// Used only by [`ez_jni_macros`]
 pub mod __throw;
 #[macro_use]
 pub mod utils;
@@ -52,10 +51,11 @@ mod hints;
 mod types;
 extern crate self as ez_jni;
 
-pub use ez_jni_macros::*;
 pub use object::*;
 pub use jvalue::*;
 pub use types::*;
+pub use ez_jni_macros::{jni_fn, call, new, field, class, singleton, FromObject, println};
+pub(crate) use ez_jni_macros::compile_java_class;
 
 use std::{cell::RefCell, collections::LinkedList};
 use jni::JNIEnv;

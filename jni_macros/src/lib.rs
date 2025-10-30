@@ -3,15 +3,14 @@ mod call;
 mod object;
 mod utils;
 mod types;
+mod private;
 
 use call::{ConstructorCall, FieldCall, MethodCall};
 use either::Either;
 use proc_macro::TokenStream;
-use proc_macro2::Span;
-use quote::{quote, ToTokens};
-use syn::{parse::Parser, LitByteStr, LitStr, Token};
-use std::io;
-use utils::item_from_derive_input;
+use quote::quote;
+use syn::{parse::Parser, LitStr, Token};
+use utils::{item_from_derive_input, SynResultExt as _};
 
 /// Define a function in Rust that can be called from external Java code.
 /// 
@@ -92,13 +91,12 @@ use utils::item_from_derive_input;
 /// > Also, ez_jni is not designed for linking Java to native Rust with multiple sources.
 #[proc_macro]
 pub fn jni_fn(input: TokenStream) -> TokenStream {
-    match syn::parse::Parser::parse(jni_fn::jni_fn, input) {
-        Ok(output) => output
+    parse(input, jni_fn::jni_fn)
+        .map(|output| output
             .into_iter()
             .collect::<proc_macro2::TokenStream>()
-            .into(),
-        Err(error) => error.to_compile_error().into()
-    }
+        )
+        .unwrap_tokens()
 }
 
 /// A macro that helps make JNI Method calls less verbose and easier to use in Rust.
@@ -310,12 +308,11 @@ pub fn field(input: TokenStream) -> TokenStream {
 /// This is essentially just a shortcut to [`JNIEnv::find_class()`][jni::JNIEnv::find_class()].
 #[proc_macro]
 pub fn class(input: TokenStream) -> TokenStream {
-    match parse(input, |input| { Ok((
+    parse(input, |input| { Ok((
         input.parse()?, input.parse()?
-    )) }) {
-        Ok((env, class)) => call::get_class(env, class),
-        Err(error) => error.into_compile_error()
-    }.into()
+    )) })
+        .map(|(env, class)| call::get_class(env, class))
+        .unwrap_tokens()
 }
 
 /// Get the *instance Object* of a **Singleton Class** by calling the `getInstance()` *static method* on the Class.
@@ -332,12 +329,11 @@ pub fn class(input: TokenStream) -> TokenStream {
 /// This is essentially just a shortcut to [`call!`] `Class.getInstance() -> Class`.
 #[proc_macro]
 pub fn singleton(input: TokenStream) -> TokenStream {
-    match parse(input, |input| { Ok((
+    parse(input, |input| { Ok((
         input.parse()?, input.parse()?
-    )) }) {
-        Ok((env, class)) => call::singleton_instance(env, class),
-        Err(error) => error.into_compile_error()
-    }.into()
+    )) })
+        .map(|(env, class)| call::singleton_instance(env, class))
+        .unwrap_tokens()
 }
 
 /// See [`ez_jni::FromObject`](https://docs.rs/ez_jni/latest/ez_jni/trait.FromObject.html).
@@ -346,11 +342,9 @@ pub fn from_object(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
 
     match item_from_derive_input(input) {
-        Either::Left(st) => object::derive_struct(st)
-            .unwrap_or_else(|err| err.to_compile_error()),
-        Either::Right(enm) => object::derive_enum(enm)
-            .unwrap_or_else(|err| err.to_compile_error()),
-    }.into()
+        Either::Left(st) => object::derive_struct(st),
+        Either::Right(enm) => object::derive_enum(enm),
+    }.unwrap_tokens()
 }
 
 /// Print output. See [`std::println!`].
@@ -418,6 +412,8 @@ fn parse<T>(input: proc_macro::TokenStream, parser: impl FnOnce(syn::parse::Pars
     Parser::parse(parser, input)
 }
 
+// -- Private: Macros that can only be used by the `ez_jni` crate.
+
 /// Compile a `Java File` into a binary `Class file`.
 /// 
 /// The input is the path to the *java source root*,
@@ -448,47 +444,5 @@ pub fn compile_java_class(input: TokenStream) -> TokenStream {
         Err(err) => return err.to_compile_error().into(),
     };
 
-    match compile_java_class_impl(java_root.value(), &class_path.value()) {
-        Ok(bin) => LitByteStr::new(&bin, Span::call_site()).to_token_stream().into(),
-        Err(err) => syn::Error::new(Span::call_site(), err.to_string()).into_compile_error()
-    }.into()
-}
-fn compile_java_class_impl(java_root: impl AsRef<std::path::Path>, class_path: &str) -> io::Result<Box<[u8]>> {
-    use std::{process::Command, path::PathBuf};
-    use ::utils::{CLASS_DIR, run, absolute_path};
-
-    let java_root = java_root.as_ref();
-    let class_dir = &PathBuf::from(CLASS_DIR);
-        /*  FIXME: If the compiled files of each macro invocation are not separated,
-            the macro's output will also have the output of ALL other macro invocations combined.
-
-            This is not a problem for now since `ez_jni::__throw::catch_throw()` only compiles one Java file,
-            but ideally the macro should only output the files that it's `javac`` command produced.
-            
-            On the other hand, if the files produced by each invocation are separated,
-            Java files won't be able to reference each other.
-
-            The solution is to output all Classes to the same directory (as is done now),
-            but also somehow get `javac` to tell you what files it produced.
-        */
-        // .join(path.to_str().unwrap().replace('/', "$")); // Isolate classes for each macro invocation?
-    let class_file = &class_dir.join(class_path).with_extension("class");
-    
-    // Check if the Class (only the one named the same as the file) exists and abort if it does.
-    if std::fs::exists(class_file)? {
-        return std::fs::read(class_file)
-            .map(|bin| bin.into_boxed_slice())
-    }
-
-    // Create directory where Class binaries are stored (if it's not created already)
-    std::fs::create_dir_all(&class_dir)?;
-    // Compile Java code
-    run(Command::new("javac")
-        .arg(java_root.join(class_path).with_extension("java"))
-        .arg("--class-path").arg(absolute_path(class_dir))
-        .arg("-d").arg(absolute_path(class_dir))
-    )?;
-
-    std::fs::read(class_file)
-        .map(|bin| bin.into_boxed_slice())
+    private::compile_java_class(java_root.value(), &class_path.value()).unwrap_tokens()
 }

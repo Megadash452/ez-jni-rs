@@ -94,6 +94,21 @@ fn tt_variant(tt: &TokenTree) -> &'static str {
     }
 }
 
+pub trait SynResultExt<T>
+where T: ToTokens {
+    fn unwrap_tokens(self) -> proc_macro::TokenStream;
+}
+impl<T> SynResultExt<T> for syn::Result<T>
+where T: ToTokens {
+    #[track_caller]
+    fn unwrap_tokens(self) -> proc_macro::TokenStream {
+        match self {
+            Ok(t) => t.into_token_stream().into(),
+            Err(error) => error.into_compile_error().into()
+        }
+    }
+}
+
 
 /// Collect multiple syn errors into one error.
 pub fn merge_errors(errors: impl IntoIterator<Item = syn::Error>) -> syn::Result<()> {
