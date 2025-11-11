@@ -1,7 +1,7 @@
 //! Contains helper functions for the macros in `/jni_macros/src/object.rs`.
 use std::borrow::Cow;
 use jni::{
-    errors::Error as JNIError, objects::{JClass, JObject, JString, JThrowable, JValue, JValueGen, JValueOwned}, JNIEnv
+    JNIEnv, errors::Error as JNIError, objects::{GlobalRef, JClass, JObject, JString, JThrowable, JValue, JValueGen, JValueOwned}
 };
 use crate::{call, Class, FromJValue, FromJValueError, FromObject, FromObjectError, JValueType, __throw::{get_jni_error_msg, try_catch}, utils::{get_object_class_name, ResultExt}};
 use super::{field_helper, getter_name_and_sig, FieldNotFound, MethodNotFound};
@@ -63,26 +63,7 @@ macro_rules! impl_from_object_class {
     // A class is required to be passed in to convert from a JValue,
     // so FromJValueOwned is not implemented.
     (@class $ty:ty) => {
-        impl<'obj> FromJValueOwned<'obj, '_> for $ty {
-            fn from_jvalue_owned_env(val: JValueOwned<'obj>, env: &mut JNIEnv<'_>) -> Self {
-                let object = jvalue_to_jobject(val);
-                // Call from_object() to perform checks
-                <&Self as FromObject>::from_object_env(&object, env).unwrap_display();
-                Self::from(object)
-            }
-        }
-        impl<'obj> FromJValueOwned<'obj, '_> for Option<$ty> {
-            fn from_jvalue_owned_env(val: JValueOwned<'obj>, env: &mut JNIEnv<'_>) -> Self {
-                let object = jvalue_to_jobject(val);
-                if object.is_null() {
-                    return None;
-                }
-
-                // Call from_object() to perform checks
-                <&$ty as FromObject>::from_object_env(&object, env).unwrap_display();
-                Some(<$ty>::from(object))
-            }
-        }
+        impl_from_object_class!(__owned $ty);
         impl<'obj> FromJValueClass<'obj, '_> for $ty {
             fn from_jvalue_class(val: JValueOwned<'obj>, class: &'static str, env: &mut JNIEnv<'_>) -> Self {
                 let object = <Self as FromJValueOwned>::from_jvalue_owned_env(val, env);
@@ -100,26 +81,7 @@ macro_rules! impl_from_object_class {
     };
     // A class is NOT required, so implements both FromJValueOwned and FromJValueClass
     ($ty:ty) => {
-        impl<'obj> FromJValueOwned<'obj, '_> for $ty {
-            fn from_jvalue_owned_env(val: JValueOwned<'obj>, env: &mut JNIEnv<'_>) -> Self {
-                let object = jvalue_to_jobject(val);
-                // Call from_object() to perform checks
-                <&Self as FromObject>::from_object_env(&object, env).unwrap_display();
-                Self::from(object)
-            }
-        }
-        impl<'obj> FromJValueOwned<'obj, '_> for Option<$ty> {
-            fn from_jvalue_owned_env(val: JValueOwned<'obj>, env: &mut JNIEnv<'_>) -> Self {
-                let object = jvalue_to_jobject(val);
-                if object.is_null() {
-                    return None;
-                }
-
-                // Call from_object() to perform checks
-                <&$ty as FromObject>::from_object_env(&object, env).unwrap_display();
-                Some(<$ty>::from(object))
-            }
-        }
+        impl_from_object_class!(__owned $ty);
         impl<'obj> FieldFromJValue<'obj, '_> for $ty {
             #[inline(always)]
             fn field_from_jvalue_owned_env(val: JValueOwned<'obj>, env: &mut JNIEnv<'_>) -> Self {
@@ -152,11 +114,31 @@ macro_rules! impl_from_object_class {
             }
         }
     };
+    (__owned $ty:ty) => {
+        impl<'obj> FromJValueOwned<'obj, '_> for $ty {
+            fn from_jvalue_owned_env(val: JValueOwned<'obj>, env: &mut JNIEnv<'_>) -> Self {
+                let object = jvalue_to_jobject(val);
+                // Call from_object() to perform checks
+                <Self as $crate::FromObjectOwned>::from_object_owned_env(object, env).unwrap_display()
+            }
+        }
+        impl<'obj> FromJValueOwned<'obj, '_> for Option<$ty> {
+            fn from_jvalue_owned_env(val: JValueOwned<'obj>, env: &mut JNIEnv<'_>) -> Self {
+                let object = jvalue_to_jobject(val);
+                if object.is_null() {
+                    return None;
+                }
+
+                // Call from_object() to perform checks
+                Some(<$ty as $crate::FromObjectOwned>::from_object_owned_env(object, env).unwrap_display())
+            }
+        }
+    }
 }
 impl_from_object_class!(@class JObject<'obj>);
 impl_from_object_class!(@class JThrowable<'obj>);
+impl_from_object_class!(@class GlobalRef);
 impl_from_object_class!(JClass<'obj>);
-// TODO: GlobalRef
 impl_from_object_class!(JString<'obj>);
 
 impl<'obj, 'local, T> FromJValueOwned<'obj, 'local> for T

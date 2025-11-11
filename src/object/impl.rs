@@ -1,46 +1,7 @@
-use ez_jni_macros::new;
-use jni::objects::{JClass, JString};
-use crate::{utils::check_object_class, Class};
+use std::mem::MaybeUninit;
+use jni::objects::{GlobalRef, JClass, JString};
+use crate::{__throw::get_jni_error_msg, Class, new, utils::check_object_class};
 use super::*;
-
-impl<'a, 'obj> FromObject<'a, 'obj, '_> for &'a JObject<'obj> {
-    // The one case where from_object() is implemented manually to avoid calling get_env(). This happens NOWHERE else.
-    // There is no need for a JNIEnv here.
-    fn from_object(object: &'a JObject<'obj>) -> Result<Self, FromObjectError> {
-        if object.is_null() {
-            return Err(FromObjectError::Null);
-        }
-        Ok(object)
-    }
-    #[inline(always)]
-    fn from_object_env(object: &'a JObject<'obj>, _: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        Self::from_object(object)
-    }
-}
-impl ToObject for JObject<'_> {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        env.new_local_ref(self).unwrap()
-    }
-}
-macro_rules! impl_obj_ref {
-    ($ty:ty) => {
-        impl<'a, 'obj> FromObject<'a, 'obj, '_> for &'a $ty {
-            fn from_object_env(object: &'a JObject<'obj>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-                check_object_class(object, &Self::class(), env)?;
-                Ok(Self::from(object))
-            }
-        }
-        impl<'obj> ToObject for $ty {
-            #[inline(always)]
-            fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-                <JObject as ToObject>::to_object_env(self, env)
-            }
-        }
-    };
-}
-impl_obj_ref!(JClass<'obj>);
-impl_obj_ref!(JThrowable<'obj>);
-impl_obj_ref!(JString<'obj>);
 
 impl<T> ToObject for &T
 where T: ToObject {
@@ -48,7 +9,7 @@ where T: ToObject {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         <T as ToObject>::to_object_env(self, env)
     }
-} 
+}
 
 // Implementation for Option type
 
@@ -58,8 +19,7 @@ where T: FromObject<'a, 'obj, 'local> {
         if object.is_null() {
             Ok(None)
         } else {
-            T::from_object_env(object, env)
-                .map(|t| Some(t))
+            T::from_object_env(object, env).map(Some)
         }
     }
 }
@@ -72,6 +32,65 @@ where T: ToObject {
         }
     }
 }
+
+// --- Implementation for Array Types
+
+impl<'local, T> FromObject<'_, '_, 'local> for Box<[T]>
+where T: for<'a, 'obj> FromObject<'a, 'obj, 'local> {
+    #[inline(always)]
+    fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+        todo!()
+    }
+}
+impl<'local, T> FromObject<'_, '_, 'local> for Vec<T>
+where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local> {
+    fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+        Ok(Box::<[T]>::from_object_env(object, env)?.into_vec())
+    }
+}
+impl<'local, const N: usize, T> FromObject<'_, '_, 'local> for [T; N]
+where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local> {
+    fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+        // Get an unized array from the Java Array
+        let boxed = Box::<[T]>::from_object_env(object, env)?;
+        if boxed.len() != N {
+            return Err(FromObjectError::ArrayTooLong { expected_len: N, actual_len: boxed.len() });
+        }
+
+        // SAFETY: taken from uninit crate: https://docs.rs/uninit/0.6.2/uninit/macro.uninit_array.html, but can't use it directly because of generic const
+        let mut array = unsafe { MaybeUninit::<[MaybeUninit<T>; N]>::uninit().assume_init() };
+        // Move the elements from the unsized array to the sized/inline array
+        for (i, v) in boxed.into_iter().enumerate() {
+            array[i] = MaybeUninit::new(v)
+        }
+
+        Ok(array.map(|v| unsafe { v.assume_init() }))
+    }
+}
+
+impl<T> ToObject for [T]
+where T: ToObject + Class + Sized {
+    #[inline(always)]
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        todo!()
+    }
+}
+impl<T> ToObject for &[T]
+where [T]: ToObject {
+    #[inline(always)]
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        <[T] as ToObject>::to_object_env(&self, env)
+    }
+}
+impl<const N: usize, T> ToObject for [T; N]
+where [T]: ToObject {
+    #[inline(always)]
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        <[T] as ToObject>::to_object_env(self.as_ref(), env)
+    }
+}
+
+// ---
 
 // TODO: Support Box for any type
 
@@ -294,7 +313,15 @@ impl<'obj> FromObjectOwned<'obj> for JString<'obj> {
         Ok(Self::from(object))
     }
 }
-#[doc(hidden)]
+impl FromObjectOwned<'_> for GlobalRef {
+    fn from_object_owned_env(object: JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
+        if object.is_null() {
+            return Err(FromObjectError::Null);
+        }
+        env.new_global_ref(object)
+            .map_err(|error| FromObjectError::Other(format!("Failed to create new Global reference: {}", get_jni_error_msg(error, env))))
+    }
+}
 impl<'obj, T> FromObjectOwned<'obj> for Option<T>
 where T: FromObjectOwned<'obj> {
     fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {

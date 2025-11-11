@@ -1,5 +1,4 @@
 mod r#impl;
-mod impl_array;
 mod impl_exception;
 pub(crate) mod array;
 
@@ -12,7 +11,6 @@ use crate::{utils::get_env, Class};
 #[doc(hidden)]
 pub use r#impl::FromObjectOwned;
 pub use impl_exception::JavaException;
-pub use impl_array::{FromArrayObject, ToArrayObject};
 pub use array::ObjectArray;
 
 #[derive(Debug, Error)]

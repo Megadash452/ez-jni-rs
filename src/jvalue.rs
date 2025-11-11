@@ -223,6 +223,22 @@ map_primitive_impl!(for f64, Double, jdouble);
 
 //  -- Objects
 
+// macro_rules! impl_obj_from_jvalue {
+//     ($ty:ty) => {
+//         impl<'a, 'obj> FromJValue<'a, 'obj, '_> for &'a $ty {
+//             fn from_jvalue_env(val: ::jni::objects::JValue<'obj, 'a>, env: &mut ::jni::JNIEnv<'_>) -> ::std::result::Result<Self, ::ez_jni::FromJValueError> {
+//                 match val {
+//                     ::jni::objects::JValue::Object(object) => <Self as ::ez_jni::FromObject>::from_object_env(object, env).map_err(|e| e.into()),
+//                     val => ::std::result::Result::Err(::ez_jni::FromJValueError::IncorrectType {
+//                         actual: ::ez_jni::JValueType::from(val),
+//                         expected: ::ez_jni::JValueType::Object,
+//                     })
+//                 }
+//             }
+//         }
+//     };
+// }
+
 #[doc(hidden)]
 #[macro_export]
 macro_rules! impl_from_jvalue_env {
@@ -247,14 +263,14 @@ macro_rules! impl_to_jvalue_env {
     };
 }
 
-impl<'a, 'obj, 'local> FromJValue<'a, 'obj, 'local> for &'a JObject<'obj> { impl_from_jvalue_env!(<'a, 'obj, 'local>); }
-impl ToJValue for &JObject<'_> { impl_to_jvalue_env!(); }
-impl<'a, 'obj, 'local> FromJValue<'a, 'obj, 'local> for &'a JClass<'obj> { impl_from_jvalue_env!(<'a, 'obj, 'local>); }
-impl ToJValue for &JClass<'_> { impl_to_jvalue_env!(); }
-impl<'a, 'obj, 'local> FromJValue<'a, 'obj, 'local> for &'a JThrowable<'obj> { impl_from_jvalue_env!(<'a, 'obj, 'local>); }
-impl ToJValue for &JThrowable<'_> { impl_to_jvalue_env!(); }
-impl<'a, 'obj, 'local> FromJValue<'a, 'obj, 'local> for &'a JString<'obj> { impl_from_jvalue_env!(<'a, 'obj, 'local>); }
-impl ToJValue for &JString<'_> { impl_to_jvalue_env!(); }
+// impl<'a, 'obj, 'local> FromJValue<'a, 'obj, 'local> for &'a JObject<'obj> { impl_from_jvalue_env!(<'a, 'obj, 'local>); }
+// impl ToJValue for &JObject<'_> { impl_to_jvalue_env!(); }
+// impl<'a, 'obj, 'local> FromJValue<'a, 'obj, 'local> for &'a JClass<'obj> { impl_from_jvalue_env!(<'a, 'obj, 'local>); }
+// impl ToJValue for &JClass<'_> { impl_to_jvalue_env!(); }
+// impl<'a, 'obj, 'local> FromJValue<'a, 'obj, 'local> for &'a JThrowable<'obj> { impl_from_jvalue_env!(<'a, 'obj, 'local>); }
+// impl ToJValue for &JThrowable<'_> { impl_to_jvalue_env!(); }
+// impl<'a, 'obj, 'local> FromJValue<'a, 'obj, 'local> for &'a JString<'obj> { impl_from_jvalue_env!(<'a, 'obj, 'local>); }
+// impl ToJValue for &JString<'_> { impl_to_jvalue_env!(); }
 
 impl<T> ToJValue for &T
 where T: ToJValue {
@@ -287,9 +303,9 @@ where Self: ToObject { impl_to_jvalue_env!(); }
 impl<'local, T, Array> FromJValue<'_, '_, 'local> for ObjectArray<'local, T, Array>
 where Self: for<'a, 'obj> FromObject<'a, 'obj, 'local>,
       Array: AsRef<[T]>,
-          T: for<'obj> ObjectArrayElement<'obj>
+          T: ObjectArrayElement
 { impl_from_jvalue_env!(<'_, '_, 'local>); }
 impl<T, Array> ToJValue for ObjectArray<'_, T, Array>
 where Array: AsRef<[T]>,
-          T: for<'obj> ObjectArrayElement<'obj>
+          T: ObjectArrayElement
 { impl_to_jvalue_env!(); }

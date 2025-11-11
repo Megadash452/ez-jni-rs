@@ -1,7 +1,24 @@
 //! Contains helper functions for the To/FromObject implementatios in `/src/object/impl_array.rs`.
 use jni::{objects::{AutoLocal, JObject, JObjectArray, JPrimitiveArray}, sys::jsize, JNIEnv};
-use crate::{utils::get_object_class_name, FromObject, FromObjectError, Primitive, __throw::get_jni_error_msg};
+use crate::{call, utils::get_object_class_name, FromObject, FromObjectError, Primitive, __throw::get_jni_error_msg};
 
+/// Get the **element class** of an *Array Object*.
+/// 
+/// Returns a [`ClassMismatch`][FromObjectError::ClassMismatch] error if the object was *not* an *Array Object*.
+pub fn get_elem_class(obj: &JObject<'_>, env: &mut JNIEnv<'_>) -> Result<String, FromObjectError> {
+    // Get the class of the Array Object.
+    let obj_class = env.get_object_class(obj)
+        .map_err(|err| FromObjectError::Other(format!("Could not get Object's class: {}", get_jni_error_msg(err, env))))?;
+    
+    match call!(obj_class.getComponentType() -> Option<Class>) {
+        Some(elem_class) => Ok(call!(elem_class.getName() -> String)),
+        // When getComponentType returns null, the class was not an Array class.
+        None => Err(FromObjectError::ClassMismatch {
+            obj_class: call!(obj_class.getName() -> String),
+            target_class: Some("".to_string())
+        })
+    }
+}
 
 /// Create a Java **Array** from a Rust [slice](https://doc.rust-lang.org/std/primitive.slice.html),
 /// where the element `T` is a [`Primitive`].
