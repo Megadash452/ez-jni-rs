@@ -1,6 +1,6 @@
 use std::mem::MaybeUninit;
 use jni::objects::{GlobalRef, JClass, JString};
-use crate::{__throw::get_jni_error_msg, Class, new, utils::check_object_class};
+use crate::{__throw::get_jni_error_msg, Class, utils::{check_object_class, create_java_prim_array, get_java_prim_array}};
 use super::*;
 
 impl<T> ToObject for &T
@@ -41,11 +41,12 @@ impl<'local, T> FromObject<'_, '_, 'local> for Box<[T]>
 where T: for<'a, 'obj> FromObject<'a, 'obj, 'local> {
     #[inline(always)]
     fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
-        todo!()
+        T::__from_array_object(object, env)
     }
 }
 impl<'local, T> FromObject<'_, '_, 'local> for Vec<T>
 where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local> {
+    #[inline(always)]
     fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
         Ok(Box::<[T]>::from_object_env(object, env)?.into_vec())
     }
@@ -74,7 +75,7 @@ impl<T> ToObject for [T]
 where T: ToObject + Class + Sized {
     #[inline(always)]
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        todo!()
+        T::__to_array_object(self, env)
     }
 }
 impl<T> ToObject for &[T]
@@ -142,10 +143,18 @@ impl FromObject<'_, '_, '_> for i8 {
         check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.byteValue() -> byte))
     }
+    #[inline(always)]
+    fn __from_array_object(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Box<[Self]>, FromObjectError> {
+        get_java_prim_array(object, env)
+    }
 }
 impl ToObject for i8 {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        new!(env=> java.lang.Byte(byte(*self)))
+        call!(env=> static java.lang.Byte.valueOf(byte(*self)) -> java.lang.Byte)
+    }
+    #[inline(always)]
+    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>) -> JObject<'local> {
+        create_java_prim_array(slice, env)
     }
 }
 impl FromObject<'_, '_, '_> for i16 {
@@ -153,10 +162,18 @@ impl FromObject<'_, '_, '_> for i16 {
         check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.shortValue() -> short))
     }
+    #[inline(always)]
+    fn __from_array_object(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Box<[Self]>, FromObjectError> {
+        get_java_prim_array(object, env)
+    }
 }
 impl ToObject for i16 {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        new!(env=> java.lang.Short(short(*self)))
+        call!(env=> static java.lang.Short.valueOf(short(*self)) -> java.lang.Short)
+    }
+    #[inline(always)]
+    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>) -> JObject<'local> {
+        create_java_prim_array(slice, env)
     }
 }
 impl FromObject<'_, '_, '_> for i32 {
@@ -164,10 +181,18 @@ impl FromObject<'_, '_, '_> for i32 {
         check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.intValue() -> int))
     }
+    #[inline(always)]
+    fn __from_array_object(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Box<[Self]>, FromObjectError> {
+        get_java_prim_array(object, env)
+    }
 }
 impl ToObject for i32 {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        new!(env=> java.lang.Integer(int(*self)))
+        call!(env=> static java.lang.Integer.valueOf(int(*self)) -> java.lang.Integer)
+    }
+    #[inline(always)]
+    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>) -> JObject<'local> {
+        create_java_prim_array(slice, env)
     }
 }
 impl FromObject<'_, '_, '_> for i64 {
@@ -175,10 +200,18 @@ impl FromObject<'_, '_, '_> for i64 {
         check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.longValue() -> long))
     }
+    #[inline(always)]
+    fn __from_array_object(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Box<[Self]>, FromObjectError> {
+        get_java_prim_array(object, env)
+    }
 }
 impl ToObject for i64 {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        new!(env=> java.lang.Long(long(*self)))
+        call!(env=> static java.lang.Long.valueOf(long(*self)) -> java.lang.Long)
+    }
+    #[inline(always)]
+    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>) -> JObject<'local> {
+        create_java_prim_array(slice, env)
     }
 }
 impl FromObject<'_, '_, '_> for f32 {
@@ -186,10 +219,18 @@ impl FromObject<'_, '_, '_> for f32 {
         check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.floatValue() -> float))
     }
+    #[inline(always)]
+    fn __from_array_object(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Box<[Self]>, FromObjectError> {
+        get_java_prim_array(object, env)
+    }
 }
 impl ToObject for f32 {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        new!(env=> java.lang.Float(float(*self)))
+        call!(env=> static java.lang.Float.valueOf(float(*self)) -> java.lang.Float)
+    }
+    #[inline(always)]
+    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>) -> JObject<'local> {
+        create_java_prim_array(slice, env)
     }
 }
 impl FromObject<'_, '_, '_> for f64 {
@@ -197,10 +238,18 @@ impl FromObject<'_, '_, '_> for f64 {
         check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.doubleValue() -> double))
     }
+    #[inline(always)]
+    fn __from_array_object(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Box<[Self]>, FromObjectError> {
+        get_java_prim_array(object, env)
+    }
 }
 impl ToObject for f64 {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        new!(env=> java.lang.Double(double(*self)))
+        call!(env=> static java.lang.Double.valueOf(double(*self)) -> java.lang.Double)
+    }
+    #[inline(always)]
+    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>) -> JObject<'local> {
+        create_java_prim_array(slice, env)
     }
 }
 
@@ -210,10 +259,18 @@ impl FromObject<'_, '_, '_> for u8 {
         check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.byteValue() -> u8))
     }
+    #[inline(always)]
+    fn __from_array_object(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Box<[Self]>, FromObjectError> {
+        get_java_prim_array(object, env)
+    }
 }
 impl ToObject for u8 {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        new!(env=> java.lang.Byte(u8(*self)))
+        call!(env=> static java.lang.Byte.valueOf(u8(*self)) -> java.lang.Byte)
+    }
+    #[inline(always)]
+    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>) -> JObject<'local> {
+        create_java_prim_array(slice, env)
     }
 }
 impl FromObject<'_, '_, '_> for u16 {
@@ -221,10 +278,18 @@ impl FromObject<'_, '_, '_> for u16 {
         check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.shortValue() -> u16))
     }
+    #[inline(always)]
+    fn __from_array_object(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Box<[Self]>, FromObjectError> {
+        get_java_prim_array(object, env)
+    }
 }
 impl ToObject for u16 {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        new!(env=> java.lang.Short(u16(*self)))
+        call!(env=> static java.lang.Short.valueOf(u16(*self)) -> java.lang.Short)
+    }
+    #[inline(always)]
+    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>) -> JObject<'local> {
+        create_java_prim_array(slice, env)
     }
 }
 impl FromObject<'_, '_, '_> for u32 {
@@ -232,10 +297,18 @@ impl FromObject<'_, '_, '_> for u32 {
         check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.intValue() -> u32))
     }
+    #[inline(always)]
+    fn __from_array_object(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Box<[Self]>, FromObjectError> {
+        get_java_prim_array(object, env)
+    }
 }
 impl ToObject for u32 {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        new!(env=> java.lang.Integer(u32(*self)))
+        call!(env=> static java.lang.Integer.valueOf(u32(*self)) -> java.lang.Integer)
+    }
+    #[inline(always)]
+    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>) -> JObject<'local> {
+        create_java_prim_array(slice, env)
     }
 }
 impl FromObject<'_, '_, '_> for u64 {
@@ -243,10 +316,18 @@ impl FromObject<'_, '_, '_> for u64 {
         check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.longValue() -> u64))
     }
+    #[inline(always)]
+    fn __from_array_object(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Box<[Self]>, FromObjectError> {
+        get_java_prim_array(object, env)
+    }
 }
 impl ToObject for u64 {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        new!(env=> java.lang.Long(u64(*self)))
+        call!(env=> static java.lang.Long.valueOf(u64(*self)) -> java.lang.Long)
+    }
+    #[inline(always)]
+    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>) -> JObject<'local> {
+        create_java_prim_array(slice, env)
     }
 }
 
@@ -257,10 +338,18 @@ impl FromObject<'_, '_, '_> for bool {
         check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.booleanValue() -> boolean))
     }
+    #[inline(always)]
+    fn __from_array_object(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Box<[Self]>, FromObjectError> {
+        get_java_prim_array(object, env)
+    }
 }
 impl ToObject for bool {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        new!(env=> java.lang.Boolean(boolean(*self)))
+        call!(env=> static java.lang.Boolean.valueOf(boolean(*self)) -> java.lang.Boolean)
+    }
+    #[inline(always)]
+    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>) -> JObject<'local> {
+        create_java_prim_array(slice, env)
     }
 }
 
@@ -269,10 +358,18 @@ impl FromObject<'_, '_, '_> for char {
         check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.charValue() -> char))
     }
+    #[inline(always)]
+    fn __from_array_object(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Box<[Self]>, FromObjectError> {
+        get_java_prim_array(object, env)
+    }
 }
 impl ToObject for char {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        new!(env=> java.lang.Character(char(*self)))
+        call!(env=> static java.lang.Character.valueOf(char(*self)) -> java.lang.Character)
+    }
+    #[inline(always)]
+    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>) -> JObject<'local> {
+        create_java_prim_array(slice, env)
     }
 }
 

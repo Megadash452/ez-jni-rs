@@ -140,7 +140,7 @@ pub fn get_object_array<'local>(obj: &JObject<'_>, env: &mut JNIEnv<'local>) -> 
 /// 
 /// Uses [`AutoLocal`] for elements under the hood, so each *object reference* is deleted after each iteration.
 pub fn get_object_array_converted<'local, T>(obj: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Box<[T]>, FromObjectError>
-where T: for<'a, 'obj> FromObject<'a, 'obj, 'local> + 'local {
+where T: for<'a, 'obj> FromObject<'a, 'obj, 'local> {
     get_object_array_owned(obj, |elem, env| {
         T::from_object_env(&AutoLocal::new(elem, env), env)
     }, env)
@@ -159,7 +159,7 @@ where T: for<'a, 'obj> FromObject<'a, 'obj, 'local> + 'local {
 /// If the *Rust Type* should be converted before being added to the *Java Array*
 /// (e.g. the slice is `String`, so it must be converted to `JObject`),
 /// then use [`create_object_array_converted()`] instead.
-pub fn create_object_array<'local, 'other>(items: &[impl AsRef<JObject<'other>>], elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
+pub fn create_object_array<'local, 'obj>(items: &[impl AsRef<JObject<'obj>>], elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
     // Allocate the array
     let array = env.new_object_array(
         items.len() as jsize,

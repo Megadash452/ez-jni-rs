@@ -243,6 +243,7 @@ impl Primitive for i64 {
         JNIEnv::get_long_array_region(env, array, 0, buf)
     }
 }
+// TODO: implement Primitive for isize. but should it be implemented??
 impl Primitive for f32 {
     const JNAME: &'static str = "float";
     const JSIG: char = 'F';
@@ -352,3 +353,4 @@ impl Primitive for u64 {
         <i64 as Primitive>::slice_filler(array, buf, env)
     }
 }
+// TODO: implement Primitive for usize. but should it be implemented??

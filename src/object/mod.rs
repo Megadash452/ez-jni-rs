@@ -6,7 +6,7 @@ use std::cmp::Ordering;
 use jni::{objects::{JObject, JThrowable}, JNIEnv};
 use thiserror::Error;
 use ez_jni_macros::call;
-use crate::{utils::get_env, Class};
+use crate::{Class, utils::{create_object_array_converted, get_env, get_object_array_converted}};
 
 pub(crate) use r#impl::FromObjectOwned;
 pub use impl_exception::JavaException;
@@ -91,7 +91,7 @@ pub enum FromObjectError {
 /// }
 /// ```
 pub trait FromObject<'a, 'obj, 'local>
-where Self: Sized {
+where Self: Sized + 'local {
     /// Construct a [`Self`] by reading data from a *Java Object*.
     /// 
     /// Will [`panic!`] if any of the underlying JNI calls fail.
@@ -109,6 +109,17 @@ where Self: Sized {
     /// 
     /// Only implement *this* method for the trait.
     fn from_object_env(object: &'a JObject<'obj>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError>;
+
+    /// This method contains the underlying implementation of `FromObject` for `Box<[T]>`.
+    /// 
+    /// DO NOT override this method!
+    /// The only types that can override it are primitives.
+    #[doc(hidden)]
+    #[inline(always)]
+    fn __from_array_object(object: &'_ JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Box<[Self]>, FromObjectError>
+    where Self: for<'b, 'o> FromObject<'b, 'o, 'local> { // Why is this bound necessary?? Shouldn't Self already implement the same trait?????
+        get_object_array_converted(object, env)
+    }
 }
 
 /// Allows converting a *Rust type* to a *Java Object*.
@@ -136,4 +147,15 @@ pub trait ToObject {
     /// 
     /// Only implement *this* method for the trait.
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local>;
+
+    /// This method contains the underlying implementation of `ToObject` for `[T]`.
+    /// 
+    /// DO NOT override this method!
+    /// The only types that can override it are primitives.
+    #[doc(hidden)]
+    #[inline(always)]
+    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>) -> JObject<'local>
+    where Self: Class + Sized {
+        create_object_array_converted(slice, Self::to_object_env, &Self::class(), env)
+    }
 }
