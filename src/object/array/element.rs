@@ -85,7 +85,7 @@ where T: FromObject2<'local> {
         Ok(if object.is_null() {
             None
         } else {
-            T::from_object(object, env).map(Some)
+            Some(T::from_object(object, env)?)
         })
     }
 }

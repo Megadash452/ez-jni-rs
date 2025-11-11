@@ -8,8 +8,7 @@ use thiserror::Error;
 use ez_jni_macros::call;
 use crate::{utils::get_env, Class};
 
-#[doc(hidden)]
-pub use r#impl::FromObjectOwned;
+pub(crate) use r#impl::FromObjectOwned;
 pub use impl_exception::JavaException;
 pub use array::ObjectArray;
 

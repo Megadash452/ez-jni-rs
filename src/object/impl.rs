@@ -15,6 +15,7 @@ where T: ToObject {
 
 impl<'a, 'obj, 'local, T> FromObject<'a, 'obj, 'local> for Option<T>
 where T: FromObject<'a, 'obj, 'local> {
+    #[inline(always)]
     fn from_object_env(object: &'a JObject<'obj>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
         if object.is_null() {
             Ok(None)
@@ -25,6 +26,7 @@ where T: FromObject<'a, 'obj, 'local> {
 }
 impl<T> ToObject for Option<T>
 where T: ToObject {
+    #[inline(always)]
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         match self {
             Some(t) => t.to_object_env(env),
@@ -276,40 +278,33 @@ impl ToObject for char {
 
 /// Hidden trait for a macro to use to convert a java value.
 /// Only used in the macros and for element conversion in [`FromArrayObject`].
-#[doc(hidden)]
-pub trait FromObjectOwned<'obj>: Sized {
+pub(crate) trait FromObjectOwned<'obj>: Sized {
     fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError>;
 }
-#[doc(hidden)]
 impl<'obj> FromObjectOwned<'obj> for JObject<'obj> {
     #[inline]
     fn from_object_owned_env(object: JObject<'obj>, _: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        // Call from_object() to perform checks
-        <&Self>::from_object(&object)?;
+        if object.is_null() {
+            return Err(FromObjectError::Null);
+        }
         Ok(object)
     }
 }
-#[doc(hidden)]
 impl<'obj> FromObjectOwned<'obj> for JClass<'obj> {
     fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        // Call from_object() to perform checks
-        <&Self>::from_object_env(&object, env)?;
+        check_object_class(&object, &Self::class(), env)?;
         Ok(Self::from(object))
     }
 }
-#[doc(hidden)]
 impl<'obj> FromObjectOwned<'obj> for JThrowable<'obj> {
     fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        // Call from_object() to perform checks
-        <&Self>::from_object_env(&object, env)?;
+        check_object_class(&object, &Self::class(), env)?;
         Ok(Self::from(object))
     }
 }
-#[doc(hidden)]
 impl<'obj> FromObjectOwned<'obj> for JString<'obj> {
     fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        // Call from_object() to perform checks
-        <&Self>::from_object_env(&object, env)?;
+        check_object_class(&object, &Self::class(), env)?;
         Ok(Self::from(object))
     }
 }
