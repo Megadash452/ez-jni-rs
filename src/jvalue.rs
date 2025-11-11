@@ -1,5 +1,5 @@
 use std::fmt::Display;
-use jni::{objects::{JClass, JObject, JString, JThrowable, JValue, JValueGen, JValueOwned}, JNIEnv};
+use jni::{objects::{JValue, JValueGen, JValueOwned}, JNIEnv};
 use thiserror::Error;
 use crate::{utils::get_env, FromObject, FromObjectError, ObjectArray, Primitive, ToObject};
 use crate::object::array::ObjectArrayElement;
@@ -223,22 +223,6 @@ map_primitive_impl!(for f64, Double, jdouble);
 
 //  -- Objects
 
-// macro_rules! impl_obj_from_jvalue {
-//     ($ty:ty) => {
-//         impl<'a, 'obj> FromJValue<'a, 'obj, '_> for &'a $ty {
-//             fn from_jvalue_env(val: ::jni::objects::JValue<'obj, 'a>, env: &mut ::jni::JNIEnv<'_>) -> ::std::result::Result<Self, ::ez_jni::FromJValueError> {
-//                 match val {
-//                     ::jni::objects::JValue::Object(object) => <Self as ::ez_jni::FromObject>::from_object_env(object, env).map_err(|e| e.into()),
-//                     val => ::std::result::Result::Err(::ez_jni::FromJValueError::IncorrectType {
-//                         actual: ::ez_jni::JValueType::from(val),
-//                         expected: ::ez_jni::JValueType::Object,
-//                     })
-//                 }
-//             }
-//         }
-//     };
-// }
-
 #[doc(hidden)]
 #[macro_export]
 macro_rules! impl_from_jvalue_env {
@@ -246,7 +230,7 @@ macro_rules! impl_from_jvalue_env {
     (<$lt_a:lifetime, $lt_obj:lifetime, $lt_local:lifetime>) => {
         fn from_jvalue_env(val: ::jni::objects::JValue<$lt_obj, $lt_a>, env: &mut ::jni::JNIEnv<$lt_local>) -> ::std::result::Result<Self, ::ez_jni::FromJValueError> {
             match val {
-                ::jni::objects::JValue::Object(object) => <Self as ::ez_jni::FromObject>::from_object_env(object, env).map_err(|e| e.into()),
+                ::jni::objects::JValue::Object(object) => <Self as ::ez_jni::FromObject>::from_object_env(object, env).map_err(::ez_jni::FromJValueError::from),
                 val => ::std::result::Result::Err(::ez_jni::FromJValueError::IncorrectType {
                     actual: ::ez_jni::JValueType::from(val),
                     expected: ::ez_jni::JValueType::Object,
@@ -262,15 +246,6 @@ macro_rules! impl_to_jvalue_env {
         }
     };
 }
-
-// impl<'a, 'obj, 'local> FromJValue<'a, 'obj, 'local> for &'a JObject<'obj> { impl_from_jvalue_env!(<'a, 'obj, 'local>); }
-// impl ToJValue for &JObject<'_> { impl_to_jvalue_env!(); }
-// impl<'a, 'obj, 'local> FromJValue<'a, 'obj, 'local> for &'a JClass<'obj> { impl_from_jvalue_env!(<'a, 'obj, 'local>); }
-// impl ToJValue for &JClass<'_> { impl_to_jvalue_env!(); }
-// impl<'a, 'obj, 'local> FromJValue<'a, 'obj, 'local> for &'a JThrowable<'obj> { impl_from_jvalue_env!(<'a, 'obj, 'local>); }
-// impl ToJValue for &JThrowable<'_> { impl_to_jvalue_env!(); }
-// impl<'a, 'obj, 'local> FromJValue<'a, 'obj, 'local> for &'a JString<'obj> { impl_from_jvalue_env!(<'a, 'obj, 'local>); }
-// impl ToJValue for &JString<'_> { impl_to_jvalue_env!(); }
 
 impl<T> ToJValue for &T
 where T: ToJValue {

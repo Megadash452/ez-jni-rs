@@ -1,7 +1,7 @@
 mod element;
 
 use super::*;
-use std::{borrow::Cow, marker::PhantomData, ops::{Deref, DerefMut}};
+use std::{borrow::{Borrow, BorrowMut, Cow}, fmt::Debug, hash::{Hash, Hasher}, marker::PhantomData, ops::{Deref, DerefMut, Index, IndexMut}, slice::SliceIndex};
 use crate::utils::get_elem_class;
 use element::FromArrayObject;
 pub use element::ObjectArrayElement;
@@ -121,6 +121,7 @@ where Array: AsRef<[T]>,
     }
 }
 
+// TODO: allow Array to be any type that implements FromObject2 (maybe call that trait something better?)
 impl<'local, T> FromObject<'_, '_, 'local> for ObjectArray<'local, T, Box<[T]>>
 where T: FromArrayObject<'local> {
     fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
@@ -156,6 +157,76 @@ where Array: AsRef<[T]>,
 //     }
 // }
 
+impl<T, Array> IntoIterator for ObjectArray<'_, T, Array>
+where Array: AsRef<[T]> + IntoIterator,
+          T: ObjectArrayElement,
+{
+    type Item = <Array as IntoIterator>::Item;
+    type IntoIter = <Array as IntoIterator>::IntoIter;
+
+    #[inline(always)]
+    fn into_iter(self) -> Self::IntoIter {
+        self.array.into_iter()
+    }
+}
+impl<I, T, Array> Index<I> for ObjectArray<'_, T, Array>
+where I: SliceIndex<[T]>,
+  Array: AsRef<[T]>,
+      T: ObjectArrayElement,
+{
+    type Output = <I as SliceIndex<[T]>>::Output;
+
+    #[inline(always)]
+    fn index(&self, index: I) -> &Self::Output {
+        self.as_ref().index(index)
+    }
+}
+impl<I, T, Array> IndexMut<I> for ObjectArray<'_, T, Array>
+where I: SliceIndex<[T]>,
+  Array: AsRef<[T]> + AsMut<[T]>,
+      T: ObjectArrayElement,
+{
+    #[inline(always)]
+    fn index_mut(&mut self, index: I) -> &mut Self::Output {
+        self.as_mut().index_mut(index)
+    }
+}
+impl<T, Array> Hash for ObjectArray<'_, T, Array>
+where Array: AsRef<[T]>,
+        T: ObjectArrayElement + Hash,
+{
+    #[inline(always)]
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.elem_class().hash(state);
+        self.array.as_ref().hash(state);
+    }
+}
+impl<T, Array> PartialEq for ObjectArray<'_, T, Array>
+where Array: AsRef<[T]>,
+        T: ObjectArrayElement + PartialEq,
+{
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.elem_class().eq(other.elem_class())
+        && self.array.as_ref().eq(other.array.as_ref())
+    }
+}
+impl<T, Array> PartialEq<&Self> for ObjectArray<'_, T, Array>
+where Array: AsRef<[T]>,
+        T: ObjectArrayElement + PartialEq,
+{
+    #[inline(always)]
+    fn eq(&self, other: &&Self) -> bool {
+        <Self as PartialEq<Self>>::eq(self, other)
+    }
+}
+impl<T, Array> Eq for ObjectArray<'_, T, Array>
+where Array: AsRef<[T]>,
+        T: ObjectArrayElement + Eq { }
+// Don't implement FromIterator, Ord, PartialOrd
+
+// TODO: implement Clone (new_local_ref), Display (.toString()), Extend<T> (check class) if allowing implicit jni calls without manually passing env
+
 impl<T, Array> AsRef<[T]> for ObjectArray<'_, T, Array>
 where Array: AsRef<[T]>,
           T: ObjectArrayElement
@@ -163,6 +234,15 @@ where Array: AsRef<[T]>,
     #[inline(always)]
     fn as_ref(&self) -> &[T] {
         self.array.as_ref()
+    }
+}
+impl<T, Array> AsMut<[T]> for ObjectArray<'_, T, Array>
+where Array: AsRef<[T]> + AsMut<[T]>,
+          T: ObjectArrayElement
+{
+    #[inline(always)]
+    fn as_mut(&mut self) -> &mut [T] {
+        self.array.as_mut()
     }
 }
 impl<T, Array> Deref for ObjectArray<'_, T, Array>
@@ -183,6 +263,24 @@ where Array: AsRef<[T]>,
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.array
+    }
+}
+impl<T, Array> Borrow<[T]> for ObjectArray<'_, T, Array>
+where Array: AsRef<[T]>,
+          T: ObjectArrayElement
+{
+    #[inline(always)]
+    fn borrow(&self) -> &[T] {
+        self.array.as_ref()
+    }
+}
+impl<T, Array> BorrowMut<[T]> for ObjectArray<'_, T, Array>
+where Array: AsRef<[T]> + AsMut<[T]>,
+          T: ObjectArrayElement
+{
+    #[inline(always)]
+    fn borrow_mut(&mut self) -> &mut [T] {
+        self.array.as_mut()
     }
 }
 

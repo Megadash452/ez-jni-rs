@@ -1,7 +1,7 @@
 use std::mem::MaybeUninit;
-
 use jni::{JNIEnv, objects::{GlobalRef, JClass, JObject, JString, JThrowable}};
 use crate::{FromObjectError, utils::{create_object_array_converted, get_object_array_owned}};
+use super::ObjectArray;
 
 pub trait ObjectArrayElement: ToObject2 { }
 
@@ -15,6 +15,9 @@ impl<T> ObjectArrayElement for &[T]
 where T: ObjectArrayElement { }
 impl<T, const N: usize> ObjectArrayElement for [T; N]
 where T: ObjectArrayElement { }
+impl<T, Array> ObjectArrayElement for ObjectArray<'_, T, Array>
+where Array: AsRef<[T]>,
+      T: ObjectArrayElement { }
 
 trait FromObject2<'local>: ObjectArrayElement + Sized {
     fn from_object(object: JObject<'local>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError>;
@@ -59,6 +62,7 @@ macro_rules! impl_obj_array {
         impl<'local> FromObject2<'local> for $ty {
             #[inline(always)]
             fn from_object(object: JObject<'local>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+                // TODO: maybe skip class check? If we know the Array's element class, we can check if its a descendant of Class, Exception (or whetever class the ObjectRef is for) without having to check it for every element.
                 <Self as crate::FromObjectOwned>::from_object_owned_env(object, env)
             }
         }
@@ -145,6 +149,17 @@ where Box<[T]>: for<'a, 'obj> FromObject2<'local>,
         Ok(array.map(|v| unsafe { v.assume_init() }))
     }
 }
+impl<'local, T, Array> FromObject2<'local> for ObjectArray<'local, T, Array>
+where Array: AsRef<[T]> + FromObject2<'local>,
+      T: ObjectArrayElement,
+{
+    fn from_object(object: JObject<'local>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+        // Get the elem_class early to do the class check.
+        let elem_class = crate::utils::get_elem_class(&object, env)?;
+        let array = <Array as FromObject2>::from_object(object, env)?;
+        Ok(Self::new(array, elem_class.into()))
+    }
+}
 
 impl<T> ToObject2 for [T]
 where T: ToObject2 {
@@ -179,5 +194,16 @@ where [T]: ToObject2 {
     #[inline(always)]
     fn to_object<'local>(&self, elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
         <[T] as ToObject2>::to_object(self, elem_class, env)
+    }
+}
+impl<T, Array> ToObject2 for ObjectArray<'_, T, Array>
+where Array: AsRef<[T]>,
+      T: ObjectArrayElement,
+{
+    fn to_object<'local>(&self, elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        if elem_class != self.elem_class() {
+            panic!("The expected class (\"{elem_class}\") did not match the ObjectArray's stored class (\"{}\")", self.elem_class())
+        }
+        <Self as crate::ToObject>::to_object_env(self, env)
     }
 }
