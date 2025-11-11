@@ -85,19 +85,6 @@ impl Type {
     pub fn convert_jvalue_to_rvalue(&self, value: &TokenStream) -> TokenStream {
         // Get a concrete Rust type to tell FromJValue to use
         let ty = match self {
-            // Check if the Array's inner type is also Array:
-            // Arrays above 1 dimensions have a FromJValue implementation, but using the generated conversion code is more stable
-            Self::Assertive(InnerType::Array(array))
-            | Self::Option { ty: InnerType::Array(array), .. }
-            if matches!(&*array.ty, Type::Assertive(InnerType::Array(_)) | Type::Option { ty: InnerType::Array(_), .. })
-            // Do not enable this because the macros should return standard Rust array types
-            /* // Arrays of Object refs must be converted using ObjectArray
-            || matches!(&*array.ty,
-                Type::Assertive(InnerType::Object(class)) | Type::Option { ty: InnerType::Object(class), .. }
-                if class.is_jobject()
-            ) */
-                // Unwrap JValue to JObject and generate conversion code
-                => return array.convert_java_to_rust(&quote_spanned! {value.span()=> (#value).l().unwrap_jni(env) }),
             // Use special trait to unwrap Owned version of Object
             Self::Assertive(InnerType::Object(class))
             | Self::Option { ty: InnerType::Object(class), .. }
@@ -464,45 +451,9 @@ impl ArrayType {
     /// 
     /// See [`origin`](Conversion::convert_java_to_rust()).
     fn convert_java_to_rust(&self, value: &TokenStream) -> TokenStream {
-        // DRY helpers
-        /// Converts an Object to a Rust slice by calling the respective FromObject implementation.
-        /// **ty** is a Rust type, the type of the elements of the slice.
-        fn from_object(ty: TokenStream, value: &TokenStream) -> TokenStream {
-            quote_spanned! {value.span()=>
-                <::std::boxed::Box<[#ty]> as ::ez_jni::FromObject>::from_object_env(&(#value), env).unwrap_display()
-            }
-        }
-
-        // Build a *Rust Box* from a *Java Array* in which the inner type is an **Object**.
-        // 
-        // **elem_conversion** is code that applies a conversion to each element to convert it from a *Java Object* to a *Rust Type*.
-        // The conversion must use an [`Ident`] **`_element`** as the value.
-        // For example, the **elem_conversion** argument can be
-        // ```ignore
-        // class.convert_java_to_rust(&quote!(_element))
-        // ```
-        let get_object_arr = |elem_conversion: TokenStream| -> TokenStream {
-            quote_spanned! {value.span() =>
-                ::ez_jni::utils::get_object_array_owned(&(#value), |_element, #[allow(unused_variables)] env| ::std::result::Result::Ok(#elem_conversion), env).unwrap_display()
-            }
-        };
-
-        let elem_val = &quote_spanned!(value.span()=> _element);
-        match self.ty.as_ref() {
-            // Recursion happens here -v
-            Type::Assertive(InnerType::Array(array)) => get_object_arr(array.convert_java_to_rust(elem_val)),
-            Type::Option { ty: InnerType::Array(_), .. } => get_object_arr(self.ty.convert_java_to_rust(elem_val).unwrap() /* Type::Option always returns Some */),
-
-            // Do not enable this because the macros should return standard Rust array types
-            /* // Use the FromObject implementation, but specificalyl return an ObjectArray to keep the class data.
-            Type::Assertive(InnerType::Object(class))
-            | Type::Option { ty: InnerType::Object(class), .. }
-            if class.is_jobject() => quote_spanned! {value.span()=>
-                <::ez_jni::ObjectArray<'_> as ::ez_jni::FromObject>::from_object_env(&(#value), env).unwrap_display()
-            }, */
-
-            // Convert the java value using the FromObject trait
-            ty => from_object(ty.type_tokens(false, true, None), value),
+        let array_ty = self.type_tokens(false, false, None);
+        quote_spanned! {value.span()=>
+            <#array_ty as ::ez_jni::FromObject>::from_object_env(&(#value), env).unwrap_display()
         }
     }
     /// Returns code that converts a *Rust slice* to a *Java Array*.
@@ -513,16 +464,6 @@ impl ArrayType {
     /// 
     /// See [`origin`](Conversion::convert_java_to_rust()).
     fn convert_rust_to_java(&self, value: &TokenStream) -> TokenStream {
-        // DRY helpers
-        /// Converts a Rust slice to an Object by calling the respective ToObject implementation.
-        /// **ty** is a Rust type, the type of the elements of the slice (in this case its either a primitve or `_`).
-        fn to_object(ty: &Type, value: &TokenStream) -> TokenStream {
-            let ty = ty.type_tokens(true, true, None);
-            quote_spanned! {value.span()=>
-                ::ez_jni::ToObject::to_object_env(::std::convert::AsRef::<[#ty]>::as_ref(&(#value)), env)
-            }
-        }
-
         /// Build a *Java Array* from a Rust *slice*.
         /// The Array' inner type is **Object**.
         /// 
@@ -546,31 +487,23 @@ impl ArrayType {
             let elem_class = self.ty.sig_type();
 
             match &*self.ty {
-                // Here there is no elem_conversion since the elements are already JObject.
+                // Use the ToObject implementation for ObjectArray with any Rust slice.
                 Type::Assertive(InnerType::Object(class))
-                if class.is_jobject() => quote_spanned! {value.span()=>
-                    ::ez_jni::ToObject::to_object_env(
-                        &::ez_jni::ObjectArray::<'_, _, &[_]>::from(
-                            ::std::convert::AsRef::<[_]>::as_ref(&(#value)),
-                            #elem_class
-                        ),
-                    env)
-                },
-                /* Converting Option<JObject> within elem_conversion is tricky because the closure actually takes a `&Option<JObject>`.
-                   This can be mitigated by manually matching the Option and calling `env.new_local_ref()`.
-                   Creating the `new_local_ref()` is ok because `create_object_array_converted()` creates a new_local_frame,
-                   where those new references are contained in and are deleted after. */
-                Type::Option { ty: InnerType::Object(class), .. }
-                if class.is_jobject() => create_obj_array(
-                    &elem_class,
+                | Type::Option { ty: InnerType::Object(class), .. }
+                if class.is_object_ref() => {
+                    // TODO: should the ObjectArrayElement be the concrete type extpected by the Class? Or should it not care?
+                    // // The Object Ref's concrete Rust type varies depending on the expected Class. See [`Class::rust_type()`].
+                    // let obj_rust_ty = self.ty.type_tokens(false, false, None);
+                    let class = class.to_jni_class_path();
                     quote_spanned! {value.span()=>
-                        match _element {
-                            ::std::option::Option::Some(obj) => ::jni::JNIEnv::new_local_ref(env, obj).unwrap_jni(env),
-                            ::std::option::Option::None => ::jni::objects::JObject::null(),
-                        }
-                    },
-                    value
-                ),
+                        ::ez_jni::ToObject::to_object_env(
+                            &::ez_jni::ObjectArray::<'_/* , #obj_rust_ty, &[#obj_rust_ty] */>::new_ref(
+                                ::std::convert::AsRef::<[_ /* #obj_rust_ty */]>::as_ref(&(#value)),
+                                #class,
+                            ),
+                        env)
+                    }
+                },
                 // Convert elements using the Type's Conversion.
                 _ => create_obj_array(
                     &elem_class,
@@ -580,7 +513,10 @@ impl ArrayType {
                 )
             }
         } else {
-            to_object(&self.ty, value)
+            let ty = self.ty.type_tokens(true, true, None);
+            quote_spanned! {value.span()=>
+                ::ez_jni::ToObject::to_object_env(::std::convert::AsRef::<[#ty]>::as_ref(&(#value)), env)
+            }
         }
     }
 }
@@ -607,13 +543,20 @@ impl Conversion for ArrayType {
     /// See [`origin`][Conversion::type_tokens()].
     fn type_tokens(&self, as_ref: bool, is_nested: bool, lifetime: Option<syn::Lifetime>) -> TokenStream {
         // vvv Recursion occurs here vvv
-        let ty = self.ty.type_tokens(as_ref, true, lifetime);
-        if as_ref && is_nested {
-            quote_spanned! {self.span()=> &[#ty] }
-        } else if as_ref {
-            quote_spanned! {self.span()=> [#ty] }
-        } else {
-            quote_spanned! {self.span()=> ::std::boxed::Box<[#ty]> }
+        let elem_ty = self.ty.type_tokens(as_ref, true, lifetime);
+        match &*self.ty {
+            // Arrays of Object Refs use the special ObjectArray type so it can store the Array's element Class.
+            Type::Assertive(InnerType::Object(_))
+            | Type::Option { ty: InnerType::Object(_), .. } => {
+                quote_spanned! {self.span()=> ::ez_jni::ObjectArray<'_, #elem_ty> }
+            }
+            _ => if as_ref && is_nested {
+                quote_spanned! {self.span()=> &[#elem_ty] }
+            } else if as_ref {
+                quote_spanned! {self.span()=> [#elem_ty] }
+            } else {
+                quote_spanned! {self.span()=> ::std::boxed::Box<[#elem_ty]> }
+            }
         }
     }
 }

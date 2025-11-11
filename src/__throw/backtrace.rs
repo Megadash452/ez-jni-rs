@@ -223,7 +223,8 @@ fn parse_backtrace_frames<'a>(backtrace: &'a str) -> Result<Box<[(&'a str, Optio
 /// Some verbose Rust stack frames are also ommited to make it simpler for an user to interpret the data.
 pub fn inject_backtrace(exception: &JThrowable<'_>, backtrace: &[BacktraceElement], env: &mut JNIEnv<'_>) {
     // Find the Native Method StackTraceElement
-    let mut stacktrace = call!(env=> exception.getStackTrace() -> [java.lang.StackTraceElement]).into_vec();
+    let mut stacktrace = call!(env=> exception.getStackTrace() -> [java.lang.StackTraceElement])
+        .convert_array(Vec::from);
     let index = match stacktrace.iter()
         .enumerate()
         .find(|(_, frame)| call!(env=> frame.isNativeMethod() -> bool))

@@ -54,10 +54,7 @@ pub struct ObjectArray<'obj, T = JObject<'obj>, Array = Box<[T]>>
 where Array: AsRef<[T]>,
           T: ObjectArrayElement
 {
-    // TODO: Remove all implementations for other Object Reference types?
-    // TODO: How to do Multi-dimensional array?
-    // TODO: allow options too
-    // TODO: maybe add local_frame when creating, and pop_local frame when dropped
+    // TODO: maybe add local_frame when creating, and pop_local frame when dropped. Essentially, the struct holds a local frame.
     // TODO: Maybe implement it with an enum with states of an Array Object and a Rust array. When Rust needs to operate on the array it calls the necessary jni methods.
     // FIXME: Maybe also do Cow<[T]> and remove the Array generic?
     array: Array,
@@ -65,17 +62,26 @@ where Array: AsRef<[T]>,
     _t: PhantomData<T>,
     _lt: PhantomData<&'obj ()>
 }
+impl<'a, 'obj, T> ObjectArray<'obj, T, &'a [T]>
+where T: ObjectArrayElement {
+    /// Create a new [`ObjectArray`], but only borrowing existing values.
+    /// 
+    /// Does not create any new Rust values or Java *Object References*.
+    /// 
+    /// This is useful when you need to convert a Rust *slice of Object References* to a Java *Array Object*.
+    #[inline(always)]
+    pub fn new_ref(slice: &'a [T], elem_class: &'static str) -> Self {
+        Self::new(slice, Cow::Borrowed(elem_class))
+    }
+}
 impl<'obj, T, Array> ObjectArray<'obj, T, Array>
 where Array: AsRef<[T]>,
           T: ObjectArrayElement
 {
     #[inline(always)]
     fn new(array: Array, elem_class: Cow<'static, str>) -> Self {
+        // TODO: check class of elements?
         Self { array, elem_class, _t: PhantomData, _lt: PhantomData }
-    }
-    #[inline(always)]
-    pub fn from(array: Array, elem_class: &'static str) -> Self {
-        Self::new(array, Cow::Borrowed(elem_class))
     }
     
     /// Helps with converting the `Array` type to a different *Rust type*.
@@ -102,6 +108,11 @@ where Array: AsRef<[T]>,
     pub fn array_mut(&mut self) -> &mut Array {
         &mut self.array
     }
+    /// Returns the **owned** inner `Array`.
+    #[inline(always)]
+    pub fn take_array(self) -> Array {
+        self.array
+    }
     
     /// Returns the **class** of the [`JObject`] Array elements.
     #[inline(always)]
@@ -109,6 +120,7 @@ where Array: AsRef<[T]>,
         &self.elem_class
     }
 }
+
 impl<'local, T> FromObject<'_, '_, 'local> for ObjectArray<'local, T, Box<[T]>>
 where T: FromArrayObject<'local> {
     fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
@@ -126,7 +138,6 @@ where T: element::FromArrayObject<'local> {
         )
     }
 }
-
 impl<'obj, T, Array> ToObject for ObjectArray<'obj, T, Array>
 where Array: AsRef<[T]>,
           T: ObjectArrayElement
@@ -199,40 +210,40 @@ mod tests {
     /// Tests that all applicable types can be used as array elements.
     #[test]
     fn object_array_element_types() {
-        let _: ObjectArray<'_, JObject, &[_]> = ObjectArray::from(&[], "/");
-        let _: ObjectArray<'_, JThrowable, &[_]> = ObjectArray::from(&[], "/");
-        let _: ObjectArray<'_, JClass, &[_]> = ObjectArray::from(&[], "/");
-        let _: ObjectArray<'_, JString, &[_]> = ObjectArray::from(&[], "/");
-        let _: ObjectArray<'_, GlobalRef, &[_]> = ObjectArray::from(&[], "/");
+        let _: ObjectArray<'_, JObject, &[_]> = ObjectArray::new_ref(&[], "/");
+        let _: ObjectArray<'_, JThrowable, &[_]> = ObjectArray::new_ref(&[], "/");
+        let _: ObjectArray<'_, JClass, &[_]> = ObjectArray::new_ref(&[], "/");
+        let _: ObjectArray<'_, JString, &[_]> = ObjectArray::new_ref(&[], "/");
+        let _: ObjectArray<'_, GlobalRef, &[_]> = ObjectArray::new_ref(&[], "/");
         // Option
-        let _: ObjectArray<'_, Option<JObject>, &[_]> = ObjectArray::from(&[], "/");
-        let _: ObjectArray<'_, Option<JThrowable>, &[_]> = ObjectArray::from(&[], "/");
-        let _: ObjectArray<'_, Option<JClass>, &[_]> = ObjectArray::from(&[], "/");
-        let _: ObjectArray<'_, Option<JString>, &[_]> = ObjectArray::from(&[], "/");
-        let _: ObjectArray<'_, Option<GlobalRef>, &[_]> = ObjectArray::from(&[], "/");
+        let _: ObjectArray<'_, Option<JObject>, &[_]> = ObjectArray::new_ref(&[], "/");
+        let _: ObjectArray<'_, Option<JThrowable>, &[_]> = ObjectArray::new_ref(&[], "/");
+        let _: ObjectArray<'_, Option<JClass>, &[_]> = ObjectArray::new_ref(&[], "/");
+        let _: ObjectArray<'_, Option<JString>, &[_]> = ObjectArray::new_ref(&[], "/");
+        let _: ObjectArray<'_, Option<GlobalRef>, &[_]> = ObjectArray::new_ref(&[], "/");
         // 2-Dimensional Array
-        let _: ObjectArray<'_, &[JObject], &[_]> = ObjectArray::from(&[], "/");
-        let _: ObjectArray<'_, &[JThrowable], &[_]> = ObjectArray::from(&[], "/");
-        let _: ObjectArray<'_, &[JClass], &[_]> = ObjectArray::from(&[], "/");
-        let _: ObjectArray<'_, &[JString], &[_]> = ObjectArray::from(&[], "/");
-        let _: ObjectArray<'_, &[GlobalRef], &[_]> = ObjectArray::from(&[], "/");
+        let _: ObjectArray<'_, &[JObject], &[_]> = ObjectArray::new_ref(&[], "/");
+        let _: ObjectArray<'_, &[JThrowable], &[_]> = ObjectArray::new_ref(&[], "/");
+        let _: ObjectArray<'_, &[JClass], &[_]> = ObjectArray::new_ref(&[], "/");
+        let _: ObjectArray<'_, &[JString], &[_]> = ObjectArray::new_ref(&[], "/");
+        let _: ObjectArray<'_, &[GlobalRef], &[_]> = ObjectArray::new_ref(&[], "/");
         // 2-Dimensional Option Array
-        let _: ObjectArray<'_, &[Option<JObject>], &[_]> = ObjectArray::from(&[], "/");
-        let _: ObjectArray<'_, &[Option<JThrowable>], &[_]> = ObjectArray::from(&[], "/");
-        let _: ObjectArray<'_, &[Option<JClass>], &[_]> = ObjectArray::from(&[], "/");
-        let _: ObjectArray<'_, &[Option<JString>], &[_]> = ObjectArray::from(&[], "/");
-        let _: ObjectArray<'_, &[Option<GlobalRef>], &[_]> = ObjectArray::from(&[], "/");
+        let _: ObjectArray<'_, &[Option<JObject>], &[_]> = ObjectArray::new_ref(&[], "/");
+        let _: ObjectArray<'_, &[Option<JThrowable>], &[_]> = ObjectArray::new_ref(&[], "/");
+        let _: ObjectArray<'_, &[Option<JClass>], &[_]> = ObjectArray::new_ref(&[], "/");
+        let _: ObjectArray<'_, &[Option<JString>], &[_]> = ObjectArray::new_ref(&[], "/");
+        let _: ObjectArray<'_, &[Option<GlobalRef>], &[_]> = ObjectArray::new_ref(&[], "/");
         // 3-Dimensional Array
-        let _: ObjectArray<'_, &[&[JObject]], &[_]> = ObjectArray::from(&[], "/");
-        let _: ObjectArray<'_, &[&[JThrowable]], &[_]> = ObjectArray::from(&[], "/");
-        let _: ObjectArray<'_, &[&[JClass]], &[_]> = ObjectArray::from(&[], "/");
-        let _: ObjectArray<'_, &[&[JString]], &[_]> = ObjectArray::from(&[], "/");
-        let _: ObjectArray<'_, &[&[GlobalRef]], &[_]> = ObjectArray::from(&[], "/");
+        let _: ObjectArray<'_, &[&[JObject]], &[_]> = ObjectArray::new_ref(&[], "/");
+        let _: ObjectArray<'_, &[&[JThrowable]], &[_]> = ObjectArray::new_ref(&[], "/");
+        let _: ObjectArray<'_, &[&[JClass]], &[_]> = ObjectArray::new_ref(&[], "/");
+        let _: ObjectArray<'_, &[&[JString]], &[_]> = ObjectArray::new_ref(&[], "/");
+        let _: ObjectArray<'_, &[&[GlobalRef]], &[_]> = ObjectArray::new_ref(&[], "/");
         // 3-Dimensional Mixed
-        let _: ObjectArray<'_, &[Box<[JObject]>], &[_]> = ObjectArray::from(&[], "/");
-        let _: ObjectArray<'_, &[Box<[JThrowable]>], &[_]> = ObjectArray::from(&[], "/");
-        let _: ObjectArray<'_, &[Box<[JClass]>], &[_]> = ObjectArray::from(&[], "/");
-        let _: ObjectArray<'_, &[Box<[JString]>], &[_]> = ObjectArray::from(&[], "/");
-        let _: ObjectArray<'_, &[Box<[GlobalRef]>], &[_]> = ObjectArray::from(&[], "/");
+        let _: ObjectArray<'_, &[Box<[JObject]>], &[_]> = ObjectArray::new_ref(&[], "/");
+        let _: ObjectArray<'_, &[Box<[JThrowable]>], &[_]> = ObjectArray::new_ref(&[], "/");
+        let _: ObjectArray<'_, &[Box<[JClass]>], &[_]> = ObjectArray::new_ref(&[], "/");
+        let _: ObjectArray<'_, &[Box<[JString]>], &[_]> = ObjectArray::new_ref(&[], "/");
+        let _: ObjectArray<'_, &[Box<[GlobalRef]>], &[_]> = ObjectArray::new_ref(&[], "/");
     }
 }

@@ -71,13 +71,13 @@ fn implementations() { run_with_jnienv(|| {
         Box::<[Option<String>]>::from_object(&obj).unwrap().as_ref()
     );
     // Object Array
-    obj = ObjectArray::from(["Hello".to_object(), "World".to_object()], "java/lang/String").to_object();
+    obj = ObjectArray::new_ref(["Hello".to_object(), "World".to_object()], "java/lang/String").to_object();
     assert_eq!(
         ["Hello", "World"],
         Box::<[String]>::from_object(&obj).unwrap().as_ref()
     );
     let _ = Box::<[JObject]>::from_object(&obj).unwrap();
-    obj = ObjectArray::from(["Hello".to_object(), JObject::null()], "java/lang/String").to_object();
+    obj = ObjectArray::new_ref(["Hello".to_object(), JObject::null()], "java/lang/String").to_object();
     assert_eq!(
         [Some("Hello".to_string()), None],
         Box::<[Option<String>]>::from_object(&obj).unwrap().as_ref()
@@ -307,7 +307,7 @@ fn from_object() { run_with_jnienv(|| {
     );
 
     // Option Array
-    object = Some(ObjectArray::from(
+    object = Some(ObjectArray::new_ref(
         &[new!(me.test.Test(int(1))), new!(me.test.Test(int(2))), new!(me.test.Test(int(3)))],
         "me/test/Test",
     )).to_object();
@@ -322,7 +322,7 @@ fn from_object_array() {
     let mut object;
 
     // 1-Dimensional Array
-    object = ObjectArray::from(
+    object = ObjectArray::new_ref(
         &[ new!(me.test.Test(int(1))), new!(me.test.Test(int(2))), new!(me.test.Test(int(3))) ],
         "me/test/Test"
     ).to_object();
@@ -334,7 +334,7 @@ fn from_object_array() {
     ObjectArray::<'_, JObject<'_>>::from_object(&object).unwrap();
 
     // Array Option
-    object = ObjectArray::from(
+    object = ObjectArray::new_ref(
         &[None, Some(new!(me.test.Test(int(1)))), None],
         "me/test/Test",
     ).to_object();
@@ -345,7 +345,7 @@ fn from_object_array() {
     ObjectArray::<'_, Option<JObject<'_>>>::from_object(&object).unwrap();
 
     // Multidimensional Array
-    object = ObjectArray::from(
+    object = ObjectArray::new_ref(
         &[
             [new!(me.test.Test(int(1))), new!(me.test.Test(int(2))), new!(me.test.Test(int(3)))],
             [new!(me.test.Test(int(4))), new!(me.test.Test(int(5))), new!(me.test.Test(int(6)))],
@@ -362,7 +362,7 @@ fn from_object_array() {
     ObjectArray::<'_, Box<[JObject<'_>]>>::from_object(&object).unwrap();
 
     // 2-Dimensional Option Array
-    object = ObjectArray::from(
+    object = ObjectArray::new_ref(
         &[
             [None, Some(new!(me.test.Test(int(1)))), None],
             [Some(new!(me.test.Test(int(2)))), None, Some(new!(me.test.Test(int(3))))],
@@ -379,7 +379,7 @@ fn from_object_array() {
     ObjectArray::<'_, Box<[Option<JObject<'_>>]>>::from_object(&object).unwrap();
 
     // 2-Dimensional Option Array
-    object = ObjectArray::from(
+    object = ObjectArray::new_ref(
         &[
             Some([new!(me.test.Test(int(1))), new!(me.test.Test(int(2)))]),
             None,
