@@ -19,7 +19,8 @@ where R: AsRef<JObject<'obj>> + 'obj {
 } */
 
 /// A *Rust representation* of an **Array** that holds [`JObject`]s.
-/// It allows storing 
+/// It allows storing *multi-dimensional* Rust array types,
+/// along with the **class** that the [`JObject`] should have.
 /// 
 /// ## Types
 /// 
@@ -27,11 +28,11 @@ where R: AsRef<JObject<'obj>> + 'obj {
 /// By default, the `Array` is a **boxed slice** (`Box<[T]>`) and `T` is [`JObject`],
 /// but these two types can be anything that fits the constraints of the generics:
 /// 
-/// The `Array` can be any type that can read as a **slice** of `T`,
+/// * The `Array` can be any type that can be read as a **slice** of `T`,
 /// but when calling [`from_object()`][FromObject::from_object_env()],
 /// it can only return an `Array` type of either [`Vec<T>`] or `Box<[T]>`.
 /// 
-/// The element `T` can be any *JNI Object reference type* (i.e. [`JObject`], `&JObject`, [`GlobalRef`][jni::objects::GlobalRef], etc.).
+/// * The element `T` can be any *JNI Object reference type* (i.e. [`JObject`], `&JObject`, [`GlobalRef`][jni::objects::GlobalRef], etc.).
 /// Since all these types are essentially the same under the hood (an *object reference*),
 /// they can be trivially cast to [`JObject`].
 /// 

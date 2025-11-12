@@ -161,6 +161,9 @@ pub fn jni_fn(input: TokenStream) -> TokenStream {
 /// Arrays can be **multi-dimensional** (with unlimited dimensions).
 /// Inner types of the array can also be wrapped with [`Option`].
 /// 
+/// > **Note**: When returning an **Array**, the actual rust type is `ObjectArray`.
+///   See the [return section][call!#return] for more details.
+/// 
 /// For the class `java.lang.String`, use the Rust type [`String`] instead.
 /// Using `java.lang.String` will use the Rust type [`JString`][jni::objects::JString].
 /// 
@@ -216,11 +219,17 @@ pub fn jni_fn(input: TokenStream) -> TokenStream {
 /// or a [`Result<T, CLASS>`] (where `T` is `void` or a [`Type`](call!#types),
 /// and `CLASS` is any **Java Class** that extends [`Throwable`](https://docs.oracle.com/javase/8/docs/api/java/lang/Throwable.html)).
 /// 
+/// When a call returns an **Object Array** (e.g. `[java.lang.String]`),
+/// the array is represented by [`ObjectArray`](https://docs.rs/ez_jni/latest/ez_jni/struct.ObjectArray.html).
+/// This type is very much like a Rust array type (i.e. `Box<[T]>`, `&[T]`, etc),
+/// but the array can only store *Object References*, along with an **element class**,
+/// which is the **base class** that all Objects in the array must be an *instance of*.
+/// 
 /// ### Exceptions
 ///
 /// Normally, when a call ***throws*** an `Exception`, the macro will cause a `panic!` with that `Exception`.
 /// But when a *call* is marked to return a [`Result<T, CLASS>`] and the call *throws*,
-/// the `Exception` will be caught and returned in the `Err` variant as a [`JavaException`][https://docs.rs/ez_jni/latest/ez_jni/struct.JavaException.html].
+/// the `Exception` will be caught and returned in the `Err` variant as a [`JavaException`](https://docs.rs/ez_jni/latest/ez_jni/struct.JavaException.html).
 ///
 /// If the object was not of the *expected Class*, the `Exception` will *not be caught* and the program will `panic!`.
 /// This is similar to how in Java, if the exception is not of any type of the *catch blocks*, the exception will not be caught.

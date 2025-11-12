@@ -3,7 +3,15 @@ use jni::{JNIEnv, objects::{GlobalRef, JClass, JObject, JString, JThrowable}};
 use crate::{FromObjectError, utils::{create_object_array_converted, get_object_array_owned}};
 use super::ObjectArray;
 
-pub trait ObjectArrayElement: ToObject2 { }
+// This pattern allows renaming ToObject2 to Seal to make it clear to the user.
+mod el {
+    use super::ToObject2 as Seal;
+
+    /// Sealed Marker trait for Types that can be Elements of [`ObjectArray`][super::ObjectArray].
+    #[allow(private_bounds)]
+    pub trait ObjectArrayElement: Seal { }
+}
+pub use el::ObjectArrayElement;
 
 impl<T> ObjectArrayElement for Option<T>
 where T: ObjectArrayElement { }
@@ -19,7 +27,8 @@ impl<T, Array> ObjectArrayElement for ObjectArray<'_, T, Array>
 where Array: AsRef<[T]>,
       T: ObjectArrayElement { }
 
-trait FromObject2<'local>: ObjectArrayElement + Sized {
+trait FromObject2<'local>
+where Self: ObjectArrayElement + Sized {
     fn from_object(object: JObject<'local>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError>;
 }
 // Also acts like a seal
@@ -27,7 +36,8 @@ trait ToObject2 {
     fn to_object<'local>(&self, elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local>;
 }
 
-/// A trait that allows converting a *Java Object* to a Rust `Boxed slice` of a *Rust Type*.
+/// A Sealed trait that allows converting a *Java Object* to a Rust `Boxed slice` of a *Rust Type*.
+#[allow(private_bounds)]
 pub(super) trait FromArrayObject<'local>
 where Self: FromObject2<'local> + 'local {
     /// Creates a `boxed slice` of a Type that can be created [from a Java Object][FromObject].
