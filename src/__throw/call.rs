@@ -10,7 +10,7 @@ use crate::{utils::{ResultExt, JNI_CALL_GHOST_EXCEPTION}, FromObject, JavaExcept
 /// If the `Exception` can't be converted to an `E`,
 /// this function will *re-throw* the Exception so that another [`try_catch`] call can catch the exception.
 pub fn try_catch<'local, E>(env: &mut JNIEnv<'local>) -> Option<E>
-where E: for<'a> FromObject<'a, 'local, 'local> {
+where E: FromObject<'local> {
     catch_throwable(env)
         .and_then(|ex| {
             // Check if Object is `java.lang.Error` and `panic!`.
@@ -25,7 +25,7 @@ where E: for<'a> FromObject<'a, 'local, 'local> {
 }
 /// Same as [`try_catch()`], but also catches `java.lang.Error`.
 pub(crate) fn try_catch_throwable<'local, E>(env: &mut JNIEnv<'local>) -> Option<E>
-where E: for<'a> FromObject<'a, 'local, 'local> {
+where E: FromObject<'local> {
     catch_throwable(env)
         .and_then(|ex|
             E::from_object_env(&ex, env)

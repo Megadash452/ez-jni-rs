@@ -22,10 +22,10 @@ pub fn derive_struct(mut st: ItemStruct) -> syn::Result<TokenStream> {
     let st_ctor = struct_constructor(&st.fields)?;
 
     Ok(quote! {
-        impl #st_generics ::ez_jni::FromJValue<'_, '_, #env_lt> for #st_ident #st_generics {
-            ::ez_jni::impl_from_jvalue_env!(<'_, '_, #env_lt>);
+        impl #st_generics ::ez_jni::FromJValue<#env_lt> for #st_ident #st_generics {
+            ::ez_jni::impl_from_jvalue_env!(<#env_lt>);
         }
-        impl #st_generics ::ez_jni::FromObject<'_, '_, #env_lt> for #st_ident #st_generics {
+        impl #st_generics ::ez_jni::FromObject<#env_lt> for #st_ident #st_generics {
             fn from_object_env(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<#env_lt>) -> ::std::result::Result<Self, ::ez_jni::FromObjectError> {
                 #ops_prelude
                 ::ez_jni::utils::check_object_class(object, &<Self as ::ez_jni::Class>::class(), env)?;
@@ -90,10 +90,10 @@ pub fn derive_enum(mut enm: ItemEnum) -> syn::Result<TokenStream> {
         .unwrap_or(TokenStream::new());
 
     Ok(quote! {
-        impl #enm_generics ::ez_jni::FromJValue<'_, '_, #env_lt> for #enm_ident #enm_generics {
-            ::ez_jni::impl_from_jvalue_env!(<'_, '_, #env_lt>);
+        impl #enm_generics ::ez_jni::FromJValue<#env_lt> for #enm_ident #enm_generics {
+            ::ez_jni::impl_from_jvalue_env!(<#env_lt>);
         }
-        impl #enm_generics ::ez_jni::FromObject<'_, '_, #env_lt> for #enm_ident #enm_generics {
+        impl #enm_generics ::ez_jni::FromObject<#env_lt> for #enm_ident #enm_generics {
             fn from_object_env(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<#env_lt>) -> ::std::result::Result<Self, ::ez_jni::FromObjectError> {
                 #ops_prelude
 

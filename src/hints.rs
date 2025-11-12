@@ -67,7 +67,7 @@ impl Method {
         }
     }
 }
-impl FromObject<'_, '_, '_> for Method {
+impl FromObject<'_> for Method {
     fn from_object_env(obj: &JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Self, crate::FromObjectError> {
         check_object_class(obj, &Self::class(), env)?;
         Ok(Self {
@@ -123,7 +123,7 @@ impl Field {
         }
     }
 }
-impl FromObject<'_, '_, '_> for Field {
+impl FromObject<'_> for Field {
     fn from_object_env(obj: &JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Self, crate::FromObjectError> {
         Ok(Self {
             class: call!(env=> call!(env=> obj.getDeclaringClass() -> Class).getTypeName() -> String),

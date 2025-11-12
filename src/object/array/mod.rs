@@ -123,7 +123,7 @@ where Array: AsRef<[T]>,
 }
 
 // TODO: allow Array to be any type that implements FromObject2 (maybe call that trait something better?)
-impl<'local, T> FromObject<'_, '_, 'local> for ObjectArray<'local, T, Box<[T]>>
+impl<'local, T> FromObject<'local> for ObjectArray<'local, T, Box<[T]>>
 where T: FromArrayObject<'local> {
     fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
         // Get the elem_class early to do the class check.
@@ -132,7 +132,7 @@ where T: FromArrayObject<'local> {
         Ok(Self::new(array, Cow::Owned(elem_class)))
     }
 }
-impl<'local, T> FromObject<'_, '_, 'local> for ObjectArray<'local, T, Vec<T>>
+impl<'local, T> FromObject<'local> for ObjectArray<'local, T, Vec<T>>
 where T: element::FromArrayObject<'local> {
     fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
         Ok(ObjectArray::<'local, T, Box<[T]>>::from_object_env(object, env)?

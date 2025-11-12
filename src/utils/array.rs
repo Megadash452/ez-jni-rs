@@ -52,7 +52,7 @@ where T: Primitive {
 /// 
 /// This funciton automatically handles the conversion between the *Rust type* and the *Java type* (e.g. u8 -> bool).
 pub(crate) fn get_java_prim_array<T>(obj: &JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Box<[T]>, FromObjectError>
-where T: Primitive + for<'a, 'obj, 'local> FromObject<'a, 'obj, 'local> {
+where T: Primitive + for<'local> FromObject<'local> {
     if obj.is_null() {
         return Err(FromObjectError::Null);
     }
@@ -140,7 +140,7 @@ pub fn get_object_array<'local>(obj: &JObject<'_>, env: &mut JNIEnv<'local>) -> 
 /// 
 /// Uses [`AutoLocal`] for elements under the hood, so each *object reference* is deleted after each iteration.
 pub fn get_object_array_converted<'local, T>(obj: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Box<[T]>, FromObjectError>
-where T: for<'a, 'obj> FromObject<'a, 'obj, 'local> {
+where T: FromObject<'local> {
     get_object_array_owned(obj, |elem, env| {
         T::from_object_env(&AutoLocal::new(elem, env), env)
     }, env)

@@ -141,18 +141,18 @@ impl_from_object_class!(@class GlobalRef);
 impl_from_object_class!(JClass<'obj>);
 impl_from_object_class!(JString<'obj>);
 
-impl<'obj, 'local, T> FromJValueOwned<'obj, 'local> for T
-where T: for<'a> FromJValue<'a, 'obj, 'local> {
+impl<'local, T> FromJValueOwned<'_, 'local> for T
+where T: FromJValue<'local> {
     #[inline(always)] // inline(always) to prevent excesive creation of functions (especially since this is only used in a macro)
-    fn from_jvalue_owned_env(val: JValueOwned<'obj>, env: &mut JNIEnv<'local>) -> Self {
+    fn from_jvalue_owned_env(val: JValueOwned<'_>, env: &mut JNIEnv<'local>) -> Self {
         Self::from_jvalue_env(val.borrow(), env).unwrap_display()
     }
 }
 
-impl<'obj, 'local, T> FieldFromJValue<'obj, 'local> for T
-where T: for<'a> FromJValue<'a, 'obj, 'local> + Class {
+impl<'local, T> FieldFromJValue<'_, 'local> for T
+where T: FromJValue<'local> + Class {
     #[inline(always)]
-    fn field_from_jvalue_owned_env(val: JValueOwned<'obj>, env: &mut JNIEnv<'local>) -> Self {
+    fn field_from_jvalue_owned_env(val: JValueOwned<'_>, env: &mut JNIEnv<'local>) -> Self {
         Self::from_jvalue_owned_env(val, env)
     }
     fn guess_sig(env: &mut JNIEnv<'local>) -> Cow<'static, str> {
@@ -186,7 +186,7 @@ where T: for<'a> FromJValue<'a, 'obj, 'local> + Class {
 }
 
 impl<'obj, 'local, T> FromJValueClass<'obj, 'local> for T
-where T: for<'a> FromObject<'a, 'obj, 'local> {
+where T: FromObject<'local> {
     #[inline(always)] // inline(always) to prevent excesive creation of functions (especially since this is only used in a macro)
     fn from_jvalue_class(val: JValueOwned<'obj>, _: &'static str, env: &mut JNIEnv<'local>) -> Self {
         // Force use of FromObject

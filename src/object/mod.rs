@@ -90,7 +90,7 @@ pub enum FromObjectError {
 ///     },
 /// }
 /// ```
-pub trait FromObject<'a, 'obj, 'local>
+pub trait FromObject<'local>
 where Self: Sized + 'local {
     /// Construct a [`Self`] by reading data from a *Java Object*.
     /// 
@@ -98,7 +98,7 @@ where Self: Sized + 'local {
     /// 
     /// Automatically captures the [`JNIEnv`] from the local stack.
     /// To pass in your own [`JNIEnv`], see [`FromObject::from_object_env`].
-    fn from_object(object: &'a JObject<'obj>) -> Result<Self, FromObjectError> {
+    fn from_object(object: &JObject<'_>) -> Result<Self, FromObjectError> {
         Self::from_object_env(object, get_env::<'_, 'local>())
     }
     /// Same as [`from_object`][FromObject::from_object], but does not capture the [`JNIEnv`] automatically; the caller must provide it themselves.
@@ -108,7 +108,7 @@ where Self: Sized + 'local {
     /// For jni macros, the env can be specified with this syntax: `macro!(env=> ...)`.
     /// 
     /// Only implement *this* method for the trait.
-    fn from_object_env(object: &'a JObject<'obj>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError>;
+    fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError>;
 
     /// This method contains the underlying implementation of `FromObject` for `Box<[T]>`.
     /// 
@@ -116,8 +116,7 @@ where Self: Sized + 'local {
     /// The only types that can override it are primitives.
     #[doc(hidden)]
     #[inline(always)]
-    fn __from_array_object(object: &'_ JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Box<[Self]>, FromObjectError>
-    where Self: for<'b, 'o> FromObject<'b, 'o, 'local> { // Why is this bound necessary?? Shouldn't Self already implement the same trait?????
+    fn __from_array_object(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Box<[Self]>, FromObjectError> {
         get_object_array_converted(object, env)
     }
 }

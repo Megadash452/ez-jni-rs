@@ -87,7 +87,7 @@ impl Debug for JavaException {
             .finish()
     }
 }
-impl<'local> FromObject<'_, '_, '_> for JavaException {
+impl FromObject<'_> for JavaException {
     fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         if object.is_null() {
             return Err(FromObjectError::Null);
@@ -122,7 +122,7 @@ impl ToObject for JavaException {
 /// Class that all Objects that can be converted to [`std::io::Error`] must be a descendant of.
 static IO_ERROR_BASE_PATH: &str = "java/io/IOException";
 
-impl FromObject<'_, '_, '_> for std::io::Error {
+impl FromObject<'_> for std::io::Error {
     fn from_object_env(object: &JObject, env: &mut JNIEnv) -> Result<Self, FromObjectError> {
         static MAP: &[(&str, io::ErrorKind)] = &[
             ("java/io/FileNotFoundException", io::ErrorKind::NotFound),
@@ -216,7 +216,7 @@ impl ToObject for std::io::Error {
     }
 }
 
-impl FromObject<'_, '_, '_> for Box<dyn std::error::Error> {
+impl FromObject<'_> for Box<dyn std::error::Error> {
     fn from_object_env(object: &JObject, env: &mut JNIEnv) -> Result<Self, FromObjectError> {
         JavaException::from_object_env(object, env).map(|ex| ex.into())
     }

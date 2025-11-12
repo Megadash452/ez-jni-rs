@@ -13,10 +13,10 @@ where T: ToObject {
 
 // Implementation for Option type
 
-impl<'a, 'obj, 'local, T> FromObject<'a, 'obj, 'local> for Option<T>
-where T: FromObject<'a, 'obj, 'local> {
+impl<'a, 'obj, 'local, T> FromObject<'local> for Option<T>
+where T: FromObject<'local> {
     #[inline(always)]
-    fn from_object_env(object: &'a JObject<'obj>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+    fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
         if object.is_null() {
             Ok(None)
         } else {
@@ -37,22 +37,22 @@ where T: ToObject {
 
 // --- Implementation for Array Types
 
-impl<'local, T> FromObject<'_, '_, 'local> for Box<[T]>
-where T: for<'a, 'obj> FromObject<'a, 'obj, 'local> {
+impl<'local, T> FromObject<'local> for Box<[T]>
+where T: for<'a, 'obj> FromObject<'local> {
     #[inline(always)]
     fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
         T::__from_array_object(object, env)
     }
 }
-impl<'local, T> FromObject<'_, '_, 'local> for Vec<T>
-where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local> {
+impl<'local, T> FromObject<'local> for Vec<T>
+where Box<[T]>: for<'a, 'obj> FromObject<'local> {
     #[inline(always)]
     fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
         Ok(Box::<[T]>::from_object_env(object, env)?.into_vec())
     }
 }
-impl<'local, const N: usize, T> FromObject<'_, '_, 'local> for [T; N]
-where Box<[T]>: for<'a, 'obj> FromObject<'a, 'obj, 'local> {
+impl<'local, const N: usize, T> FromObject<'local> for [T; N]
+where Box<[T]>: for<'a, 'obj> FromObject<'local> {
     fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
         // Get an unized array from the Java Array
         let boxed = Box::<[T]>::from_object_env(object, env)?;
@@ -101,7 +101,7 @@ where [T]: ToObject {
 
 // Implementation for String types
 
-impl FromObject<'_, '_, '_> for String {
+impl FromObject<'_> for String {
     /// Get a [`String`] from some random Object.
     /// 
     /// Don't use this function, it only exist for compatibility.
@@ -138,7 +138,7 @@ impl ToObject for &str {
 
 // Implementation for number types
 // Can't put condense this with macro_rules for some reason (???)
-impl FromObject<'_, '_, '_> for i8 {
+impl FromObject<'_> for i8 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.byteValue() -> byte))
@@ -157,7 +157,7 @@ impl ToObject for i8 {
         create_java_prim_array(slice, env)
     }
 }
-impl FromObject<'_, '_, '_> for i16 {
+impl FromObject<'_> for i16 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.shortValue() -> short))
@@ -176,7 +176,7 @@ impl ToObject for i16 {
         create_java_prim_array(slice, env)
     }
 }
-impl FromObject<'_, '_, '_> for i32 {
+impl FromObject<'_> for i32 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.intValue() -> int))
@@ -195,7 +195,7 @@ impl ToObject for i32 {
         create_java_prim_array(slice, env)
     }
 }
-impl FromObject<'_, '_, '_> for i64 {
+impl FromObject<'_> for i64 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.longValue() -> long))
@@ -214,7 +214,7 @@ impl ToObject for i64 {
         create_java_prim_array(slice, env)
     }
 }
-impl FromObject<'_, '_, '_> for f32 {
+impl FromObject<'_> for f32 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.floatValue() -> float))
@@ -233,7 +233,7 @@ impl ToObject for f32 {
         create_java_prim_array(slice, env)
     }
 }
-impl FromObject<'_, '_, '_> for f64 {
+impl FromObject<'_> for f64 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.doubleValue() -> double))
@@ -254,7 +254,7 @@ impl ToObject for f64 {
 }
 
 // Implementation for unsigned number types
-impl FromObject<'_, '_, '_> for u8 {
+impl FromObject<'_> for u8 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.byteValue() -> u8))
@@ -273,7 +273,7 @@ impl ToObject for u8 {
         create_java_prim_array(slice, env)
     }
 }
-impl FromObject<'_, '_, '_> for u16 {
+impl FromObject<'_> for u16 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.shortValue() -> u16))
@@ -292,7 +292,7 @@ impl ToObject for u16 {
         create_java_prim_array(slice, env)
     }
 }
-impl FromObject<'_, '_, '_> for u32 {
+impl FromObject<'_> for u32 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.intValue() -> u32))
@@ -311,7 +311,7 @@ impl ToObject for u32 {
         create_java_prim_array(slice, env)
     }
 }
-impl FromObject<'_, '_, '_> for u64 {
+impl FromObject<'_> for u64 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.longValue() -> u64))
@@ -333,7 +333,7 @@ impl ToObject for u64 {
 
 // Implementations for other primitives
 
-impl FromObject<'_, '_, '_> for bool {
+impl FromObject<'_> for bool {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.booleanValue() -> boolean))
@@ -353,7 +353,7 @@ impl ToObject for bool {
     }
 }
 
-impl FromObject<'_, '_, '_> for char {
+impl FromObject<'_> for char {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         check_object_class(object, &Self::class(), env)?;
         Ok(call!(env=> object.charValue() -> char))
