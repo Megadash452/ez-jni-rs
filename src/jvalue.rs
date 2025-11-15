@@ -265,9 +265,9 @@ impl<T> ToJValue for Option<T>
 where T: ToObject { impl_to_jvalue_env!(); }
 
 impl<'local, T> FromJValue<'local> for Box<[T]>
-where Self: for<'a, 'obj> FromObject<'local> + 'local { impl_from_jvalue_env!(<'local>); }
+where Self: FromObject<'local> { impl_from_jvalue_env!(<'local>); }
 impl<'local, T> FromJValue<'local> for Vec<T>
-where Self: for<'a, 'obj> FromObject<'local> + 'local { impl_from_jvalue_env!(<'local>); }
+where Self: FromObject<'local> { impl_from_jvalue_env!(<'local>); }
 impl<T> ToJValue for [T]
 where Self: ToObject { impl_to_jvalue_env!(); }
 impl<T> ToJValue for &[T]
@@ -276,7 +276,7 @@ impl<const N: usize, T> ToJValue for [T; N]
 where Self: ToObject { impl_to_jvalue_env!(); }
 
 impl<'local, T, Array> FromJValue<'local> for ObjectArray<'local, T, Array>
-where Self: for<'a, 'obj> FromObject<'local>,
+where Self: FromObject<'local>,
       Array: AsRef<[T]>,
           T: ObjectArrayElement
 { impl_from_jvalue_env!(<'local>); }

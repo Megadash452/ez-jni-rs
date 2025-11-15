@@ -27,6 +27,9 @@ impl<T, Array> ObjectArrayElement for ObjectArray<'_, T, Array>
 where Array: AsRef<[T]>,
       T: ObjectArrayElement { }
 
+// Using only 1 lifetime here wouldn't usually work for both lone Object References and Arrays of Object References,
+// but it works in this case because Objects coming out of get_object_array() come straight out of the env,
+// so they are both going to have the same lifetime.
 trait FromObject2<'local>
 where Self: ObjectArrayElement + Sized {
     fn from_object(object: JObject<'local>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError>;
@@ -175,6 +178,7 @@ impl<T> ToObject2 for [T]
 where T: ToObject2 {
     #[inline(always)]
     fn to_object<'local>(&self, elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        // FIXME: Reduce Class array bracket (or not, depending on whether elem class is for base Class Path, or for immediate element)
         create_object_array_converted(self, |elem, env| <T as ToObject2>::to_object(elem, elem_class, env), elem_class, env)
     }
 }

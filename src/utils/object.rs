@@ -3,22 +3,13 @@ use std::borrow::Cow;
 use jni::{
     JNIEnv, errors::Error as JNIError, objects::{GlobalRef, JClass, JObject, JString, JThrowable, JValue, JValueGen, JValueOwned}
 };
-use crate::{call, Class, FromJValue, FromJValueError, FromObject, FromObjectError, JValueType, __throw::{get_jni_error_msg, try_catch}, utils::{get_object_class_name, ResultExt}};
+use crate::{__throw::{get_jni_error_msg, try_catch}, Class, FromJValue, FromJValueError, FromObject, FromObjectError, JValueType, call, utils::get_object_class_name};
 use super::{field_helper, getter_name_and_sig, FieldNotFound, MethodNotFound};
 
-/// Trait for `call!` to use to convert the return value.
-/// Only used in the macros, so this will `panic!` on error.
-pub trait FromJValueOwned<'obj, 'local> {
-    fn from_jvalue_owned_env(val: JValueOwned<'obj>, env: &mut JNIEnv<'local>) -> Self;
-}
+/// Trait for [`FromObject derive`][FromObject] to use to convert [`JValue`]s to **Rust Values**.
+pub trait FieldFromJValue<'obj, 'local>: Class + Sized {
+    fn field_from_jvalue(val: JValueOwned<'obj>, env: &mut JNIEnv<'local>) -> Result<Self, FromJValueError>;
 
-/// The same as [`FromJValueOwned`], but used only to convert **fields** in the [`FromObject`] derive macro.
-/// 
-/// This separate trait is necessary because `call!` does not need to check the *return* Object's **Class**,
-/// but the check is needed on a [`JObject`] or [`JThrowable`] field in the [`FromObject`] derive.
-/// To enforce this check, [`JObject`] or [`JThrowable`] do NOT implement this trait, but do implement [`FromJValueOwned`].
-pub trait FieldFromJValue<'obj, 'local> {
-    fn field_from_jvalue_owned_env(val: JValueOwned<'obj>, env: &mut JNIEnv<'local>) -> Self;
     /// Guesses the *signature* that `Self` expects from a [`JValue`][jni::objects::JValue].
     /// Returns a *Java Type signature* with the [`Class`] if the signature is for Object.
     /// 
@@ -30,62 +21,58 @@ pub trait FieldFromJValue<'obj, 'local> {
     fn guess_sig(env: &mut JNIEnv<'local>) -> Cow<'static, str>;
 }
 
-/// Trait that allows instantiating an [`Object`][crate::FromObjectOwned] *Rust type* [`From a JValue`][crate::FromJValue] while also
-/// allowing the user to require that the Object is an instance of a specified **Class**.
+/// Same as [`FieldFromJValue`], but requires the user to pass in a **class** that the [`JValue`][JValueOwned] must be an instance of.
 /// 
-/// Most types already require the object to be of thier specific **Class** in their [`FromObject`] implementations.
-/// However, for [`JObject`] and [`JThrowable`] it's vague and they can be almost any **Class**.
-/// Although all types implement this trait for thoroughness in the macros,
-/// only the implementation of [`JObject`] and [`JThrowable`] check that the **Class** matches the **class** argument.
+/// This also means that the [`JValue`][JValueOwned] must be an [`Object`][JValueGen::Object],
+/// So the method uses the [`FromObject`] implementation instead of [`FromJValue`].
 /// 
-/// This trait also forces the use of the [`FromObject`] instead of [`FromJValue`].
-/// Since a **class** is being specified, it is expected that the [`JValue`] is an [`Object`][jni::objects::JValueGen::Object].
-pub trait FromJValueClass<'obj, 'local> {
-    /// Same as [`from_jvalue_owned_env`][FromJValueOwned::from_jvalue_owned_env()], but also checks that the object is an instance of a specified **Class** for [`JObject`] and [`JThrowable`].
-    fn from_jvalue_class(val: JValueOwned<'obj>, class: &'static str, env: &mut JNIEnv<'local>) -> Self;
+/// This separate trait is necessary because most types already implement [`Class`], so the user does not need to provide a **class** for the object.
+/// However, [`JObject`], [`JThrowable`], and [`ObjectArray`] don't implement [`Class`] because users *should* specify a *descendant* **class** for these types.
+/// To enforce this check in [`FromObject derive`][FromObject], these types don't implement [`FieldFromJValue`], but do implement this trait.
+/// 
+/// This is used for *getting* a **field** in [`FromObject derive`][FromObject].
+pub trait FieldFromJValueClass<'obj, 'local>: Sized {
+    /// Same as [`field_from_jvalue`][FieldFromJValue::field_from_jvalue()],
+    /// but also checks that the object is an instance of a specified **Class**.
+    fn field_from_jvalue_with_class(val: JValueOwned<'obj>, class: &str, env: &mut JNIEnv<'local>) -> Result<Self, FromJValueError>;
 }
 
-/// Converts a [`JValueOwned`] to a [`JObject`] without performing any checks on the [`JObject`].
-/// 
-/// Panics if **val** is not an [`Object`][JValueGen::Object].
-fn jvalue_to_jobject<'obj>(val: JValueOwned<'obj>) -> JObject<'obj> {
-    match val {
-        JValueGen::Object(object) => object,
-        val => panic!("{}", FromJValueError::IncorrectType {
-            actual: JValueType::from(val.borrow()),
-            expected: JValueType::Object,
-        })
-    }
-}
-
-/// Creates implementation of [`FromJValueOwned`] and [`FromJValueClass`] for [`JObject`] and its wrappers, and for `Option<T>`.
+/// Creates implementation of [`FieldFromJValue`] and [`FieldFromJValueClass`] for [`JObject`] and its wrappers, and for `Option<T>`.
 macro_rules! impl_from_object_class {
     // A class is required to be passed in to convert from a JValue,
     // so FromJValueOwned is not implemented.
     (@class $ty:ty) => {
-        impl_from_object_class!(__owned $ty);
-        impl<'obj> FromJValueClass<'obj, '_> for $ty {
-            fn from_jvalue_class(val: JValueOwned<'obj>, class: &'static str, env: &mut JNIEnv<'_>) -> Self {
-                let object = <Self as FromJValueOwned>::from_jvalue_owned_env(val, env);
-                check_object_class(&object, class, env).unwrap_display();
-                object
+        impl<'obj> FieldFromJValueClass<'obj, '_> for $ty {
+            #[inline(always)]
+            fn field_from_jvalue_with_class(val: JValueOwned<'obj>, class: &str, env: &mut JNIEnv<'_>) -> Result<Self, FromJValueError> {
+                let object = jvalue_to_jobject(val)?;
+                check_object_class(&object, class, env)?;
+                <Self as $crate::FromObjectOwned>::from_object_owned_env(object, env)
+                    .map_err(FromJValueError::from)
             }
         }
-        impl<'obj> FromJValueClass<'obj, '_> for Option<$ty> {
-            fn from_jvalue_class(val: JValueOwned<'obj>, class: &'static str, env: &mut JNIEnv<'_>) -> Self {
-                let object = <Self as FromJValueOwned>::from_jvalue_owned_env(val, env)?;
-                check_object_class(&object, class, env).unwrap_display();
-                Some(object)
+        impl<'obj> FieldFromJValueClass<'obj, '_> for Option<$ty> {
+            #[inline(always)]
+            fn field_from_jvalue_with_class(val: JValueOwned<'obj>, class: &str, env: &mut JNIEnv<'_>) -> Result<Self, FromJValueError> {
+                let object = jvalue_to_jobject(val)?;
+                // Only do class check if Object is not NULL
+                if !object.is_null() {
+                    check_object_class(&object, class, env)?;
+                }
+                <Self as $crate::FromObjectOwned>::from_object_owned_env(object, env)
+                    .map_err(FromJValueError::from)
             }
         }
     };
-    // A class is NOT required, so implements both FromJValueOwned and FromJValueClass
+    // A class is NOT required, so implements both traits
     ($ty:ty) => {
-        impl_from_object_class!(__owned $ty);
+        impl_from_object_class!(@class $ty);
         impl<'obj> FieldFromJValue<'obj, '_> for $ty {
             #[inline(always)]
-            fn field_from_jvalue_owned_env(val: JValueOwned<'obj>, env: &mut JNIEnv<'_>) -> Self {
-                <Self as FromJValueOwned>::from_jvalue_owned_env(val, env)
+            fn field_from_jvalue(val: JValueOwned<'obj>, env: &mut JNIEnv<'_>) -> Result<Self, FromJValueError> {
+                let object = jvalue_to_jobject(val)?;
+                <Self as $crate::FromObjectOwned>::from_object_owned_env(object, env)
+                    .map_err(FromJValueError::from)
             }
             fn guess_sig(_: &mut JNIEnv<'_>) -> Cow<'static, str> {
                 Cow::Owned(format!("L{};", <$ty as Class>::class()))
@@ -93,44 +80,17 @@ macro_rules! impl_from_object_class {
         }
         impl<'obj> FieldFromJValue<'obj, '_> for Option<$ty> {
             #[inline(always)]
-            fn field_from_jvalue_owned_env(val: JValueOwned<'obj>, env: &mut JNIEnv<'_>) -> Self {
-                <Self as FromJValueOwned>::from_jvalue_owned_env(val, env)
+            fn field_from_jvalue(val: JValueOwned<'obj>, env: &mut JNIEnv<'_>) -> Result<Self, FromJValueError> {
+                if let JValueGen::Object(obj) = &val
+                && obj.is_null() {
+                    Ok(None)
+                } else {
+                    Ok(Some(<$ty as FieldFromJValue>::field_from_jvalue(val, env)?))
+                }
             }
             #[inline(always)]
             fn guess_sig(env: &mut JNIEnv<'_>) -> Cow<'static, str> {
                 <$ty as FieldFromJValue>::guess_sig(env)
-            }
-        }
-        impl<'obj> FromJValueClass<'obj, '_> for $ty {
-            #[inline(always)]
-            fn from_jvalue_class(val: JValueOwned<'obj>, _: &'static str, env: &mut JNIEnv<'_>) -> Self {
-                <Self as FromJValueOwned>::from_jvalue_owned_env(val, env)
-            }
-        }
-        impl<'obj> FromJValueClass<'obj, '_> for Option<$ty> {
-            #[inline(always)]
-            fn from_jvalue_class(val: JValueOwned<'obj>, _: &'static str, env: &mut JNIEnv<'_>) -> Self {
-                <Self as FromJValueOwned>::from_jvalue_owned_env(val, env)
-            }
-        }
-    };
-    (__owned $ty:ty) => {
-        impl<'obj> FromJValueOwned<'obj, '_> for $ty {
-            fn from_jvalue_owned_env(val: JValueOwned<'obj>, env: &mut JNIEnv<'_>) -> Self {
-                let object = jvalue_to_jobject(val);
-                // Call from_object() to perform checks
-                <Self as $crate::FromObjectOwned>::from_object_owned_env(object, env).unwrap_display()
-            }
-        }
-        impl<'obj> FromJValueOwned<'obj, '_> for Option<$ty> {
-            fn from_jvalue_owned_env(val: JValueOwned<'obj>, env: &mut JNIEnv<'_>) -> Self {
-                let object = jvalue_to_jobject(val);
-                if object.is_null() {
-                    return None;
-                }
-
-                // Call from_object() to perform checks
-                Some(<$ty as $crate::FromObjectOwned>::from_object_owned_env(object, env).unwrap_display())
             }
         }
     }
@@ -138,59 +98,73 @@ macro_rules! impl_from_object_class {
 impl_from_object_class!(@class JObject<'obj>);
 impl_from_object_class!(@class JThrowable<'obj>);
 impl_from_object_class!(@class GlobalRef);
+// TODO: AutoLocal??
+// These types don't require the user to specify a class:
 impl_from_object_class!(JClass<'obj>);
 impl_from_object_class!(JString<'obj>);
-
-impl<'local, T> FromJValueOwned<'_, 'local> for T
-where T: FromJValue<'local> {
-    #[inline(always)] // inline(always) to prevent excesive creation of functions (especially since this is only used in a macro)
-    fn from_jvalue_owned_env(val: JValueOwned<'_>, env: &mut JNIEnv<'local>) -> Self {
-        Self::from_jvalue_env(val.borrow(), env).unwrap_display()
-    }
-}
 
 impl<'local, T> FieldFromJValue<'_, 'local> for T
 where T: FromJValue<'local> + Class {
     #[inline(always)]
-    fn field_from_jvalue_owned_env(val: JValueOwned<'_>, env: &mut JNIEnv<'local>) -> Self {
-        Self::from_jvalue_owned_env(val, env)
+    fn field_from_jvalue(val: JValueOwned<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromJValueError> {
+        <Self as FromJValue>::from_jvalue_env(val.borrow(), env)
     }
     fn guess_sig(env: &mut JNIEnv<'local>) -> Cow<'static, str> {
-        match T::from_jvalue_env(JValue::Bool(1), env) {
+        match T::from_jvalue_env(JValue::Bool(1) /* Fake value */, env) {
             Ok(_) => Cow::Borrowed("Z"),
-            Err(FromJValueError::Object(_)) => panic!("Encountered FromObjectError when JValue is Bool; FromJValue implementation can only call FromObject if JValue is Object"),
-            Err(FromJValueError::IncorrectType { expected, .. }) => match expected {
-                JValueType::Bool   => panic!("Unreachable"),
-                JValueType::Void   => Cow::Borrowed("V"),
-                JValueType::Char   => Cow::Borrowed("C"),
-                JValueType::Byte   => Cow::Borrowed("B"),
-                JValueType::Short  => Cow::Borrowed("S"),
-                JValueType::Int    => Cow::Borrowed("I"),
-                JValueType::Long   => Cow::Borrowed("J"),
-                JValueType::Float  => Cow::Borrowed("F"),
-                JValueType::Double => Cow::Borrowed("D"),
-                JValueType::Object => {
-                    let class = T::class();
-                    // L sig does not need to be prepended if class is array.
-                    if class.starts_with('[')
-                    || (class.starts_with('L') && class.ends_with(';')) {
-                        class
-                    } else {
-                        // Prepend L if it isn't already
-                        Cow::Owned(format!("L{class};"))
-                    }
-                },
-            }
+            Err(err) => __guess_sig(err, <Self as Class>::class)
+        }
+    }
+}
+// In the name of space-efficiency with generic types...
+fn __guess_sig(err: FromJValueError, get_class: fn() -> Cow<'static, str>) -> Cow<'static, str> {
+    match err {
+        FromJValueError::Object(_) => panic!("Encountered FromObjectError when JValue is Bool; FromJValue implementation can only call FromObject if JValue is Object"),
+        FromJValueError::IncorrectType { expected, .. } => match expected {
+            JValueType::Bool   => panic!("Unreachable"),
+            JValueType::Void   => Cow::Borrowed("V"),
+            JValueType::Char   => Cow::Borrowed("C"),
+            JValueType::Byte   => Cow::Borrowed("B"),
+            JValueType::Short  => Cow::Borrowed("S"),
+            JValueType::Int    => Cow::Borrowed("I"),
+            JValueType::Long   => Cow::Borrowed("J"),
+            JValueType::Float  => Cow::Borrowed("F"),
+            JValueType::Double => Cow::Borrowed("D"),
+            JValueType::Object => {
+                let class = get_class();
+                // L sig does not need to be prepended if class is array.
+                if class.starts_with('[')
+                || (class.starts_with('L') && class.ends_with(';')) {
+                    class
+                } else {
+                    // Prepend L if it isn't already
+                    Cow::Owned(format!("L{class};"))
+                }
+            },
         }
     }
 }
 
-impl<'obj, 'local, T> FromJValueClass<'obj, 'local> for T
-where T: FromObject<'local> {
-    #[inline(always)] // inline(always) to prevent excesive creation of functions (especially since this is only used in a macro)
-    fn from_jvalue_class(val: JValueOwned<'obj>, _: &'static str, env: &mut JNIEnv<'local>) -> Self {
-        // Force use of FromObject
-        Self::from_object_env(&jvalue_to_jobject(val), env).unwrap_display()
+impl<'local, T> FieldFromJValueClass<'_, 'local> for T
+where T: FromObject<'local> + Class {
+    fn field_from_jvalue_with_class(val: JValueOwned<'_>, class: &str, env: &mut JNIEnv<'local>) -> Result<Self, FromJValueError> {
+        let object = jvalue_to_jobject(val)?;
+        check_object_class(&object, class, env)?;
+        <Self as FromObject>::from_object_env(&object, env)
+            .map_err(FromJValueError::from)
+    }
+}
+
+/// Converts a [`JValueOwned`] to a [`JObject`] without performing any checks on the [`JObject`].
+/// 
+/// Also used in [`call!`] to convert **Object References** *From JValue*.
+pub fn jvalue_to_jobject<'obj>(val: JValueOwned<'obj>) -> Result<JObject<'obj>, FromJValueError> {
+    match val {
+        JValueGen::Object(object) => Ok(object),
+        val => Err(FromJValueError::IncorrectType {
+            actual: JValueType::from(val.borrow()),
+            expected: JValueType::Object,
+        })
     }
 }
 

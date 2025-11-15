@@ -90,7 +90,11 @@ impl Type {
             | Self::Option { ty: InnerType::Object(class), .. }
             if class.is_object_ref() => {
                 let ty = self.type_tokens(false, false, None);
-                return quote_spanned! {value.span()=> <#ty as ::ez_jni::utils::FromJValueOwned>::from_jvalue_owned_env(#value, env) }
+                return quote_spanned! {value.span()=>
+                    <#ty as ::ez_jni::FromObjectOwned>::from_object_owned_env(
+                        ::ez_jni::utils::jvalue_to_jobject(#value).unwrap_display(),
+                        env,
+                    ).unwrap_display() }
             },
             _ => self.type_tokens(false, false, None),
         };
@@ -438,7 +442,7 @@ impl ArrayType {
             || matches!(class.rust_type(), ClassRustType::Primitive(_))
             /* When the inner type of the array is a Java Class Path,
                the array must be converted manually to provide an elem_class. */
-            || class.is_jobject() => true,
+            || class.is_object_ref() => true,
             // All other types can use the ToObject implementation normally
             _ => false,
         }
@@ -542,20 +546,24 @@ impl Conversion for ArrayType {
     /// 
     /// See [`origin`][Conversion::type_tokens()].
     fn type_tokens(&self, as_ref: bool, is_nested: bool, lifetime: Option<syn::Lifetime>) -> TokenStream {
+        let span = self.span();
+        let lt = lifetime.clone().unwrap_or(syn::Lifetime::new("'_", span));
         // vvv Recursion occurs here vvv
         let elem_ty = self.ty.type_tokens(as_ref, true, lifetime);
+        
         match &*self.ty {
             // Arrays of Object Refs use the special ObjectArray type so it can store the Array's element Class.
-            Type::Assertive(InnerType::Object(_))
-            | Type::Option { ty: InnerType::Object(_), .. } => {
-                quote_spanned! {self.span()=> ::ez_jni::ObjectArray<'_, #elem_ty> }
+            Type::Assertive(InnerType::Object(class))
+            | Type::Option { ty: InnerType::Object(class), .. }
+            if class.is_object_ref() => {
+                quote_spanned! {span=> ::ez_jni::ObjectArray<#lt, #elem_ty> }
             }
             _ => if as_ref && is_nested {
-                quote_spanned! {self.span()=> &[#elem_ty] }
+                quote_spanned! {span=> &[#elem_ty] }
             } else if as_ref {
-                quote_spanned! {self.span()=> [#elem_ty] }
+                quote_spanned! {span=> [#elem_ty] }
             } else {
-                quote_spanned! {self.span()=> ::std::boxed::Box<[#elem_ty]> }
+                quote_spanned! {span=> ::std::boxed::Box<[#elem_ty]> }
             }
         }
     }
@@ -701,14 +709,6 @@ impl Class {
         match self.rust_type() {
             ClassRustType::JObject | ClassRustType::JClass | ClassRustType::JThrowable | ClassRustType::JString => true,
             ClassRustType::String | ClassRustType::Primitive(_) => false,
-        }
-    }
-    
-    /// Whether the *Rust type* of the [`Class`] is specifically [`JObject`][jni::objects::JObject].
-    pub fn is_jobject(&self) -> bool {
-        match self.rust_type() {
-            ClassRustType::JObject => true,
-            _ => false,
         }
     }
 

@@ -374,8 +374,9 @@ impl ToObject for char {
 }
 
 /// Hidden trait for a macro to use to convert a java value.
-/// Only used in the macros and for element conversion in [`FromArrayObject`].
-pub(crate) trait FromObjectOwned<'obj>: Sized {
+/// Only used in the macros and for element conversion in [`ObjectArray`].
+#[doc(hidden)]
+pub trait FromObjectOwned<'obj>: Sized {
     fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError>;
 }
 impl<'obj> FromObjectOwned<'obj> for JObject<'obj> {

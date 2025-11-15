@@ -6,9 +6,10 @@ use std::cmp::Ordering;
 use jni::{objects::{JObject, JThrowable}, JNIEnv};
 use thiserror::Error;
 use ez_jni_macros::call;
-use crate::{Class, utils::{create_object_array_converted, get_env, get_object_array_converted}};
+use crate::{Class, FromJValueError, utils::{create_object_array_converted, get_env, get_object_array_converted}};
 
-pub(crate) use r#impl::FromObjectOwned;
+#[doc(hidden)]
+pub use r#impl::FromObjectOwned;
 pub use impl_exception::JavaException;
 pub use array::ObjectArray;
 
@@ -35,6 +36,11 @@ pub enum FromObjectError {
     ArrayTooLong { expected_len: usize, actual_len: usize },
     #[error("Error converting Java Object: {0}")]
     Other(String)
+}
+impl From<FromJValueError> for FromObjectError {
+    fn from(err: FromJValueError) -> Self {
+        Self::Other(err.to_string())
+    }
 }
 
 /// Allows converting a *Java Object* to a Rust type by reading the Object's data.
@@ -68,6 +74,7 @@ pub enum FromObjectError {
 /// 
 /// ```
 /// # use ez_jni::FromObject;
+/// # use ez_jni::ObjectArray;
 /// 
 /// #[derive(FromObject)]
 /// #[class(me.author.MyClass)]
@@ -86,7 +93,7 @@ pub enum FromObjectError {
 ///     #[class(me.author.MyOtherClass)]
 ///     Others {
 ///         #[field(class = [[me.author.MyClass]])]
-///         instances: Box<[Box<[JObject<'local>]>]>
+///         instances: Box<[ObjectArray<'local>]>
 ///     },
 /// }
 /// ```

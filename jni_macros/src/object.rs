@@ -416,9 +416,9 @@ fn convert_field_value(ty: &syn::Type, class_attr: Option<&Class>, value: &Token
     match class_attr {
         Some(class) => {
             let class = class.to_jni_class_path();
-            quote_spanned! {ty.span()=> <#ty as ::ez_jni::utils::FromJValueClass>::from_jvalue_class(#value, #class, env) }
+            quote_spanned! {ty.span()=> <#ty as ::ez_jni::utils::FieldFromJValueClass>::field_from_jvalue_with_class(#value, #class, env)? }
         },
-        None => quote_spanned! {ty.span()=> <#ty as ::ez_jni::utils::FieldFromJValue>::field_from_jvalue_owned_env(#value, env) }
+        None => quote_spanned! {ty.span()=> <#ty as ::ez_jni::utils::FieldFromJValue>::field_from_jvalue(#value, env)? }
     }
 }
 

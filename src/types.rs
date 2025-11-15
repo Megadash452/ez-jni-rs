@@ -17,6 +17,8 @@ pub trait Class {
     fn class() -> Cow<'static, str>;
 }
 
+// TODO: Add separate trait to get Class from &self, and rename Class to something like TypeClass
+
 pub(crate) trait Primitive: Class + Copy + 'static {
     /// The **name** of a *Java Primitive*.
     const JNAME: &'static str;

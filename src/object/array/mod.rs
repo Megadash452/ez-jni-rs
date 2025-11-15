@@ -80,7 +80,7 @@ where Array: AsRef<[T]>,
           T: ObjectArrayElement
 {
     #[inline(always)]
-    fn new(array: Array, elem_class: Cow<'static, str>) -> Self {
+    pub fn new(array: Array, elem_class: Cow<'static, str>) -> Self {
         // TODO: check class of elements?
         Self { array, elem_class, _t: PhantomData, _lt: PhantomData }
     }
@@ -149,14 +149,16 @@ where Array: AsRef<[T]>,
         <T as element::ToArrayObject>::to_array_object(self.array.as_ref(), self.elem_class(), env)
     }
 }
-// impl<T, Array> Class for ObjectArray<'_, T, Array>
-// where Array: AsRef<[T]>,
-//           T: ObjectArrayElement
-// {
-//     fn class() -> Cow<'static, str> {
-//         Cow::Owned(format!("[L{};", self.elem_class))
-//     }
-// }
+
+impl<T, Array> Class for ObjectArray<'_, T, Array>
+where Array: AsRef<[T]>,
+          T: ObjectArrayElement + Class
+{
+    #[inline(always)]
+    fn class() -> Cow<'static, str> {
+        <[T] as Class>::class()
+    }
+}
 
 impl<T, Array> IntoIterator for ObjectArray<'_, T, Array>
 where Array: AsRef<[T]> + IntoIterator,
