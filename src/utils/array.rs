@@ -10,11 +10,11 @@ pub fn get_elem_class(obj: &JObject<'_>, env: &mut JNIEnv<'_>) -> Result<String,
     let obj_class = env.get_object_class(obj)
         .map_err(|err| FromObjectError::Other(format!("Could not get Object's class: {}", get_jni_error_msg(err, env))))?;
     
-    match call!(obj_class.getComponentType() -> Option<Class>) {
-        Some(elem_class) => Ok(call!(elem_class.getName() -> String)),
+    match call!(env=> obj_class.getComponentType() -> Option<Class>) {
+        Some(elem_class) => Ok(call!(env=> elem_class.getName() -> String)),
         // When getComponentType returns null, the class was not an Array class.
         None => Err(FromObjectError::ClassMismatch {
-            obj_class: call!(obj_class.getName() -> String),
+            obj_class: call!(env=> obj_class.getName() -> String),
             target_class: Some("".to_string())
         })
     }

@@ -94,27 +94,56 @@ fn from_object_derive() {
         struct MyClass<'local> {
             member: JThrowable<'local>,
         }
-    "), [ErrorContent {
-        code: Some("E0277"),
-        msg: "the trait bound `JThrowable<'local>: FieldFromJValue<'_, '_>` is not satisfied",
-        loc: "9:13",
-        preview: indoc!("
-          |
-        9 |     member: JThrowable<'local>,
-          |             ^^^^^^^^^^^^^^^^^^ the trait `FromJValue<'_>` is not implemented for `JThrowable<'local>`
-          |
-          = help: the following other types implement trait `FromJValue<'local>`:
-                    `()` implements `FromJValue<'_>`
-                    `Box<[T]>` implements `FromJValue<'local>`
-                    `MyClass<'local>` implements `FromJValue<'local>`
-                    `ObjectArray<'local, T, Array>` implements `FromJValue<'local>`
-                    `Option<T>` implements `FromJValue<'local>`
-                    `Vec<T>` implements `FromJValue<'local>`
-                    `bool` implements `FromJValue<'_>`
-                    `char` implements `FromJValue<'_>`
-                  and $N others
-          = note: required for `JThrowable<'local>` to implement `FieldFromJValue<'_, '_>`
-    ")}]);
+    "), [
+        ErrorContent {
+            code: Some("E0277"),
+            msg: "the trait bound `JThrowable<'local>: Class` is not satisfied",
+            loc: "9:13",
+            preview: indoc!("
+              |
+            9 |     member: JThrowable<'local>,
+              |             ^^^^^^^^^^^^^^^^^^ the trait `Class` is not implemented for `JThrowable<'local>`
+              |
+              = help: the following other types implement trait `Class`:
+                        &T
+                        &[T]
+                        &str
+                        (dyn std::error::Error + 'static)
+                        Box<(dyn std::error::Error + 'static)>
+                        Box<[T]>
+                        JClass<'_>
+                        JString<'_>
+                      and $N others
+            note: required by a bound in `field_from_jvalue`
+             --> src/utils/object.rs
+              |
+              | pub trait FieldFromJValue<'obj, 'local>: Class + Sized {
+              |                                          ^^^^^ required by this bound in `FieldFromJValue::field_from_jvalue`
+              |     fn field_from_jvalue(val: JValueOwned<'obj>, env: &mut JNIEnv<'local>) -> Result<Self, FromJValueError>;
+              |        ----------------- required by a bound in this associated function
+        ")},
+        ErrorContent {
+            code: Some("E0277"),
+            msg: "the trait bound `JThrowable<'local>: FieldFromJValue<'_, '_>` is not satisfied",
+            loc: "9:13",
+            preview: indoc!("
+              |
+            9 |     member: JThrowable<'local>,
+              |             ^^^^^^^^^^^^^^^^^^ the trait `FromJValue<'_>` is not implemented for `JThrowable<'local>`
+              |
+              = help: the following other types implement trait `FromJValue<'local>`:
+                        `()` implements `FromJValue<'_>`
+                        `Box<[T]>` implements `FromJValue<'local>`
+                        `MyClass<'local>` implements `FromJValue<'local>`
+                        `ObjectArray<'local, T, Array>` implements `FromJValue<'local>`
+                        `Option<T>` implements `FromJValue<'local>`
+                        `Vec<T>` implements `FromJValue<'local>`
+                        `bool` implements `FromJValue<'_>`
+                        `char` implements `FromJValue<'_>`
+                      and $N others
+              = note: required for `JThrowable<'local>` to implement `FieldFromJValue<'_, '_>`
+        ")},
+    ]);
     assert_compile_fail(t, "jobject_array_require_class", indoc!("
         use ez_jni::{FromObject, ObjectArray};
         use jni::objects::JObject;
@@ -163,9 +192,30 @@ fn from_object_derive() {
         }
     "), [ErrorContent {
         code: Some("E0277"),
-        msg: "the trait bound `JThrowable<'local>: FieldFromJValue<'_, '_>` is not satisfied",
-        loc: "",
+        msg: "the trait bound `JThrowable<'local>: Class` is not satisfied",
+        loc: "9:13",
         preview: indoc!("
-            // TODO: 
+          |
+        9 |     member: ObjectArray<'local, JThrowable<'local>>,
+          |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `Class` is not implemented for `JThrowable<'local>`
+          |
+          = help: the following other types implement trait `Class`:
+                    &T
+                    &[T]
+                    &str
+                    (dyn std::error::Error + 'static)
+                    Box<(dyn std::error::Error + 'static)>
+                    Box<[T]>
+                    JClass<'_>
+                    JString<'_>
+                  and $N others
+          = note: required for `ObjectArray<'local, JThrowable<'local>>` to implement `Class`
+        note: required by a bound in `field_from_jvalue`
+         --> src/utils/object.rs
+          |
+          | pub trait FieldFromJValue<'obj, 'local>: Class + Sized {
+          |                                          ^^^^^ required by this bound in `FieldFromJValue::field_from_jvalue`
+          |     fn field_from_jvalue(val: JValueOwned<'obj>, env: &mut JNIEnv<'local>) -> Result<Self, FromJValueError>;
+          |        ----------------- required by a bound in this associated function
     ")}]);
 }

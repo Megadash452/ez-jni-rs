@@ -396,7 +396,7 @@ impl<'obj> FromObjectOwned<'obj> for JClass<'obj> {
 }
 impl<'obj> FromObjectOwned<'obj> for JThrowable<'obj> {
     fn from_object_owned_env(object: JObject<'obj>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        check_object_class(&object, &Self::class(), env)?;
+        check_object_class(&object, &<JavaException as Class>::class(), env)?;
         Ok(Self::from(object))
     }
 }

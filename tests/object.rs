@@ -311,7 +311,7 @@ fn from_object() { run_with_jnienv(|| {
 }) }
 
 #[test]
-fn from_object_array() {
+fn from_object_array() { run_with_jnienv(|| {
     let mut object;
 
     // 1-Dimensional Array
@@ -389,4 +389,4 @@ fn from_object_array() {
         ]
     );
     ObjectArray::<'_, Option<Box<[JObject<'_>]>>>::from_object(&object).unwrap();
-}
+}) }

@@ -71,17 +71,22 @@ where T: ToObject2 {
 
 macro_rules! impl_obj_array {
     ($ty:ty) => {
-        impl<'local> ObjectArrayElement for $ty { }
-        impl<'local> FromObject2<'local> for $ty {
+        impl<'obj> ObjectArrayElement for $ty { }
+        impl<'obj> FromObject2<'obj> for $ty {
             #[inline(always)]
-            fn from_object(object: JObject<'local>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
-                // TODO: maybe skip class check? If we know the Array's element class, we can check if its a descendant of Class, Exception (or whetever class the ObjectRef is for) without having to check it for every element.
-                <Self as crate::FromObjectOwned>::from_object_owned_env(object, env)
+            fn from_object(object: JObject<'obj>, _: &mut JNIEnv<'obj>) -> Result<Self, FromObjectError> {
+                // Trivial conversion between Object Refs.
+                // Class check is not needed here because ObjectArray already checks array class.
+                // We only need to check for null here.
+                if object.is_null() {
+                    return Err(FromObjectError::Null);
+                }
+                Ok(Self::from(object))
             }
         }
-        impl<'local> ToObject2 for $ty {
+        impl<'obj> ToObject2 for $ty {
             #[inline(always)]
-            fn to_object<'env>(&self, _: &str, env: &mut JNIEnv<'env>) -> JObject<'env> {
+            fn to_object<'local>(&self, _: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
                 // Can create a new_local_ref because this is done inside a local frame
                 env.new_local_ref(self)
                     .unwrap_or_else(|err| $crate::__throw::handle_jni_call_error(err, env))
@@ -89,11 +94,26 @@ macro_rules! impl_obj_array {
         }
     };
 }
-impl_obj_array!(JObject<'local>);
-impl_obj_array!(JClass<'local>);
-impl_obj_array!(JThrowable<'local>);
-impl_obj_array!(JString<'local>);
-impl_obj_array!(GlobalRef);
+impl_obj_array!(JObject<'obj>);
+impl_obj_array!(JClass<'obj>);
+impl_obj_array!(JThrowable<'obj>);
+impl_obj_array!(JString<'obj>);
+
+impl<'obj> ObjectArrayElement for GlobalRef { }
+impl<'obj> FromObject2<'obj> for GlobalRef {
+    #[inline(always)]
+    fn from_object(object: JObject<'obj>, env: &mut JNIEnv<'obj>) -> Result<Self, FromObjectError> {
+        <Self as crate::FromObjectOwned>::from_object_owned_env(object, env)
+    }
+}
+impl<'obj> ToObject2 for GlobalRef {
+    #[inline(always)]
+    fn to_object<'local>(&self, _: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        // Can create a new_local_ref because this is done inside a local frame
+        env.new_local_ref(self)
+            .unwrap_or_else(|err| crate::__throw::handle_jni_call_error(err, env))
+    }
+}
 
 impl<'local, T> FromObject2<'local> for Option<T>
 where T: FromObject2<'local> {

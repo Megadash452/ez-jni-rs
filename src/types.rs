@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use jni::{
     JNIEnv,
     errors::Result as JniResult,
-    objects::{JClass, JPrimitiveArray, JString, JThrowable},
+    objects::{JClass, JPrimitiveArray, JString},
     sys::{jboolean, jbyte, jchar, jdouble, jfloat, jint, jlong, jshort, jsize},
 };
 
@@ -69,10 +69,12 @@ impl_class!(for String => "java/lang/String");
 impl_class!(for str => String);
 impl_class!(for &str => String);
 impl_class!(for JString<'_> => String);
-// impl_class!(for JObject<'_> => "java/lang/Object");
 impl_class!(for JClass<'_> => "java/lang/Class");
+/* NOTE: JObject and JThrowable don't implement Class because these types shouldn't implicitly expect an Object to be an instance of a certain class.
+         Instead, an user should be required to specify the class that they expect the Object to be an instance of. */
+// impl_class!(for JObject<'_> => "java/lang/Object");
+// impl_class!(for JThrowable<'_> => crate::JavaException);
 impl_class!(for crate::JavaException => "java/lang/Exception");
-impl_class!(for JThrowable<'_> => crate::JavaException);
 impl_class!(for std::io::Error => crate::JavaException);
 impl_class!(for dyn std::error::Error => crate::JavaException);
 impl_class!(for Box<dyn std::error::Error> => crate::JavaException);
