@@ -1,4 +1,4 @@
-use ez_jni::{call, jni_fn, FromObject as _};
+use ez_jni::{FromObject as _, ObjectArray, call, jni_fn};
 use jni::objects::{JClass, JObject};
 
 jni_fn! { me.test.Native =>
@@ -87,7 +87,7 @@ jni_fn! { me.test.Native =>
     }
 
     pub fn native_test_obj_arr<'local>(arr: [java.lang.Object]) -> [java.lang.Object] {
-        let arr: Box<[JObject]> = arr;
+        let arr: ObjectArray = arr;
         assert!(arr.len() == 1);
         arr
     }

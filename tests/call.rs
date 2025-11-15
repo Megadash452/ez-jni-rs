@@ -1,7 +1,7 @@
 mod common;
 
 use common::run_with_jnienv;
-use ez_jni::{call, class, eprintln, field, new, println, singleton, FromObjectError, JavaException};
+use ez_jni::{FromObjectError, JavaException, ObjectArray, call, class, eprintln, field, new, println, singleton};
 use jni::objects::{JClass, JObject, JString, JThrowable};
 
 use crate::common::fail_with;
@@ -194,8 +194,8 @@ fn return_arrays() { run_with_jnienv(|| {
 #[test]
 fn return_arrays_other() { run_with_jnienv(|| {
     // Object
-    let _: Box<[JObject]> = call!(static me.test.Test.getObjectArray() -> [java.lang.Object]);
-    let _: Box<[JString]> = call!(static me.test.Test.getStringArray() -> [java.lang.String]);
+    let _: ObjectArray = call!(static me.test.Test.getObjectArray() -> [java.lang.Object]);
+    let _: ObjectArray<JString> = call!(static me.test.Test.getStringArray() -> [java.lang.String]);
     let _: Box<[String]> = call!(static me.test.Test.getStringArray() -> [String]);
     // Result Primitive
     let r: Result<Box<[bool]>, JavaException> = call!(static me.test.Test.getBooleanArray() -> Result<[bool], java.lang.IndexOutOfBoundsException>);
@@ -203,30 +203,30 @@ fn return_arrays_other() { run_with_jnienv(|| {
     let r: Result<Box<[bool]>, JavaException> = call!(static me.test.Test.throwPrimArray() -> Result<[bool], java.lang.IndexOutOfBoundsException>);
     r.unwrap_err();
     // Result Object
-    let r: Result<Box<[JObject]>, JavaException> = call!(static me.test.Test.getObjectArray() -> Result<[java.lang.Object], java.lang.IndexOutOfBoundsException>);
+    let r: Result<ObjectArray, JavaException> = call!(static me.test.Test.getObjectArray() -> Result<[java.lang.Object], java.lang.IndexOutOfBoundsException>);
     r.unwrap();
-    let r: Result<Box<[JObject]>, JavaException> = call!(static me.test.Test.throwObjArray() -> Result<[java.lang.Object], java.lang.IndexOutOfBoundsException>);
+    let r: Result<ObjectArray, JavaException> = call!(static me.test.Test.throwObjArray() -> Result<[java.lang.Object], java.lang.IndexOutOfBoundsException>);
     r.unwrap_err();
     // Option
     let r: Option<Box<[bool]>> = call!(static me.test.Test.getBooleanArray() -> Option<[bool]>);
     r.unwrap();
     let r: Option<Box<[bool]>> = call!(static me.test.Test.primNullArray() -> Option<[bool]>);
     assert!(r.is_none());
-    let r: Option<Box<[JObject]>> = call!(static me.test.Test.getObjectArray() -> Option<[java.lang.Object]>);
+    let r: Option<ObjectArray> = call!(static me.test.Test.getObjectArray() -> Option<[java.lang.Object]>);
     r.unwrap();
-    let r: Option<Box<[JObject]>> = call!(static me.test.Test.objNullArray() -> Option<[java.lang.Object]>);
+    let r: Option<ObjectArray> = call!(static me.test.Test.objNullArray() -> Option<[java.lang.Object]>);
     assert!(r.is_none());
     // Array Option
     let r: Box<[Option<String>]> = call!(static me.test.Test.getStringArray() -> [Option<String>]);
     assert_eq!(r.as_ref(), ["Hello", "World"].map(|s| Some(s.to_string())));
     let r: Box<[Option<String>]> = call!(static me.test.Test.getNullStringArray() -> [Option<String>]);
     assert_eq!(r.as_ref(), [Some("Hello"), None].map(|s| s.map(|s| s.to_string())));
-    let r: Box<[Option<JObject>]> = call!(static me.test.Test.getObjectArray() -> [Option<java.lang.Object>]);
-    r.into_vec().into_iter().map(Option::unwrap).for_each(|_| {});
+    let r: ObjectArray<Option<JObject>> = call!(static me.test.Test.getObjectArray() -> [Option<java.lang.Object>]);
+    r.into_iter().map(Option::unwrap).for_each(|_| {});
     let r: Option<Box<[Option<String>]>> = call!(static me.test.Test.getNullStringArray() -> Option<[Option<String>]>);
     assert_eq!(r.unwrap().as_ref(), &[Some("Hello"), None].map(|s| s.map(|s| s.to_string())));
-    let r: Option<Box<[Option<JObject>]>> = call!(static me.test.Test.getObjectArray() -> Option<[Option<java.lang.Object>]>);
-    r.unwrap().into_vec().into_iter().map(Option::unwrap).for_each(|_| {});
+    let r: Option<ObjectArray<Option<JObject>>> = call!(static me.test.Test.getObjectArray() -> Option<[Option<java.lang.Object>]>);
+    r.unwrap().into_iter().map(Option::unwrap).for_each(|_| {});
 
     // Multi-Dimensional Arrays
     let r: Box<[Box<[String]>]> = call!(static me.test.Test.get2DStringArray() -> [[String]]);
@@ -240,9 +240,9 @@ fn return_arrays_other() { run_with_jnienv(|| {
     r.unwrap().unwrap();
     let r: Result<Option<Box<[bool]>>, JavaException> = call!(static me.test.Test.primNullArray() -> Result<Option<[bool]>, Exception>);
     assert!(r.unwrap().is_none());
-    let r: Result<Option<Box<[JObject]>>, JavaException> = call!(static me.test.Test.getObjectArray() -> Result<Option<[java.lang.Object]>, Exception>);
+    let r: Result<Option<ObjectArray>, JavaException> = call!(static me.test.Test.getObjectArray() -> Result<Option<[java.lang.Object]>, Exception>);
     r.unwrap().unwrap();
-    let r: Result<Option<Box<[JObject]>>, JavaException> = call!(static me.test.Test.objNullArray() -> Result<Option<[java.lang.Object]>, Exception>);
+    let r: Result<Option<ObjectArray>, JavaException> = call!(static me.test.Test.objNullArray() -> Result<Option<[java.lang.Object]>, Exception>);
     assert!(r.unwrap().is_none());
 }) }
 
