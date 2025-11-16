@@ -87,7 +87,7 @@ jni_fn! { me.test.Native =>
     }
 
     pub fn native_test_obj_arr<'local>(arr: [java.lang.Object]) -> [java.lang.Object] {
-        let arr: ObjectArray = arr;
+        let arr: ObjectArray<JObject<'_>> = arr;
         assert!(arr.len() == 1);
         arr
     }

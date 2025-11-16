@@ -501,7 +501,7 @@ impl ArrayType {
                     let class = class.to_jni_class_path();
                     quote_spanned! {value.span()=>
                         ::ez_jni::ToObject::to_object_env(
-                            &::ez_jni::ObjectArray::<'_/* , #obj_rust_ty, &[#obj_rust_ty] */>::new_ref(
+                            &::ez_jni::ObjectArray::new_ref(
                                 ::std::convert::AsRef::<[_ /* #obj_rust_ty */]>::as_ref(&(#value)),
                                 #class,
                             ),
@@ -547,7 +547,6 @@ impl Conversion for ArrayType {
     /// See [`origin`][Conversion::type_tokens()].
     fn type_tokens(&self, as_ref: bool, is_nested: bool, lifetime: Option<syn::Lifetime>) -> TokenStream {
         let span = self.span();
-        let lt = lifetime.clone().unwrap_or(syn::Lifetime::new("'_", span));
         // vvv Recursion occurs here vvv
         let elem_ty = self.ty.type_tokens(as_ref, true, lifetime);
         
@@ -556,7 +555,7 @@ impl Conversion for ArrayType {
             Type::Assertive(InnerType::Object(class))
             | Type::Option { ty: InnerType::Object(class), .. }
             if class.is_object_ref() => {
-                quote_spanned! {span=> ::ez_jni::ObjectArray<#lt, #elem_ty> }
+                quote_spanned! {span=> ::ez_jni::ObjectArray<#elem_ty> }
             }
             _ => if as_ref && is_nested {
                 quote_spanned! {span=> &[#elem_ty] }

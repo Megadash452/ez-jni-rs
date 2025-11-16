@@ -51,7 +51,7 @@ where R: AsRef<JObject<'obj>> + 'obj {
 /// (because of what was mentioned previously, but also because the array can be empty).
 /// To resolve this, [`ObjectArray`] stores the Java Array's **element class**.
 #[derive(Debug)]
-pub struct ObjectArray<'obj, T = JObject<'obj>, Array = Box<[T]>>
+pub struct ObjectArray<T, Array = Box<[T]>>
 where Array: AsRef<[T]>,
           T: ObjectArrayElement
 {
@@ -60,9 +60,8 @@ where Array: AsRef<[T]>,
     array: Array,
     elem_class: Cow<'static, str>,
     _t: PhantomData<T>,
-    _lt: PhantomData<&'obj ()>
 }
-impl<'a, 'obj, T> ObjectArray<'obj, T, &'a [T]>
+impl<'a, T> ObjectArray<T, &'a [T]>
 where T: ObjectArrayElement {
     /// Create a new [`ObjectArray`], but only borrowing existing values.
     /// 
@@ -74,21 +73,21 @@ where T: ObjectArrayElement {
         Self::new(slice, Cow::Borrowed(elem_class))
     }
 }
-impl<'obj, T, Array> ObjectArray<'obj, T, Array>
+impl<T, Array> ObjectArray<T, Array>
 where Array: AsRef<[T]>,
           T: ObjectArrayElement
 {
     #[inline(always)]
     pub fn new(array: Array, elem_class: Cow<'static, str>) -> Self {
         // TODO: check class of elements?
-        Self { array, elem_class, _t: PhantomData, _lt: PhantomData }
+        Self { array, elem_class, _t: PhantomData }
     }
     
     /// Helps with converting the `Array` type to a different *Rust type*.
     /// 
     /// E.g. convert `ObjectArray<Box<[_]>>` to `ObjectArray<Vec<_>>`.
     #[inline(always)]
-    pub fn convert_array<OtherArray>(self, conversion: impl FnOnce(Array) -> OtherArray) -> ObjectArray<'obj, T, OtherArray>
+    pub fn convert_array<OtherArray>(self, conversion: impl FnOnce(Array) -> OtherArray) -> ObjectArray<T, OtherArray>
     where OtherArray: AsRef<[T]> {
         ObjectArray::new(conversion(self.array), self.elem_class)
     }
@@ -122,8 +121,8 @@ where Array: AsRef<[T]>,
 }
 
 // TODO: allow Array to be any type that implements FromObject2 (maybe call that trait something better?)
-impl<'local, T> FromObject<'local> for ObjectArray<'local, T, Box<[T]>>
-where T: FromArrayObject<'local> {
+impl<'local, T> FromObject<'local> for ObjectArray<T, Box<[T]>>
+where T: ObjectArrayElement + FromArrayObject<'local> {
     fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
         // Get the elem_class early to do the class check.
         let elem_class = get_elem_class(object, env)?;
@@ -131,15 +130,15 @@ where T: FromArrayObject<'local> {
         Ok(Self::new(array, Cow::Owned(elem_class)))
     }
 }
-impl<'local, T> FromObject<'local> for ObjectArray<'local, T, Vec<T>>
-where T: element::FromArrayObject<'local> {
+impl<'local, T> FromObject<'local> for ObjectArray<T, Vec<T>>
+where T: FromArrayObject<'local> {
     fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
-        Ok(ObjectArray::<'local, T, Box<[T]>>::from_object_env(object, env)?
+        Ok(ObjectArray::<T, Box<[T]>>::from_object_env(object, env)?
             .convert_array(Vec::from)
         )
     }
 }
-impl<'obj, T, Array> ToObject for ObjectArray<'obj, T, Array>
+impl<T, Array> ToObject for ObjectArray<T, Array>
 where Array: AsRef<[T]>,
           T: ObjectArrayElement
 {
@@ -149,7 +148,7 @@ where Array: AsRef<[T]>,
     }
 }
 
-impl<T, Array> Class for ObjectArray<'_, T, Array>
+impl<T, Array> Class for ObjectArray<T, Array>
 where Array: AsRef<[T]>,
           T: ObjectArrayElement + Class
 {
@@ -159,7 +158,7 @@ where Array: AsRef<[T]>,
     }
 }
 
-impl<T, Array> IntoIterator for ObjectArray<'_, T, Array>
+impl<T, Array> IntoIterator for ObjectArray<T, Array>
 where Array: AsRef<[T]> + IntoIterator,
           T: ObjectArrayElement,
 {
@@ -171,7 +170,7 @@ where Array: AsRef<[T]> + IntoIterator,
         self.array.into_iter()
     }
 }
-impl<I, T, Array> Index<I> for ObjectArray<'_, T, Array>
+impl<I, T, Array> Index<I> for ObjectArray<T, Array>
 where I: SliceIndex<[T]>,
   Array: AsRef<[T]>,
       T: ObjectArrayElement,
@@ -183,7 +182,7 @@ where I: SliceIndex<[T]>,
         self.as_ref().index(index)
     }
 }
-impl<I, T, Array> IndexMut<I> for ObjectArray<'_, T, Array>
+impl<I, T, Array> IndexMut<I> for ObjectArray<T, Array>
 where I: SliceIndex<[T]>,
   Array: AsRef<[T]> + AsMut<[T]>,
       T: ObjectArrayElement,
@@ -193,7 +192,7 @@ where I: SliceIndex<[T]>,
         self.as_mut().index_mut(index)
     }
 }
-impl<T, Array> Hash for ObjectArray<'_, T, Array>
+impl<T, Array> Hash for ObjectArray<T, Array>
 where Array: AsRef<[T]>,
         T: ObjectArrayElement + Hash,
 {
@@ -203,7 +202,7 @@ where Array: AsRef<[T]>,
         self.array.as_ref().hash(state);
     }
 }
-impl<T, Array> PartialEq for ObjectArray<'_, T, Array>
+impl<T, Array> PartialEq for ObjectArray<T, Array>
 where Array: AsRef<[T]>,
         T: ObjectArrayElement + PartialEq,
 {
@@ -213,7 +212,7 @@ where Array: AsRef<[T]>,
         && self.array.as_ref().eq(other.array.as_ref())
     }
 }
-impl<T, Array> PartialEq<&Self> for ObjectArray<'_, T, Array>
+impl<T, Array> PartialEq<&Self> for ObjectArray<T, Array>
 where Array: AsRef<[T]>,
         T: ObjectArrayElement + PartialEq,
 {
@@ -222,14 +221,14 @@ where Array: AsRef<[T]>,
         <Self as PartialEq<Self>>::eq(self, other)
     }
 }
-impl<T, Array> Eq for ObjectArray<'_, T, Array>
+impl<T, Array> Eq for ObjectArray<T, Array>
 where Array: AsRef<[T]>,
         T: ObjectArrayElement + Eq { }
 // Don't implement FromIterator, Ord, PartialOrd
 
 // TODO: implement Clone (new_local_ref), Display (.toString()), Extend<T> (check class) if allowing implicit jni calls without manually passing env
 
-impl<T, Array> AsRef<[T]> for ObjectArray<'_, T, Array>
+impl<T, Array> AsRef<[T]> for ObjectArray<T, Array>
 where Array: AsRef<[T]>,
           T: ObjectArrayElement
 {
@@ -238,7 +237,7 @@ where Array: AsRef<[T]>,
         self.array.as_ref()
     }
 }
-impl<T, Array> AsMut<[T]> for ObjectArray<'_, T, Array>
+impl<T, Array> AsMut<[T]> for ObjectArray<T, Array>
 where Array: AsRef<[T]> + AsMut<[T]>,
           T: ObjectArrayElement
 {
@@ -247,7 +246,7 @@ where Array: AsRef<[T]> + AsMut<[T]>,
         self.array.as_mut()
     }
 }
-impl<T, Array> Deref for ObjectArray<'_, T, Array>
+impl<T, Array> Deref for ObjectArray<T, Array>
 where Array: AsRef<[T]>,
           T: ObjectArrayElement
 {
@@ -258,7 +257,7 @@ where Array: AsRef<[T]>,
         &self.array
     }
 }
-impl<T, Array> DerefMut for ObjectArray<'_, T, Array>
+impl<T, Array> DerefMut for ObjectArray<T, Array>
 where Array: AsRef<[T]>,
           T: ObjectArrayElement
 {
@@ -267,7 +266,7 @@ where Array: AsRef<[T]>,
         &mut self.array
     }
 }
-impl<T, Array> Borrow<[T]> for ObjectArray<'_, T, Array>
+impl<T, Array> Borrow<[T]> for ObjectArray<T, Array>
 where Array: AsRef<[T]>,
           T: ObjectArrayElement
 {
@@ -276,7 +275,7 @@ where Array: AsRef<[T]>,
         self.array.as_ref()
     }
 }
-impl<T, Array> BorrowMut<[T]> for ObjectArray<'_, T, Array>
+impl<T, Array> BorrowMut<[T]> for ObjectArray<T, Array>
 where Array: AsRef<[T]> + AsMut<[T]>,
           T: ObjectArrayElement
 {

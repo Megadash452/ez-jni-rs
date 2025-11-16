@@ -1,7 +1,7 @@
 use jni::objects::GlobalRef;
 use std::{fmt::{Debug, Display}, io, ops::Deref};
 use ez_jni_macros::new;
-use crate::{__throw::get_jni_error_msg, utils::{get_object_class_name, JniResultExt as _}};
+use crate::utils::{get_object_class_name, JniResultExt as _};
 
 use super::*;
 
@@ -97,7 +97,7 @@ impl FromObject<'_> for JavaException {
 
         // Check that Object is an Exception
         if !env.is_instance_of(object, <Self as Class>::class())
-            .map_err(|err| FromObjectError::Other(format!("Error calling 'instanceof': {}", get_jni_error_msg(err, env))))?
+            .map_err(|err| FromObjectError::from_jni_with_msg("Error calling 'instanceof'", err, env))?
         {
             return Err(FromObjectError::ClassMismatch {
                 obj_class: class,
@@ -109,7 +109,7 @@ impl FromObject<'_> for JavaException {
             class,
             message: call!(env=> object.getMessage() -> Option<String>),
             exception: env.new_global_ref(&object)
-                .map_err(|err| FromObjectError::Other(get_jni_error_msg(err, env)))?,
+                .map_err(|err| FromObjectError::from_jni(err, env))?,
         })
     }
 }

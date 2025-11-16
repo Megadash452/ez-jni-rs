@@ -275,12 +275,12 @@ where Self: ToObject { impl_to_jvalue_env!(); }
 impl<const N: usize, T> ToJValue for [T; N]
 where Self: ToObject { impl_to_jvalue_env!(); }
 
-impl<'local, T, Array> FromJValue<'local> for ObjectArray<'local, T, Array>
+impl<'local, T, Array> FromJValue<'local> for ObjectArray<T, Array>
 where Self: FromObject<'local>,
       Array: AsRef<[T]>,
           T: ObjectArrayElement
 { impl_from_jvalue_env!(<'local>); }
-impl<T, Array> ToJValue for ObjectArray<'_, T, Array>
+impl<T, Array> ToJValue for ObjectArray<T, Array>
 where Array: AsRef<[T]>,
           T: ObjectArrayElement
 { impl_to_jvalue_env!(); }

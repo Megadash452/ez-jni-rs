@@ -1,6 +1,6 @@
 use std::mem::MaybeUninit;
 use jni::objects::{GlobalRef, JClass, JString};
-use crate::{__throw::get_jni_error_msg, Class, utils::{check_object_class, create_java_prim_array, get_java_prim_array}};
+use crate::{Class, utils::{check_object_class, create_java_prim_array, get_java_prim_array}};
 use super::*;
 
 impl<T> ToObject for &T
@@ -412,7 +412,7 @@ impl FromObjectOwned<'_> for GlobalRef {
             return Err(FromObjectError::Null);
         }
         env.new_global_ref(object)
-            .map_err(|error| FromObjectError::Other(format!("Failed to create new Global reference: {}", get_jni_error_msg(error, env))))
+            .map_err(|error| FromObjectError::from_jni_with_msg("Failed to create new Global reference", error, env))
     }
 }
 impl<'obj, T> FromObjectOwned<'obj> for Option<T>

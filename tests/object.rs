@@ -193,7 +193,7 @@ struct MyClass2<'local> {
 struct MyClass3<'local> {
     #[field(call = memberObject, class = java.lang.Integer)]
     member: Option<i32>,
-    array_field: ObjectArray<'local, Option<JString<'local>>>
+    array_field: ObjectArray<Option<JString<'local>>>
 }
 
 /// Test field FromObject for custom structs
@@ -324,7 +324,7 @@ fn from_object_array() { run_with_jnienv(|| {
         Box::<[MyClass]>::from_object(&object).unwrap().as_ref()
     );
     // FIXME: Why do I need to specify JObject here if the Default T is already JObject???
-    ObjectArray::<'_, JObject<'_>>::from_object(&object).unwrap();
+    ObjectArray::<JObject<'_>>::from_object(&object).unwrap();
 
     // Array Option
     object = ObjectArray::new_ref(
@@ -335,7 +335,7 @@ fn from_object_array() { run_with_jnienv(|| {
         Box::<[Option<MyClass>]>::from_object(&object).unwrap().as_ref(),
         [None, Some(MyClass { member_field: 1 }), None]
     );
-    ObjectArray::<'_, Option<JObject<'_>>>::from_object(&object).unwrap();
+    ObjectArray::<Option<JObject<'_>>>::from_object(&object).unwrap();
 
     // Multidimensional Array
     object = ObjectArray::new_ref(
@@ -352,7 +352,7 @@ fn from_object_array() { run_with_jnienv(|| {
             Box::new([MyClass { member_field: 4 }, MyClass { member_field: 5 }, MyClass { member_field: 6 }]) as Box<[_]>,
         ]
     );
-    ObjectArray::<'_, Box<[JObject<'_>]>>::from_object(&object).unwrap();
+    ObjectArray::<Box<[JObject<'_>]>>::from_object(&object).unwrap();
 
     // 2-Dimensional Option Array
     object = ObjectArray::new_ref(
@@ -369,7 +369,7 @@ fn from_object_array() { run_with_jnienv(|| {
             Box::new([Some(MyClass { member_field: 2 }), None, Some(MyClass { member_field: 3 })]) as Box<[_]>,
         ]
     );
-    ObjectArray::<'_, Box<[Option<JObject<'_>>]>>::from_object(&object).unwrap();
+    ObjectArray::<Box<[Option<JObject<'_>>]>>::from_object(&object).unwrap();
 
     // 2-Dimensional Option Array
     object = ObjectArray::new_ref(
@@ -388,5 +388,5 @@ fn from_object_array() { run_with_jnienv(|| {
             Some(Box::new([MyClass { member_field: 3 }, MyClass { member_field: 4 }]) as Box<[_]>),
         ]
     );
-    ObjectArray::<'_, Option<Box<[JObject<'_>]>>>::from_object(&object).unwrap();
+    ObjectArray::<Option<Box<[JObject<'_>]>>>::from_object(&object).unwrap();
 }) }

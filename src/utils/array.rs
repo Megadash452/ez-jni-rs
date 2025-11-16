@@ -8,7 +8,7 @@ use crate::{call, utils::get_object_class_name, FromObject, FromObjectError, Pri
 pub fn get_elem_class(obj: &JObject<'_>, env: &mut JNIEnv<'_>) -> Result<String, FromObjectError> {
     // Get the class of the Array Object.
     let obj_class = env.get_object_class(obj)
-        .map_err(|err| FromObjectError::Other(format!("Could not get Object's class: {}", get_jni_error_msg(err, env))))?;
+        .map_err(|err| FromObjectError::from_jni_with_msg("Could not get Object's class", err, env))?;
     
     match call!(env=> obj_class.getComponentType() -> Option<Class>) {
         Some(elem_class) => Ok(call!(env=> elem_class.getName() -> String)),
@@ -64,14 +64,14 @@ where T: Primitive + for<'local> FromObject<'local> {
     if array_class == format!("[{}", T::JSIG) {
         // Array contains primitives
         let len = env.get_array_length(array)
-            .map_err(|err| FromObjectError::Other(format!("Failed to check Array's length: {}", get_jni_error_msg(err, env))))?
+            .map_err(|err| FromObjectError::from_jni_with_msg("Failed to check Array's length", err, env))?
             as usize;
         // Allocate boxed slice
         let mut vec = vec![unsafe { std::mem::zeroed() }; len].into_boxed_slice();
 
         // Fill slice
         T::slice_filler(&array, &mut vec, env)
-            .map_err(|err| FromObjectError::Other(format!("Failed to read Array elements: {}", get_jni_error_msg(err, env))))?;
+            .map_err(|err| FromObjectError::from_jni_with_msg("Failed to read Array elements", err, env))?;
 
         Ok(match T::CONVERT_JAVA_TO_RUST {
             Some(elem_conversion) => vec.into_iter()
@@ -111,14 +111,14 @@ pub fn get_object_array_owned<'local, T>(
     let array = <&JObjectArray<'_>>::from(obj);
 
     let len = env.get_array_length(array)
-        .map_err(|err| FromObjectError::Other(format!("Failed to check Array's length: {}", get_jni_error_msg(err, env))))?
+        .map_err(|err| FromObjectError::from_jni_with_msg("Failed to check Array's length", err, env))?
         as usize;
 
     let mut vec = Vec::with_capacity(len);
 
     for i in 0..len {
         let elem = env.get_object_array_element(array, i as jsize)
-                .map_err(|err| FromObjectError::ArrayElement { index: i, error: Box::new(FromObjectError::Other(get_jni_error_msg(err, env))) })?;
+                .map_err(|err| FromObjectError::ArrayElement { index: i, error: Box::new(FromObjectError::from_jni(err, env)) })?;
         vec.push(conversion(elem, env)
             .map_err(|error| FromObjectError::ArrayElement { index: i, error: Box::new(error) })?
         )

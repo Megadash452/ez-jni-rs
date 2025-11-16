@@ -2,11 +2,11 @@ mod r#impl;
 mod impl_exception;
 pub(crate) mod array;
 
-use std::cmp::Ordering;
-use jni::{objects::{JObject, JThrowable}, JNIEnv};
+use std::{cmp::Ordering, fmt::Display};
+use jni::{objects::{JObject, JThrowable}, JNIEnv, errors::Error as JNIError};
 use thiserror::Error;
 use ez_jni_macros::call;
-use crate::{Class, FromJValueError, utils::{create_object_array_converted, get_env, get_object_array_converted}};
+use crate::{__throw::get_jni_error_msg, Class, FromJValueError, utils::{create_object_array_converted, get_env, get_object_array_converted}};
 
 #[doc(hidden)]
 pub use r#impl::FromObjectOwned;
@@ -36,6 +36,18 @@ pub enum FromObjectError {
     ArrayTooLong { expected_len: usize, actual_len: usize },
     #[error("Error converting Java Object: {0}")]
     Other(String)
+}
+impl FromObjectError {
+    /// Convert a [`JNIError`] to a [`FromObjectError`] by generating an error message.
+    #[inline(always)]
+    pub fn from_jni(error: JNIError, env: &mut JNIEnv<'_>) -> Self {
+        Self::Other(get_jni_error_msg(error, env))
+    }
+    /// Like [`Self::from_jni()`], but allows passing a message to display *before* the [`JNIError`] message.
+    #[inline(always)]
+    pub fn from_jni_with_msg(prefix: impl Display, error: JNIError, env: &mut JNIEnv<'_>) -> Self {
+        Self::Other(format!("{prefix}: {}", get_jni_error_msg(error, env)))
+    }
 }
 impl From<FromJValueError> for FromObjectError {
     fn from(err: FromJValueError) -> Self {
@@ -93,7 +105,7 @@ impl From<FromJValueError> for FromObjectError {
 ///     #[class(me.author.MyOtherClass)]
 ///     Others {
 ///         #[field(class = [[me.author.MyClass]])]
-///         instances: Box<[ObjectArray<'local>]>
+///         instances: Box<[ObjectArray<JObject<'local>>]>
 ///     },
 /// }
 /// ```

@@ -23,7 +23,7 @@ impl<T> ObjectArrayElement for &[T]
 where T: ObjectArrayElement { }
 impl<T, const N: usize> ObjectArrayElement for [T; N]
 where T: ObjectArrayElement { }
-impl<T, Array> ObjectArrayElement for ObjectArray<'_, T, Array>
+impl<T, Array> ObjectArrayElement for ObjectArray<T, Array>
 where Array: AsRef<[T]>,
       T: ObjectArrayElement { }
 
@@ -31,7 +31,7 @@ where Array: AsRef<[T]>,
 // but it works in this case because Objects coming out of get_object_array() come straight out of the env,
 // so they are both going to have the same lifetime.
 trait FromObject2<'local>
-where Self: ObjectArrayElement + Sized {
+where Self: ObjectArrayElement + Sized + 'local {
     fn from_object(object: JObject<'local>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError>;
 }
 // Also acts like a seal
@@ -182,9 +182,9 @@ where Box<[T]>: for<'a, 'obj> FromObject2<'local>,
         Ok(array.map(|v| unsafe { v.assume_init() }))
     }
 }
-impl<'local, T, Array> FromObject2<'local> for ObjectArray<'local, T, Array>
+impl<'local, T, Array> FromObject2<'local> for ObjectArray<T, Array>
 where Array: AsRef<[T]> + FromObject2<'local>,
-      T: ObjectArrayElement,
+      T: ObjectArrayElement + 'local,
 {
     fn from_object(object: JObject<'local>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
         // Get the elem_class early to do the class check.
@@ -230,7 +230,7 @@ where [T]: ToObject2 {
         <[T] as ToObject2>::to_object(self, elem_class, env)
     }
 }
-impl<T, Array> ToObject2 for ObjectArray<'_, T, Array>
+impl<T, Array> ToObject2 for ObjectArray<T, Array>
 where Array: AsRef<[T]>,
       T: ObjectArrayElement,
 {

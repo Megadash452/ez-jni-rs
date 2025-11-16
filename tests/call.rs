@@ -194,7 +194,7 @@ fn return_arrays() { run_with_jnienv(|| {
 #[test]
 fn return_arrays_other() { run_with_jnienv(|| {
     // Object
-    let _: ObjectArray = call!(static me.test.Test.getObjectArray() -> [java.lang.Object]);
+    let _: ObjectArray<JObject> = call!(static me.test.Test.getObjectArray() -> [java.lang.Object]);
     let _: ObjectArray<JString> = call!(static me.test.Test.getStringArray() -> [java.lang.String]);
     let _: Box<[String]> = call!(static me.test.Test.getStringArray() -> [String]);
     // Result Primitive
@@ -203,18 +203,18 @@ fn return_arrays_other() { run_with_jnienv(|| {
     let r: Result<Box<[bool]>, JavaException> = call!(static me.test.Test.throwPrimArray() -> Result<[bool], java.lang.IndexOutOfBoundsException>);
     r.unwrap_err();
     // Result Object
-    let r: Result<ObjectArray, JavaException> = call!(static me.test.Test.getObjectArray() -> Result<[java.lang.Object], java.lang.IndexOutOfBoundsException>);
+    let r: Result<ObjectArray<JObject>, JavaException> = call!(static me.test.Test.getObjectArray() -> Result<[java.lang.Object], java.lang.IndexOutOfBoundsException>);
     r.unwrap();
-    let r: Result<ObjectArray, JavaException> = call!(static me.test.Test.throwObjArray() -> Result<[java.lang.Object], java.lang.IndexOutOfBoundsException>);
+    let r: Result<ObjectArray<JObject>, JavaException> = call!(static me.test.Test.throwObjArray() -> Result<[java.lang.Object], java.lang.IndexOutOfBoundsException>);
     r.unwrap_err();
     // Option
     let r: Option<Box<[bool]>> = call!(static me.test.Test.getBooleanArray() -> Option<[bool]>);
     r.unwrap();
     let r: Option<Box<[bool]>> = call!(static me.test.Test.primNullArray() -> Option<[bool]>);
     assert!(r.is_none());
-    let r: Option<ObjectArray> = call!(static me.test.Test.getObjectArray() -> Option<[java.lang.Object]>);
+    let r: Option<ObjectArray<JObject>> = call!(static me.test.Test.getObjectArray() -> Option<[java.lang.Object]>);
     r.unwrap();
-    let r: Option<ObjectArray> = call!(static me.test.Test.objNullArray() -> Option<[java.lang.Object]>);
+    let r: Option<ObjectArray<JObject>> = call!(static me.test.Test.objNullArray() -> Option<[java.lang.Object]>);
     assert!(r.is_none());
     // Array Option
     let r: Box<[Option<String>]> = call!(static me.test.Test.getStringArray() -> [Option<String>]);
@@ -240,9 +240,9 @@ fn return_arrays_other() { run_with_jnienv(|| {
     r.unwrap().unwrap();
     let r: Result<Option<Box<[bool]>>, JavaException> = call!(static me.test.Test.primNullArray() -> Result<Option<[bool]>, Exception>);
     assert!(r.unwrap().is_none());
-    let r: Result<Option<ObjectArray>, JavaException> = call!(static me.test.Test.getObjectArray() -> Result<Option<[java.lang.Object]>, Exception>);
+    let r: Result<Option<ObjectArray<JObject>>, JavaException> = call!(static me.test.Test.getObjectArray() -> Result<Option<[java.lang.Object]>, Exception>);
     r.unwrap().unwrap();
-    let r: Result<Option<ObjectArray>, JavaException> = call!(static me.test.Test.objNullArray() -> Result<Option<[java.lang.Object]>, Exception>);
+    let r: Result<Option<ObjectArray<JObject>>, JavaException> = call!(static me.test.Test.objNullArray() -> Result<Option<[java.lang.Object]>, Exception>);
     assert!(r.unwrap().is_none());
 }) }
 
