@@ -30,7 +30,7 @@ where Array: AsRef<[T]>,
 // Using only 1 lifetime here wouldn't usually work for both lone Object References and Arrays of Object References,
 // but it works in this case because Objects coming out of get_object_array() come straight out of the env,
 // so they are both going to have the same lifetime.
-trait FromObject2<'local>
+pub(super) trait FromObject2<'local>
 where Self: ObjectArrayElement + Sized + 'local {
     fn from_object(object: JObject<'local>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError>;
 }
@@ -39,28 +39,11 @@ trait ToObject2 {
     fn to_object<'local>(&self, elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local>;
 }
 
-/// A Sealed trait that allows converting a *Java Object* to a Rust `Boxed slice` of a *Rust Type*.
-#[allow(private_bounds)]
-pub(super) trait FromArrayObject<'local>
-where Self: FromObject2<'local> + 'local {
-    /// Creates a `boxed slice` of a Type that can be created [from a Java Object][FromObject].
-    /// 
-    /// Users should NOT use this trait method.
-    /// Instead use the implementation of [`FromObject`] for `boxed slice` or [`Vec`].
-    fn from_array_object(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Box<[Self]>, FromObjectError>;
-}
 /// A trait that allows converting a Rust `slice` to a *Java Object*.
 pub(super) trait ToArrayObject: Sized {
     fn to_array_object<'local>(slice: &[Self], elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local>;
 }
 
-impl<'local, T> FromArrayObject<'local> for T
-where T: FromObject2<'local> + 'local {
-    #[inline(always)]
-    fn from_array_object(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Box<[Self]>, FromObjectError> {
-        get_object_array_owned(object, <T as FromObject2>::from_object, env)
-    }
-}
 impl<T> ToArrayObject for T
 where T: ToObject2 {
     #[inline(always)]

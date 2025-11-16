@@ -3,7 +3,7 @@ mod element;
 use super::*;
 use std::{borrow::{Borrow, BorrowMut, Cow}, fmt::Debug, hash::{Hash, Hasher}, marker::PhantomData, ops::{Deref, DerefMut, Index, IndexMut}, slice::SliceIndex};
 use crate::utils::get_elem_class;
-use element::FromArrayObject;
+use element::FromObject2 as ArrayFromObject;
 pub use element::ObjectArrayElement;
 
 // No blanket implementation? No custom types? ;-;
@@ -120,27 +120,25 @@ where Array: AsRef<[T]>,
     }
 }
 
-// TODO: allow Array to be any type that implements FromObject2 (maybe call that trait something better?)
-impl<'local, T> FromObject<'local> for ObjectArray<T, Box<[T]>>
-where T: ObjectArrayElement + FromArrayObject<'local> {
+impl<'local, T, Array> FromObject<'local> for ObjectArray<T, Array>
+where Array: AsRef<[T]> + ArrayFromObject<'local>,
+          T: ObjectArrayElement + 'local,
+{
     fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
         // Get the elem_class early to do the class check.
         let elem_class = get_elem_class(object, env)?;
-        let array = <T as FromArrayObject>::from_array_object(object, env)?;
+        /* SAFETY: Implementation of from_object() for Array types does not return the original object that was passed in,
+                   and only use the object as borrowed directly to query the array object.
+                   And since JObjects aren't dropped, the reference is safe to pass as owned.
+                   The lifetime is also cast to 'local, but the same points explain why. */
+        let object = unsafe { JObject::<'local>::from_raw(object.as_raw()) };
+        let array = <Array as ArrayFromObject>::from_object(object, env)?;
         Ok(Self::new(array, Cow::Owned(elem_class)))
-    }
-}
-impl<'local, T> FromObject<'local> for ObjectArray<T, Vec<T>>
-where T: FromArrayObject<'local> {
-    fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
-        Ok(ObjectArray::<T, Box<[T]>>::from_object_env(object, env)?
-            .convert_array(Vec::from)
-        )
     }
 }
 impl<T, Array> ToObject for ObjectArray<T, Array>
 where Array: AsRef<[T]>,
-          T: ObjectArrayElement
+          T: ObjectArrayElement,
 {
     #[inline(always)]
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
@@ -150,7 +148,7 @@ where Array: AsRef<[T]>,
 
 impl<T, Array> Class for ObjectArray<T, Array>
 where Array: AsRef<[T]>,
-          T: ObjectArrayElement + Class
+          T: ObjectArrayElement + Class,
 {
     #[inline(always)]
     fn class() -> Cow<'static, str> {
@@ -226,11 +224,11 @@ where Array: AsRef<[T]>,
         T: ObjectArrayElement + Eq { }
 // Don't implement FromIterator, Ord, PartialOrd
 
-// TODO: implement Clone (new_local_ref), Display (.toString()), Extend<T> (check class) if allowing implicit jni calls without manually passing env
+// TODO: implement Drop (delete_local_ref), Clone (new_local_ref), Display (.toString()), Extend<T> (check class) if allowing implicit jni calls without manually passing env
 
 impl<T, Array> AsRef<[T]> for ObjectArray<T, Array>
 where Array: AsRef<[T]>,
-          T: ObjectArrayElement
+          T: ObjectArrayElement,
 {
     #[inline(always)]
     fn as_ref(&self) -> &[T] {
@@ -239,7 +237,7 @@ where Array: AsRef<[T]>,
 }
 impl<T, Array> AsMut<[T]> for ObjectArray<T, Array>
 where Array: AsRef<[T]> + AsMut<[T]>,
-          T: ObjectArrayElement
+          T: ObjectArrayElement,
 {
     #[inline(always)]
     fn as_mut(&mut self) -> &mut [T] {
@@ -248,7 +246,7 @@ where Array: AsRef<[T]> + AsMut<[T]>,
 }
 impl<T, Array> Deref for ObjectArray<T, Array>
 where Array: AsRef<[T]>,
-          T: ObjectArrayElement
+          T: ObjectArrayElement,
 {
     type Target = Array;
     
@@ -259,7 +257,7 @@ where Array: AsRef<[T]>,
 }
 impl<T, Array> DerefMut for ObjectArray<T, Array>
 where Array: AsRef<[T]>,
-          T: ObjectArrayElement
+          T: ObjectArrayElement,
 {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
@@ -268,7 +266,7 @@ where Array: AsRef<[T]>,
 }
 impl<T, Array> Borrow<[T]> for ObjectArray<T, Array>
 where Array: AsRef<[T]>,
-          T: ObjectArrayElement
+          T: ObjectArrayElement,
 {
     #[inline(always)]
     fn borrow(&self) -> &[T] {
@@ -277,7 +275,7 @@ where Array: AsRef<[T]>,
 }
 impl<T, Array> BorrowMut<[T]> for ObjectArray<T, Array>
 where Array: AsRef<[T]> + AsMut<[T]>,
-          T: ObjectArrayElement
+          T: ObjectArrayElement,
 {
     #[inline(always)]
     fn borrow_mut(&mut self) -> &mut [T] {
