@@ -125,14 +125,14 @@ where Array: AsRef<[T]> + ArrayFromObject<'local>,
           T: ObjectArrayElement + 'local,
 {
     fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
-        // Get the elem_class early to do the class check.
-        let elem_class = get_elem_class(object, env)?;
         /* SAFETY: Implementation of from_object() for Array types does not return the original object that was passed in,
                    and only use the object as borrowed directly to query the array object.
                    And since JObjects aren't dropped, the reference is safe to pass as owned.
                    The lifetime is also cast to 'local, but the same points explain why. */
-        let object = unsafe { JObject::<'local>::from_raw(object.as_raw()) };
-        let array = <Array as ArrayFromObject>::from_object(object, env)?;
+        let obj = unsafe { JObject::<'local>::from_raw(object.as_raw()) };
+        let array = <Array as ArrayFromObject>::from_object(obj, env)?;
+        // Get elem_class ***after*** constructing Array so FromObject2 can do the null and class check. This also avoids unnecessary jni calls.
+        let elem_class = get_elem_class(object, env)?;
         Ok(Self::new(array, Cow::Owned(elem_class)))
     }
 }

@@ -34,7 +34,6 @@ pub fn run_with_jnienv(f: impl FnOnce() + UnwindSafe) {
     let (result, mut env) = unsafe { ez_jni::__throw::run_with_jnienv_helper(get_env(), false, |_| f()) };
     let env = &mut env;
 
-
     /// This is allowed to panic
     fn create_panic_stmnt(panic: JniRunPanic, env: &mut JNIEnv<'_>) -> String {
         let mut backtrace = panic.rust_backtrace;

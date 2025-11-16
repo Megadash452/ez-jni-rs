@@ -79,7 +79,7 @@ pub unsafe fn run_with_jnienv_helper<'local, R: Sized>(
         static PANIC_BACKTRACE: RefCell<Option<StdBacktrace>> = const { RefCell::new(None) };
     };
 
-    // TODO: Investigate bug that doesn't set PANIC_LOCATION sometimes
+    let prev_hook = std::panic::take_hook();
     // Set panic hook to grab [`PANIC_LOCATION`] data.
     std::panic::set_hook(Box::new(move |info| {
         PANIC_LOCATION.set(Some(info.location().unwrap().into()));
@@ -130,10 +130,9 @@ pub unsafe fn run_with_jnienv_helper<'local, R: Sized>(
     // Remove the JNIEnv when the function finishes running
     env = stack_env.pop();
 
-    // Reset panic hook so that rust behaves normally after this,
-    // though this is only considered for tests.
-    std::panic::take_hook();
-    PANIC_HOOK_SET.set(false);
+    // Reset panic hook so that Rust behaves normally after this
+    std::panic::set_hook(prev_hook);
+    PANIC_HOOK_SET.set(false); // FIXME: setting this to false can cause UB. I should get rid of this global altogether... (find other ways of determining if function is in a JNIENV)
 
     (result, env)
 }

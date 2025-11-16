@@ -6,6 +6,10 @@ use crate::{call, utils::get_object_class_name, FromObject, FromObjectError, Pri
 /// 
 /// Returns a [`ClassMismatch`][FromObjectError::ClassMismatch] error if the object was *not* an *Array Object*.
 pub fn get_elem_class(obj: &JObject<'_>, env: &mut JNIEnv<'_>) -> Result<String, FromObjectError> {
+    if obj.is_null() {
+        return Err(FromObjectError::Null);
+    }
+    
     // Get the class of the Array Object.
     let obj_class = env.get_object_class(obj)
         .map_err(|err| FromObjectError::from_jni_with_msg("Could not get Object's class", err, env))?;

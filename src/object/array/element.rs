@@ -132,6 +132,7 @@ impl<'local, T> FromObject2<'local> for Box<[T]>
 where T: FromObject2<'local> {
     #[inline(always)]
     fn from_object(object: JObject<'local>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+        // SAFETY: Callers of FromObject2 for Array types assume that object is only used as borrow (even though its owned in the signature).
         get_object_array_owned(&object, <T as FromObject2>::from_object, env)
     }
 }
