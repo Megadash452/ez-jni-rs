@@ -323,7 +323,6 @@ fn from_object_array() { run_with_jnienv(|| {
         [MyClass { member_field: 1 }, MyClass { member_field: 2 }, MyClass { member_field: 3 }],
         Box::<[MyClass]>::from_object(&object).unwrap().as_ref()
     );
-    // FIXME: Why do I need to specify JObject here if the Default T is already JObject???
     ObjectArray::<JObject<'_>>::from_object(&object).unwrap();
 
     // Array Option
@@ -343,7 +342,7 @@ fn from_object_array() { run_with_jnienv(|| {
             [new!(me.test.Test(int(1))), new!(me.test.Test(int(2))), new!(me.test.Test(int(3)))],
             [new!(me.test.Test(int(4))), new!(me.test.Test(int(5))), new!(me.test.Test(int(6)))],
         ],
-        "[Lme/test/Test;",
+        "me/test/Test",
     ).to_object();
     assert_eq!(
         Box::<[Box<[MyClass]>]>::from_object(&object).unwrap().as_ref(),
@@ -360,7 +359,7 @@ fn from_object_array() { run_with_jnienv(|| {
             [None, Some(new!(me.test.Test(int(1)))), None],
             [Some(new!(me.test.Test(int(2)))), None, Some(new!(me.test.Test(int(3))))],
         ],
-        "[Lme/test/Test;",
+        "me/test/Test",
     ).to_object();
     assert_eq!(
         Box::<[Box<[Option<MyClass>]>]>::from_object(&object).unwrap().as_ref(),
@@ -378,7 +377,7 @@ fn from_object_array() { run_with_jnienv(|| {
             None,
             Some([new!(me.test.Test(int(3))), new!(me.test.Test(int(4)))]),
         ],
-        "[Lme/test/Test;",
+        "me/test/Test",
     ).to_object();
     assert_eq!(
         Box::<[Option<Box<[MyClass]>>]>::from_object(&object).unwrap().as_ref(),

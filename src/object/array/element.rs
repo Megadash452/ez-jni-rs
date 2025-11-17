@@ -4,28 +4,19 @@ use crate::{FromObjectError, utils::{create_object_array_converted, get_object_a
 use super::ObjectArray;
 
 // This pattern allows renaming ToObject2 to Seal to make it clear to the user.
-mod el {
+mod sealed {
     use super::ToObject2 as Seal;
+
+    // NOTE: All types named in this file implement ObjectArrayElement.
 
     /// Sealed Marker trait for Types that can be Elements of [`ObjectArray`][super::ObjectArray].
     #[allow(private_bounds)]
-    pub trait ObjectArrayElement: Seal { }
+    pub trait ObjectArrayElement: Seal {
+        // TODO: make const
+        fn get_dimensions_count() -> usize;
+    }
 }
-pub use el::ObjectArrayElement;
-
-impl<T> ObjectArrayElement for Option<T>
-where T: ObjectArrayElement { }
-impl<T> ObjectArrayElement for Box<[T]>
-where T: ObjectArrayElement { }
-impl<T> ObjectArrayElement for Vec<T>
-where T: ObjectArrayElement { }
-impl<T> ObjectArrayElement for &[T]
-where T: ObjectArrayElement { }
-impl<T, const N: usize> ObjectArrayElement for [T; N]
-where T: ObjectArrayElement { }
-impl<T, Array> ObjectArrayElement for ObjectArray<T, Array>
-where Array: AsRef<[T]>,
-      T: ObjectArrayElement { }
+pub use sealed::ObjectArrayElement;
 
 // Using only 1 lifetime here wouldn't usually work for both lone Object References and Arrays of Object References,
 // but it works in this case because Objects coming out of get_object_array() come straight out of the env,
@@ -54,7 +45,10 @@ where T: ToObject2 {
 
 macro_rules! impl_obj_array {
     ($ty:ty) => {
-        impl<'obj> ObjectArrayElement for $ty { }
+        impl<'obj> ObjectArrayElement for $ty {
+            #[inline(always)]
+            fn get_dimensions_count() -> usize { 0 }
+        }
         impl<'obj> FromObject2<'obj> for $ty {
             #[inline(always)]
             fn from_object(object: JObject<'obj>, _: &mut JNIEnv<'obj>) -> Result<Self, FromObjectError> {
@@ -82,14 +76,17 @@ impl_obj_array!(JClass<'obj>);
 impl_obj_array!(JThrowable<'obj>);
 impl_obj_array!(JString<'obj>);
 
-impl<'obj> ObjectArrayElement for GlobalRef { }
-impl<'obj> FromObject2<'obj> for GlobalRef {
+impl ObjectArrayElement for GlobalRef {
     #[inline(always)]
-    fn from_object(object: JObject<'obj>, env: &mut JNIEnv<'obj>) -> Result<Self, FromObjectError> {
+    fn get_dimensions_count() -> usize { 1 }
+}
+impl<'local> FromObject2<'local> for GlobalRef {
+    #[inline(always)]
+    fn from_object(object: JObject<'local>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
         <Self as crate::FromObjectOwned>::from_object_owned_env(object, env)
     }
 }
-impl<'obj> ToObject2 for GlobalRef {
+impl ToObject2 for GlobalRef {
     #[inline(always)]
     fn to_object<'local>(&self, _: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
         // Can create a new_local_ref because this is done inside a local frame
@@ -98,6 +95,13 @@ impl<'obj> ToObject2 for GlobalRef {
     }
 }
 
+impl<T> ObjectArrayElement for Option<T>
+where T: ObjectArrayElement {
+    #[inline(always)]
+    fn get_dimensions_count() -> usize {
+        T::get_dimensions_count()
+    }
+}
 impl<'local, T> FromObject2<'local> for Option<T>
 where T: FromObject2<'local> {
     #[inline(always)]
@@ -120,11 +124,56 @@ where T: ToObject2 {
     }
 }
 
+impl<T> ObjectArrayElement for &T
+where T: ObjectArrayElement {
+    #[inline(always)]
+    fn get_dimensions_count() -> usize {
+        T::get_dimensions_count()
+    }
+}
 impl<T> ToObject2 for &T
 where T: ToObject2 {
     #[inline(always)]
     fn to_object<'local>(&self, elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        T::to_object(self, elem_class, env)
+        <T as ToObject2>::to_object(self, elem_class, env)
+    }
+}
+
+impl<T> ObjectArrayElement for Box<[T]>
+where T: ObjectArrayElement {
+    #[inline(always)]
+    fn get_dimensions_count() -> usize {
+        T::get_dimensions_count() + 1
+    }
+}
+impl<T> ObjectArrayElement for Vec<T>
+where T: ObjectArrayElement {
+    #[inline(always)]
+    fn get_dimensions_count() -> usize {
+        <Box<[T]> as ObjectArrayElement>::get_dimensions_count()
+    }
+}
+impl<T> ObjectArrayElement for &[T]
+where T: ObjectArrayElement {
+    #[inline(always)]
+    fn get_dimensions_count() -> usize {
+        <Box<[T]> as ObjectArrayElement>::get_dimensions_count()
+    }
+}
+impl<T, const N: usize> ObjectArrayElement for [T; N]
+where T: ObjectArrayElement {
+    #[inline(always)]
+    fn get_dimensions_count() -> usize {
+        <Box<[T]> as ObjectArrayElement>::get_dimensions_count()
+    }
+}
+impl<T, Array> ObjectArrayElement for ObjectArray<T, Array>
+where T: ObjectArrayElement,
+  Array: AsRef<[T]>,
+{
+    #[inline(always)]
+    fn get_dimensions_count() -> usize {
+        <Box<[T]> as ObjectArrayElement>::get_dimensions_count()
     }
 }
 
@@ -167,14 +216,12 @@ where Box<[T]>: for<'a, 'obj> FromObject2<'local>,
     }
 }
 impl<'local, T, Array> FromObject2<'local> for ObjectArray<T, Array>
-where Array: AsRef<[T]> + FromObject2<'local>,
-      T: ObjectArrayElement + 'local,
+where T: ObjectArrayElement + 'local,
+  Array: AsRef<[T]> + FromObject2<'local>,
 {
+    #[inline(always)]
     fn from_object(object: JObject<'local>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
-        // Get the elem_class early to do the class check.
-        let elem_class = crate::utils::get_elem_class(&object, env)?;
-        let array = <Array as FromObject2>::from_object(object, env)?;
-        Ok(Self::new(array, elem_class.into()))
+        <Self as crate::FromObject>::from_object_env(&object, env)
     }
 }
 
@@ -182,8 +229,9 @@ impl<T> ToObject2 for [T]
 where T: ToObject2 {
     #[inline(always)]
     fn to_object<'local>(&self, elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        // FIXME: Reduce Class array bracket (or not, depending on whether elem class is for base Class Path, or for immediate element)
-        create_object_array_converted(self, |elem, env| <T as ToObject2>::to_object(elem, elem_class, env), elem_class, env)
+        create_object_array_converted(self, |elem, env| {
+            <T as ToObject2>::to_object(elem, take_array_class_bracket(elem_class), env)
+        }, elem_class, env)
     }
 }
 impl<T> ToObject2 for Box<[T]>
@@ -215,13 +263,21 @@ where [T]: ToObject2 {
     }
 }
 impl<T, Array> ToObject2 for ObjectArray<T, Array>
-where Array: AsRef<[T]>,
-      T: ObjectArrayElement,
+where T: ObjectArrayElement,
+  Array: AsRef<[T]>,
 {
     fn to_object<'local>(&self, elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        if elem_class != self.elem_class() {
-            panic!("The expected class (\"{elem_class}\") did not match the ObjectArray's stored class (\"{}\")", self.elem_class())
+        if elem_class != self.base_elem_class() {
+            panic!("The expected class (\"{elem_class}\") did not match the ObjectArray's stored class (\"{}\")", self.base_elem_class())
         }
         <Self as crate::ToObject>::to_object_env(self, env)
     }
+}
+
+/// Removes a *bracket* (`[`) from the **array class**, subtracting one dimension.
+/// 
+/// `panic!`s if the class was not an array (i.e. did not contain a bracket).
+fn take_array_class_bracket(array_class: &str) -> &str {
+    array_class.strip_prefix('[')
+        .unwrap_or_else(|| panic!("Expected elem_class \"{array_class}\" to be an Array Class."))
 }

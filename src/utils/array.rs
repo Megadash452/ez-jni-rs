@@ -1,28 +1,6 @@
 //! Contains helper functions for the To/FromObject implementatios in `/src/object/impl_array.rs`.
 use jni::{objects::{AutoLocal, JObject, JObjectArray, JPrimitiveArray}, sys::jsize, JNIEnv};
-use crate::{call, utils::get_object_class_name, FromObject, FromObjectError, Primitive, __throw::get_jni_error_msg};
-
-/// Get the **element class** of an *Array Object*.
-/// 
-/// Returns a [`ClassMismatch`][FromObjectError::ClassMismatch] error if the object was *not* an *Array Object*.
-pub fn get_elem_class(obj: &JObject<'_>, env: &mut JNIEnv<'_>) -> Result<String, FromObjectError> {
-    if obj.is_null() {
-        return Err(FromObjectError::Null);
-    }
-    
-    // Get the class of the Array Object.
-    let obj_class = env.get_object_class(obj)
-        .map_err(|err| FromObjectError::from_jni_with_msg("Could not get Object's class", err, env))?;
-    
-    match call!(env=> obj_class.getComponentType() -> Option<Class>) {
-        Some(elem_class) => Ok(call!(env=> elem_class.getName() -> String)),
-        // When getComponentType returns null, the class was not an Array class.
-        None => Err(FromObjectError::ClassMismatch {
-            obj_class: call!(env=> obj_class.getName() -> String),
-            target_class: Some("".to_string())
-        })
-    }
-}
+use crate::{utils::get_object_class_name, FromObject, FromObjectError, Primitive, __throw::get_jni_error_msg};
 
 /// Create a Java **Array** from a Rust [slice](https://doc.rust-lang.org/std/primitive.slice.html),
 /// where the element `T` is a [`Primitive`].

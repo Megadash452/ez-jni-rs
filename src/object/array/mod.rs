@@ -2,7 +2,7 @@ mod element;
 
 use super::*;
 use std::{borrow::{Borrow, BorrowMut, Cow}, fmt::Debug, hash::{Hash, Hasher}, marker::PhantomData, ops::{Deref, DerefMut, Index, IndexMut}, slice::SliceIndex};
-use crate::utils::get_elem_class;
+use crate::utils::get_object_class_name;
 use element::FromObject2 as ArrayFromObject;
 pub use element::ObjectArrayElement;
 
@@ -30,26 +30,39 @@ where R: AsRef<JObject<'obj>> + 'obj {
 /// 
 /// * The `Array` can be any type that can be read as a **slice** of `T`,
 /// but when calling [`from_object()`][FromObject::from_object_env()],
-/// it can only return an `Array` type of either [`Vec<T>`] or `Box<[T]>`.
+/// it can only return an `Array` type of either [`Vec<T>`], `Box<[T]>`, or `[T; N]`.
 /// 
 /// * The element `T` can be any *JNI Object reference type* (i.e. [`JObject`], `&JObject`, [`GlobalRef`][jni::objects::GlobalRef], etc.).
 /// Since all these types are essentially the same under the hood (an *object reference*),
 /// they can be trivially cast to [`JObject`].
+///   * The element `T` can also be an `Array` itself, so [`ObjectArray`] supports **multi-dimensional** arrays.
 /// 
 /// [`ObjectArray`] also implements [`Deref`] and [`DerefMut`] for the `Array` type,
 /// so you can call the `Array` methods directly from this type.
-/// Otherwise, you can call [`self.array()`][ObjectArray::array()] or [`self.array_mut()`][ObjectArray::array_mut()] to access the `Array`.
+/// There is also the [`take_array()`][ObjectArray::take_array()] method to move `Array` out of [`ObjectArray`],
+/// but you will need to keep track of the **base component's class** independently.
 /// 
-/// ## Element Class
+/// ## Base Element Class
 /// 
-/// Java Arrays store information about the **Class** its **elements** can be.
-/// Constructing a *Java Array* requires passing in the **element class**.
-/// The elements are *constrained* to be instances of the *Class*,
-/// but they can really be of any *Class* that extends the Array's **element class**.
-/// 
+/// Java Arrays store information about the **Class** its **elements** can be instances of,
+/// so creating a Java Array requires passing in the **element class**.
 /// It is impossible to have a consistent method of determining the **element class** from a *slice of objects* alone
 /// (because of what was mentioned previously, but also because the array can be empty).
 /// To resolve this, [`ObjectArray`] stores the Java Array's **element class**.
+/// 
+/// [`ObjectArray`] takes the class of the **base component** of the array,
+/// that is the class of the Type that is not an array within the Array dimensions.
+/// When the *Array Object* needs to be created,
+/// the *element class* is applied to the *Array Objects* for *all array dimensions*.
+/// 
+/// ## Example
+/// 
+/// ```
+/// ObjectArray::new(
+///     &[ &[ JObject::null() ] ],
+///     "me/my/MyClass"
+/// );
+/// ```
 #[derive(Debug)]
 pub struct ObjectArray<T, Array = Box<[T]>>
 where Array: AsRef<[T]>,
@@ -58,7 +71,7 @@ where Array: AsRef<[T]>,
     // TODO: Maybe implement it with an enum with states of an Array Object and a Rust array. When Rust needs to operate on the array it calls the necessary jni methods.
     // FIXME: Maybe also do Cow<[T]> and remove the Array generic?
     array: Array,
-    elem_class: Cow<'static, str>,
+    base_elem_class: Cow<'static, str>,
     _t: PhantomData<T>,
 }
 impl<'a, T> ObjectArray<T, &'a [T]>
@@ -69,8 +82,8 @@ where T: ObjectArrayElement {
     /// 
     /// This is useful when you need to convert a Rust *slice of Object References* to a Java *Array Object*.
     #[inline(always)]
-    pub fn new_ref(slice: &'a [T], elem_class: &'static str) -> Self {
-        Self::new(slice, Cow::Borrowed(elem_class))
+    pub fn new_ref(slice: &'a [T], base_elem_class: &'static str) -> Self {
+        Self::new(slice, Cow::Borrowed(base_elem_class))
     }
 }
 impl<T, Array> ObjectArray<T, Array>
@@ -78,9 +91,9 @@ where Array: AsRef<[T]>,
           T: ObjectArrayElement
 {
     #[inline(always)]
-    pub fn new(array: Array, elem_class: Cow<'static, str>) -> Self {
-        // TODO: check class of elements?
-        Self { array, elem_class, _t: PhantomData }
+    pub fn new(array: Array, base_elem_class: Cow<'static, str>) -> Self {
+        // TODO: check class of elements? Also accept dot and slash format??
+        Self { array, base_elem_class, _t: PhantomData }
     }
     
     /// Helps with converting the `Array` type to a different *Rust type*.
@@ -89,7 +102,7 @@ where Array: AsRef<[T]>,
     #[inline(always)]
     pub fn convert_array<OtherArray>(self, conversion: impl FnOnce(Array) -> OtherArray) -> ObjectArray<T, OtherArray>
     where OtherArray: AsRef<[T]> {
-        ObjectArray::new(conversion(self.array), self.elem_class)
+        ObjectArray::new(conversion(self.array), self.base_elem_class)
     }
 
     /// Returns the **slice** of the inner `Array`.
@@ -113,16 +126,18 @@ where Array: AsRef<[T]>,
         self.array
     }
     
-    /// Returns the **class** of the [`JObject`] Array elements.
+    /// Returns the **class** of the *base component* of the Object Array.
+    /// 
+    /// In other words, the base **class** of the [`JObject`]s that are stored in the bottom dimension of this type.
     #[inline(always)]
-    pub fn elem_class(&self) -> &str {
-        &self.elem_class
+    pub fn base_elem_class(&self) -> &str {
+        &self.base_elem_class
     }
 }
 
 impl<'local, T, Array> FromObject<'local> for ObjectArray<T, Array>
-where Array: AsRef<[T]> + ArrayFromObject<'local>,
-          T: ObjectArrayElement + 'local,
+where T: ObjectArrayElement + 'local,
+  Array: AsRef<[T]> + ArrayFromObject<'local>,
 {
     fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
         /* SAFETY: Implementation of from_object() for Array types does not return the original object that was passed in,
@@ -131,24 +146,39 @@ where Array: AsRef<[T]> + ArrayFromObject<'local>,
                    The lifetime is also cast to 'local, but the same points explain why. */
         let obj = unsafe { JObject::<'local>::from_raw(object.as_raw()) };
         let array = <Array as ArrayFromObject>::from_object(obj, env)?;
+
         // Get elem_class ***after*** constructing Array so FromObject2 can do the null and class check. This also avoids unnecessary jni calls.
-        let elem_class = get_elem_class(object, env)?;
-        Ok(Self::new(array, Cow::Owned(elem_class)))
+        let array_class = get_object_class_name(object, env);
+        let base_elem_class = array_class.trim_start_matches('[')
+            .strip_prefix('L')
+            .and_then(|class| class.strip_suffix(';'))
+            .expect(&format!("Class<?[]>.getName() did not return a class string in signature format: \"{array_class}\""));
+
+        let expected_array_class = gen_array_class(Array::get_dimensions_count(), base_elem_class);
+        if array_class != expected_array_class {
+            return Err(FromObjectError::ClassMismatch {
+                target_class: Some(base_elem_class.to_string()),
+                obj_class: array_class,
+            });
+        }
+
+        Ok(Self::new(array, base_elem_class.to_string().into()))
     }
 }
 impl<T, Array> ToObject for ObjectArray<T, Array>
-where Array: AsRef<[T]>,
-          T: ObjectArrayElement,
+where T: ObjectArrayElement,
+  Array: AsRef<[T]>,
 {
     #[inline(always)]
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        <T as element::ToArrayObject>::to_array_object(self.array.as_ref(), self.elem_class(), env)
+        let elem_class = gen_array_class(T::get_dimensions_count() + 1, self.base_elem_class());
+        <T as element::ToArrayObject>::to_array_object(self.array.as_ref(), &elem_class, env)
     }
 }
 
 impl<T, Array> Class for ObjectArray<T, Array>
-where Array: AsRef<[T]>,
-          T: ObjectArrayElement + Class,
+where T: ObjectArrayElement + Class,
+  Array: AsRef<[T]>,
 {
     #[inline(always)]
     fn class() -> Cow<'static, str> {
@@ -157,8 +187,8 @@ where Array: AsRef<[T]>,
 }
 
 impl<T, Array> IntoIterator for ObjectArray<T, Array>
-where Array: AsRef<[T]> + IntoIterator,
-          T: ObjectArrayElement,
+where T: ObjectArrayElement,
+  Array: AsRef<[T]> + IntoIterator,
 {
     type Item = <Array as IntoIterator>::Item;
     type IntoIter = <Array as IntoIterator>::IntoIter;
@@ -170,8 +200,8 @@ where Array: AsRef<[T]> + IntoIterator,
 }
 impl<I, T, Array> Index<I> for ObjectArray<T, Array>
 where I: SliceIndex<[T]>,
-  Array: AsRef<[T]>,
-      T: ObjectArrayElement,
+  T: ObjectArrayElement,
+    Array: AsRef<[T]>,
 {
     type Output = <I as SliceIndex<[T]>>::Output;
 
@@ -182,8 +212,8 @@ where I: SliceIndex<[T]>,
 }
 impl<I, T, Array> IndexMut<I> for ObjectArray<T, Array>
 where I: SliceIndex<[T]>,
-  Array: AsRef<[T]> + AsMut<[T]>,
-      T: ObjectArrayElement,
+  T: ObjectArrayElement,
+    Array: AsRef<[T]> + AsMut<[T]>,
 {
     #[inline(always)]
     fn index_mut(&mut self, index: I) -> &mut Self::Output {
@@ -191,28 +221,28 @@ where I: SliceIndex<[T]>,
     }
 }
 impl<T, Array> Hash for ObjectArray<T, Array>
-where Array: AsRef<[T]>,
-        T: ObjectArrayElement + Hash,
+where T: ObjectArrayElement + Hash,
+  Array: AsRef<[T]>,
 {
     #[inline(always)]
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.elem_class().hash(state);
+        self.base_elem_class().hash(state);
         self.array.as_ref().hash(state);
     }
 }
 impl<T, Array> PartialEq for ObjectArray<T, Array>
-where Array: AsRef<[T]>,
-        T: ObjectArrayElement + PartialEq,
+where T: ObjectArrayElement + PartialEq,
+  Array: AsRef<[T]>,
 {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        self.elem_class().eq(other.elem_class())
+        self.base_elem_class().eq(other.base_elem_class())
         && self.array.as_ref().eq(other.array.as_ref())
     }
 }
 impl<T, Array> PartialEq<&Self> for ObjectArray<T, Array>
-where Array: AsRef<[T]>,
-        T: ObjectArrayElement + PartialEq,
+where T: ObjectArrayElement + PartialEq,
+  Array: AsRef<[T]>,
 {
     #[inline(always)]
     fn eq(&self, other: &&Self) -> bool {
@@ -220,15 +250,15 @@ where Array: AsRef<[T]>,
     }
 }
 impl<T, Array> Eq for ObjectArray<T, Array>
-where Array: AsRef<[T]>,
-        T: ObjectArrayElement + Eq { }
+where T: ObjectArrayElement + Eq,
+  Array: AsRef<[T]> { }
 // Don't implement FromIterator, Ord, PartialOrd
 
 // TODO: implement Drop (delete_local_ref), Clone (new_local_ref), Display (.toString()), Extend<T> (check class) if allowing implicit jni calls without manually passing env
 
 impl<T, Array> AsRef<[T]> for ObjectArray<T, Array>
-where Array: AsRef<[T]>,
-          T: ObjectArrayElement,
+where T: ObjectArrayElement,
+  Array: AsRef<[T]>,
 {
     #[inline(always)]
     fn as_ref(&self) -> &[T] {
@@ -236,8 +266,8 @@ where Array: AsRef<[T]>,
     }
 }
 impl<T, Array> AsMut<[T]> for ObjectArray<T, Array>
-where Array: AsRef<[T]> + AsMut<[T]>,
-          T: ObjectArrayElement,
+where T: ObjectArrayElement,
+  Array: AsRef<[T]> + AsMut<[T]>,
 {
     #[inline(always)]
     fn as_mut(&mut self) -> &mut [T] {
@@ -245,8 +275,8 @@ where Array: AsRef<[T]> + AsMut<[T]>,
     }
 }
 impl<T, Array> Deref for ObjectArray<T, Array>
-where Array: AsRef<[T]>,
-          T: ObjectArrayElement,
+where T: ObjectArrayElement,
+  Array: AsRef<[T]>,
 {
     type Target = Array;
     
@@ -256,8 +286,8 @@ where Array: AsRef<[T]>,
     }
 }
 impl<T, Array> DerefMut for ObjectArray<T, Array>
-where Array: AsRef<[T]>,
-          T: ObjectArrayElement,
+where T: ObjectArrayElement,
+  Array: AsRef<[T]>,
 {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
@@ -265,8 +295,8 @@ where Array: AsRef<[T]>,
     }
 }
 impl<T, Array> Borrow<[T]> for ObjectArray<T, Array>
-where Array: AsRef<[T]>,
-          T: ObjectArrayElement,
+where T: ObjectArrayElement,
+  Array: AsRef<[T]>,
 {
     #[inline(always)]
     fn borrow(&self) -> &[T] {
@@ -274,8 +304,8 @@ where Array: AsRef<[T]>,
     }
 }
 impl<T, Array> BorrowMut<[T]> for ObjectArray<T, Array>
-where Array: AsRef<[T]> + AsMut<[T]>,
-          T: ObjectArrayElement,
+where T: ObjectArrayElement,
+  Array: AsRef<[T]> + AsMut<[T]>,
 {
     #[inline(always)]
     fn borrow_mut(&mut self) -> &mut [T] {
@@ -298,6 +328,11 @@ where Array: AsRef<[T]> + AsMut<[T]>,
 //         ObjectArray::new(self.array.into_boxed_slice(), self.elem_class)
 //     }
 // }
+
+/// Generates the Array Class in *signature format* for an [`ObjectArray`].
+fn gen_array_class(dimensions: usize, base_elem_class: &str) -> String {
+    format!("{brackets}L{base_elem_class};", brackets = "[".repeat(dimensions))
+}
 
 #[cfg(test)]
 mod tests {

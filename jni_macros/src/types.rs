@@ -127,7 +127,7 @@ impl Type {
             // Force conversion with `ToObject` instead of `ToJValue` if the Type is a Object.
             Self::Assertive(InnerType::Object(class))
             | Self::Option { ty: InnerType::Object(class), .. } => {
-                // JClass or JThrowable can be converted to JObject, which is converted to JValue
+                // Type is converted ToObject, which is then converted ToJValue
                 let converted = class.convert_rust_to_java(value);
                 let converted = converted.as_ref().unwrap_or(value);
                 return quote_spanned! {value.span()=> ::jni::objects::JValue::Object(&(#converted)) };
@@ -488,8 +488,6 @@ impl ArrayType {
         }
 
         if self.manually_converted_to_java() {
-            let elem_class = self.ty.sig_type();
-
             match &*self.ty {
                 // Use the ToObject implementation for ObjectArray with any Rust slice.
                 Type::Assertive(InnerType::Object(class))
@@ -498,19 +496,19 @@ impl ArrayType {
                     // TODO: should the ObjectArrayElement be the concrete type extpected by the Class? Or should it not care?
                     // // The Object Ref's concrete Rust type varies depending on the expected Class. See [`Class::rust_type()`].
                     // let obj_rust_ty = self.ty.type_tokens(false, false, None);
-                    let class = class.to_jni_class_path();
+                    let elem_class = class.to_jni_class_path();
                     quote_spanned! {value.span()=>
                         ::ez_jni::ToObject::to_object_env(
                             &::ez_jni::ObjectArray::new_ref(
                                 ::std::convert::AsRef::<[_ /* #obj_rust_ty */]>::as_ref(&(#value)),
-                                #class,
+                                #elem_class,
                             ),
                         env)
                     }
                 },
                 // Convert elements using the Type's Conversion.
                 _ => create_obj_array(
-                    &elem_class,
+                    &self.ty.sig_type(),
                     self.ty.convert_rust_to_java(&quote_spanned! {value.span()=> _element})
                         .expect("Array inner Type must have a conversion to have made it to this point"),
                     value
