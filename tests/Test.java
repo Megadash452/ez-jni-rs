@@ -19,7 +19,7 @@ public final class Test {
 
     public int memberField;
     public Integer memberObject() {
-        return new Integer(this.memberField);
+        return Integer.valueOf(this.memberField);
     }
     public int memberGetter() {
         return this.memberField;
@@ -41,14 +41,14 @@ public final class Test {
     public static long      getLong()      { return 3; }
     public static float     getFloat()     { return 3.3f; }
     public static double    getDouble()    { return 3.3d; }
-    public static Boolean   getBooleanObj(){ return new Boolean(true); }
-    public static Character getCharObj()   { return new Character('a'); }
-    public static Byte      getByteObj()   { return new Byte((byte)3); }
-    public static Short     getShortObj()  { return new Short((short)3); }
-    public static Integer   getIntObj()    { return new Integer(3); }
-    public static Long      getLongObj()   { return new Long(3L); }
-    public static Float     getFloatObj()  { return new Float(3.3f); }
-    public static Double    getDoubleObj() { return new Double(3.3d); }
+    public static Boolean   getBooleanObj(){ return Boolean.valueOf(true); }
+    public static Character getCharObj()   { return Character.valueOf('a'); }
+    public static Byte      getByteObj()   { return Byte.valueOf((byte)3); }
+    public static Short     getShortObj()  { return Short.valueOf((short)3); }
+    public static Integer   getIntObj()    { return Integer.valueOf(3); }
+    public static Long      getLongObj()   { return Long.valueOf(3L); }
+    public static Float     getFloatObj()  { return Float.valueOf(3.3f); }
+    public static Double    getDoubleObj() { return Double.valueOf(3.3d); }
     public static Object    getObject()    { return new Object(); }
     public static String    getString()    { return "Hello, World"; }
     public static Class     getMyClass()   { return Test.class; }
@@ -67,20 +67,21 @@ public final class Test {
     public static float[]     getFloatArray()      { return new float[]     {1.1f, 2.2f, 3.3f}; }
     public static double[]    getDoubleArray()     { return new double[]    {1.1d, 2.2d, 3.3d}; }
     public static Object[]    getObjectArray()     { return new Object[]    {new Object()}; }
-    public static Boolean[]   getBooleanObjArray() { return new Boolean[]   {new Boolean(true), null}; }
-    public static Character[] getCharObjArray()    { return new Character[] {new Character('a'), null}; }
-    public static Byte[]      getByteObjArray()    { return new Byte[]      {new Byte((byte)1), null}; }
-    public static Short[]     getShortObjArray()   { return new Short[]     {new Short((short)1), null}; }
-    public static Integer[]   getIntObjArray()     { return new Integer[]   {new Integer(1), null}; }
-    public static Long[]      getLongObjArray()    { return new Long[]      {new Long(1L), null}; }
-    public static Float[]     getFloatObjArray()   { return new Float[]     {new Float(1.1f), null}; }
-    public static Double[]    getDoubleObjArray()  { return new Double[]    {new Double(1.1d), null}; }
+    public static Boolean[]   getBooleanObjArray() { return new Boolean[]   {Boolean.valueOf(true), null}; }
+    public static Character[] getCharObjArray()    { return new Character[] {Character.valueOf('a'), null}; }
+    public static Byte[]      getByteObjArray()    { return new Byte[]      {Byte.valueOf((byte)1), null}; }
+    public static Short[]     getShortObjArray()   { return new Short[]     {Short.valueOf((short)1), null}; }
+    public static Integer[]   getIntObjArray()     { return new Integer[]   {Integer.valueOf(1), null}; }
+    public static Long[]      getLongObjArray()    { return new Long[]      {Long.valueOf(1L), null}; }
+    public static Float[]     getFloatObjArray()   { return new Float[]     {Float.valueOf(1.1f), null}; }
+    public static Double[]    getDoubleObjArray()  { return new Double[]    {Double.valueOf(1.1d), null}; }
     public static Object[]    getNullObjectArray() { return new Object[]    {new Object(), null}; }
     public static String[]    getStringArray()     { return new String[]    {"Hello", "World"}; }
     public static String[]    getNullStringArray() { return new String[]    {"Hello", null}; }
     public static int[][]     get2DIntArray()      { return new int[][]     { new int[] {1, 2}, new int[] {3, 4} }; }
     public static int[][][]   get3DIntArray()      { return new int[][][]   { new int[][] { new int[] {1, 2}, new int[] {3, 4} }, new int[][] { new int[] {5, 6}, new int[] {7, 8} } }; }
     public static String[][]  get2DStringArray()   { return new String[][]  { new String[] {"Hello", "World"}, new String[] {"How", "are", "you"} }; }
+    public static Object[][][] get3DObjectArray()  { return new Object[][][]{ new Object[][] { new Object[] {new Object()} }, new Object[][] { new Object[] {new Object()} } }; }
 
     public static boolean[] primNullArray() { return null; }
     public static Object[]  objNullArray()  { return null; }
@@ -110,6 +111,7 @@ public final class Test {
     public static void prim2DArrayArgs(boolean[][] z, char[][] c, int[][] i) { }
     public static void prim3DArrayArgs(int[][][] i, float[][][] f) { }
     public static void obj2DArrayArgs(Object[][] l, String[][] s) { }
+    public static void obj3DArrayArgs(Object[][][] l, String[][][] s) { }
 
     // Test methods and fields on an Object rather than on a Class
     public static class Instanced {

@@ -235,6 +235,7 @@ fn return_arrays_other() { run_with_jnienv(|| {
         Box::new(["How", "are", "you"].map(|s| s.to_string())),
     ]);
     assert_eq!(r, expect);
+    let _: Box<[Box<[ObjectArray<JObject>]>]> = call!(static me.test.Test.get3DObjectArray() -> [[[Object]]]);
     // Result<Option<_>, _>
     let r: Result<Option<Box<[bool]>>, JavaException> = call!(static me.test.Test.getBooleanArray() -> Result<Option<[bool]>, Exception>);
     r.unwrap().unwrap();
@@ -398,6 +399,14 @@ fn arguments() { run_with_jnienv(|| {
             [[1.0, 1.5, 2.0], [3.0, 3.5, 4.0]],
             [[5.0, 5.5, 6.0], [7.0, 7.5, 8.0]]
         ]),
+    ) -> void);
+    call!(static me.test.Test.obj2DArrayArgs(
+        [[Object]](&[ &[new!(Object())], &[JObject::null()] ]),
+        [[String]](&[ &["Hello", "World"], &["How", "are", "you"] as &[_] ]),
+    ) -> void);
+    call!(static me.test.Test.obj3DArrayArgs(
+        [[[Object]]](&[ &[ &[new!(Object())], &[JObject::null()] ], &[ &[JObject::null()], &[new!(Object())] ] ]),
+        [[[String]]](&[ &[ &["Hello", "World"], &["How", "are", "you"] as &[_] ] as &[_], &[ &["Fine", "thank", "you"] as &[_] ] as &[_] ]),
     ) -> void);
 }) }
 
