@@ -171,8 +171,8 @@ where T: ObjectArrayElement,
 {
     #[inline(always)]
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        let elem_class = gen_array_class(T::get_dimensions_count() + 1, self.base_elem_class());
-        <T as element::ToArrayObject>::to_array_object(self.array.as_ref(), &elem_class, env)
+        let array_class = gen_array_class(T::get_dimensions_count() + 1, self.base_elem_class());
+        <T as element::ToArrayObject>::to_array_object(self.array.as_ref(), &array_class, env)
     }
 }
 

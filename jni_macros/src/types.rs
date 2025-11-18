@@ -421,6 +421,26 @@ impl ArrayType {
         unsafe { NonZeroU32::new_unchecked(dimensions) } // Safety: Obiously
     }
 
+    /// Returns the [`Type`] of the Array's **base component**.
+    /// 
+    /// In other words, the [`Type`] within the Array dimensions that does not also contain an Array.
+    /// This is the *bottom-most* [`Type`] in the type recursion.
+    pub fn base_component(&self) -> &Type  {
+        let mut current = &*self.ty;
+        // Iterative implementation :)
+        loop {
+            match current {
+                Type::Assertive(InnerType::Array(array))
+                | Type::Option { ty: InnerType::Array(array), .. } => {
+                    current = &*array.ty;
+                },
+                _ => break,
+            }
+        }
+
+        current
+    }
+
     /// Whether the [`ArrayType`] must convert the *Rust value* to a *Java Object* by **manually** converting each *array dimension* one at a time.
     /// 
     /// This is used because some [`Types`][Type] have ambiguous *Rust representations*.
@@ -487,33 +507,30 @@ impl ArrayType {
             }
         }
 
-        if self.manually_converted_to_java() {
-            match &*self.ty {
-                // Use the ToObject implementation for ObjectArray with any Rust slice.
-                Type::Assertive(InnerType::Object(class))
-                | Type::Option { ty: InnerType::Object(class), .. }
-                if class.is_object_ref() => {
-                    // TODO: should the ObjectArrayElement be the concrete type extpected by the Class? Or should it not care?
-                    // // The Object Ref's concrete Rust type varies depending on the expected Class. See [`Class::rust_type()`].
-                    // let obj_rust_ty = self.ty.type_tokens(false, false, None);
-                    let elem_class = class.to_jni_class_path();
-                    quote_spanned! {value.span()=>
-                        ::ez_jni::ToObject::to_object_env(
-                            &::ez_jni::ObjectArray::new_ref(
-                                ::std::convert::AsRef::<[_ /* #obj_rust_ty */]>::as_ref(&(#value)),
-                                #elem_class,
-                            ),
-                        env)
-                    }
-                },
-                // Convert elements using the Type's Conversion.
-                _ => create_obj_array(
-                    &self.ty.sig_type(),
-                    self.ty.convert_rust_to_java(&quote_spanned! {value.span()=> _element})
-                        .expect("Array inner Type must have a conversion to have made it to this point"),
-                    value
-                )
+        // Use the ToObject implementation for ObjectArray with any Rust slice.
+        // ObjectArray can hold Arrays of different types for each dimension,
+        // and can still validate the base component's class, without doing manual conversion :D
+        // TODO: Find a way to do the same for other Rust types (e.g. String, prim classes)
+        if let Type::Assertive(InnerType::Object(class))
+        | Type::Option { ty: InnerType::Object(class), .. } = self.base_component()
+        && class.is_object_ref() {
+            let base_elem_class = class.to_jni_class_path();
+            quote_spanned! {value.span()=>
+                ::ez_jni::ToObject::to_object_env(
+                    &::ez_jni::ObjectArray::new_ref(
+                        ::std::convert::AsRef::<[_]>::as_ref(&(#value)),
+                        #base_elem_class,
+                    ),
+                env)
             }
+        } else if self.manually_converted_to_java() {
+            // Convert elements using the Type's Conversion.
+            create_obj_array(
+                &self.ty.sig_type(),
+                self.ty.convert_rust_to_java(&quote_spanned! {value.span()=> _element})
+                    .expect("Array inner Type must have a conversion to have made it to this point"),
+                value
+            )
         } else {
             let ty = self.ty.type_tokens(true, true, None);
             quote_spanned! {value.span()=>

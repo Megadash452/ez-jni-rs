@@ -27,19 +27,22 @@ where Self: ObjectArrayElement + Sized + 'local {
 }
 // Also acts like a seal
 trait ToObject2 {
-    fn to_object<'local>(&self, elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local>;
+    /// **class** refers to the class of `Self`;
+    /// it is an *array  class* if `Self` is an *Array Type* (e.g. `[T]`),
+    /// or a *base component class* if `Self` is an *Object Reference*.
+    fn to_object<'local>(&self, class: &str, env: &mut JNIEnv<'local>) -> JObject<'local>;
 }
 
 /// A trait that allows converting a Rust `slice` to a *Java Object*.
 pub(super) trait ToArrayObject: Sized {
-    fn to_array_object<'local>(slice: &[Self], elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local>;
+    fn to_array_object<'local>(slice: &[Self], class: &str, env: &mut JNIEnv<'local>) -> JObject<'local>;
 }
 
 impl<T> ToArrayObject for T
 where T: ToObject2 {
     #[inline(always)]
-    fn to_array_object<'local>(slice: &[Self], elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        <[T] as ToObject2>::to_object(slice, elem_class, env)
+    fn to_array_object<'local>(slice: &[Self], class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        <[T] as ToObject2>::to_object(slice, class, env)
     }
 }
 
@@ -116,9 +119,9 @@ where T: FromObject2<'local> {
 impl<T> ToObject2 for Option<T>
 where T: ToObject2 {
     #[inline(always)]
-    fn to_object<'local>(&self, elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
+    fn to_object<'local>(&self, class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
         match self {
-            Some(t) => T::to_object(t, elem_class, env),
+            Some(t) => T::to_object(t, class, env),
             None => JObject::null(),
         }
     }
@@ -134,8 +137,8 @@ where T: ObjectArrayElement {
 impl<T> ToObject2 for &T
 where T: ToObject2 {
     #[inline(always)]
-    fn to_object<'local>(&self, elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        <T as ToObject2>::to_object(self, elem_class, env)
+    fn to_object<'local>(&self, class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        <T as ToObject2>::to_object(self, class, env)
     }
 }
 
@@ -228,47 +231,48 @@ where T: ObjectArrayElement + 'local,
 impl<T> ToObject2 for [T]
 where T: ToObject2 {
     #[inline(always)]
-    fn to_object<'local>(&self, elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
+    fn to_object<'local>(&self, class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        let elem_class = take_array_class_bracket(class);
         create_object_array_converted(self, |elem, env| {
-            <T as ToObject2>::to_object(elem, take_array_class_bracket(elem_class), env)
+            <T as ToObject2>::to_object(elem, elem_class, env)
         }, elem_class, env)
     }
 }
 impl<T> ToObject2 for Box<[T]>
 where T: ToObject2 {
     #[inline(always)]
-    fn to_object<'local>(&self, elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        <[T] as ToObject2>::to_object(&self, elem_class, env)
+    fn to_object<'local>(&self, class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        <[T] as ToObject2>::to_object(&self, class, env)
     }
 }
 impl<T> ToObject2 for Vec<T>
 where T: ToObject2 {
     #[inline(always)]
-    fn to_object<'local>(&self, elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        <[T] as ToObject2>::to_object(&self, elem_class, env)
+    fn to_object<'local>(&self, class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        <[T] as ToObject2>::to_object(&self, class, env)
     }
 }
 impl<T> ToObject2 for &[T]
 where T: ToObject2 {
     #[inline(always)]
-    fn to_object<'local>(&self, elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        <[T] as ToObject2>::to_object(self, elem_class, env)
+    fn to_object<'local>(&self, class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        <[T] as ToObject2>::to_object(self, class, env)
     }
 }
 impl<const N: usize, T> ToObject2 for [T; N]
 where [T]: ToObject2 {
     #[inline(always)]
-    fn to_object<'local>(&self, elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        <[T] as ToObject2>::to_object(self, elem_class, env)
+    fn to_object<'local>(&self, class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        <[T] as ToObject2>::to_object(self, class, env)
     }
 }
 impl<T, Array> ToObject2 for ObjectArray<T, Array>
 where T: ObjectArrayElement,
   Array: AsRef<[T]>,
 {
-    fn to_object<'local>(&self, elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        if elem_class != self.base_elem_class() {
-            panic!("The expected class (\"{elem_class}\") did not match the ObjectArray's stored class (\"{}\")", self.base_elem_class())
+    fn to_object<'local>(&self, class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        if class != self.base_elem_class() {
+            panic!("The expected class (\"{class}\") did not match the ObjectArray's stored class (\"{}\")", self.base_elem_class())
         }
         <Self as crate::ToObject>::to_object_env(self, env)
     }
