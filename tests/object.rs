@@ -217,8 +217,10 @@ impl Class for IntWrapper {
 
 #[derive(Debug, FromObject)]
 #[class(me.test.Test)]
-struct MyWrapperClass {
-    member_field: IntWrapper
+struct MyClass4<'local> {
+    member_field: IntWrapper,
+    #[field(class = [java.lang.String])]
+    array_field: JObject<'local>,
 }
 
 #[derive(Debug, FromObject, PartialEq, Eq)]
@@ -248,22 +250,21 @@ fn from_object() { run_with_jnienv(|| {
 
     assert_eq!(MyClass::from_object(&object).unwrap().member_field, VAL);
 
-    assert_eq!(MyClass1::from_object(&object).unwrap().member, VAL);
+    let c = MyClass1::from_object(&object).unwrap();
+    assert_eq!(c.member, VAL);
     assert_eq!(
-        MyClass1::from_object(&object).unwrap()
-            .array_field
+        c.array_field
             .iter()
-            .map(|s| s.as_str())
+            .map(String::as_str)
             .collect::<Box<[_]>>()
             .as_ref(),
         ARRAY_VAL
     );
 
-    let int = MyClass2::from_object(&object).unwrap().member.unwrap();
-    assert_eq!(call!(int.intValue() -> int), VAL);
+    let c = MyClass2::from_object(&object).unwrap();
+    assert_eq!(call!(c.member.unwrap().intValue() -> int), VAL);
     assert_eq!(
-        MyClass2::from_object(&object).unwrap()
-            .array_field
+        c.array_field
             .iter()
             .map(|s| s.as_ref().unwrap())
             .collect::<Box<[_]>>()
@@ -271,10 +272,10 @@ fn from_object() { run_with_jnienv(|| {
         ARRAY_VAL
     );
 
-    assert_eq!(MyClass3::from_object(&object).unwrap().member, Some(VAL));
+    let c = MyClass3::from_object(&object).unwrap();
+    assert_eq!(c.member, Some(VAL));
     assert_eq!(
-        MyClass3::from_object(&object).unwrap()
-            .array_field
+        c.array_field
             .iter()
             .map(|s| String::from_object(s.as_ref().unwrap()).unwrap())
             .collect::<Box<[_]>>()
@@ -282,7 +283,17 @@ fn from_object() { run_with_jnienv(|| {
         ARRAY_VAL
     );
 
-    assert_eq!(MyWrapperClass::from_object(&object).unwrap().member_field.0, VAL);
+    let c = MyClass4::from_object(&object).unwrap();
+    assert_eq!(c.member_field.0, VAL);
+    assert_eq!(
+        Box::<[String]>::from_object(&c.array_field)
+            .unwrap()
+            .iter()
+            .map(String::as_str)
+            .collect::<Box<[_]>>()
+            .as_ref(),
+        ARRAY_VAL
+    );
 
     object = new!(me.test.Test$SumClass$SumClass1(int(VAL)));
     assert_eq!(

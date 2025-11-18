@@ -58,9 +58,11 @@ where R: AsRef<JObject<'obj>> + 'obj {
 /// ## Example
 /// 
 /// ```
+/// # use ez_jni::ObjectArray;
+/// # use jni::objects::JObject;
 /// ObjectArray::new(
 ///     &[ &[ JObject::null() ] ],
-///     "me/my/MyClass"
+///     "me/my/MyClass".into()
 /// );
 /// ```
 #[derive(Debug)]

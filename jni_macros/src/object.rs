@@ -1,8 +1,8 @@
 use either::Either;
 use convert_case::{Case, Casing};
-use proc_macro2::{Delimiter, Span, TokenStream, TokenTree};
+use proc_macro2::{Span, TokenStream, TokenTree};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
-use syn::{parse::{Parse, ParseStream, Parser}, token::Bracket, AngleBracketedGenericArguments, Field, Fields, GenericArgument, Generics, Ident, ItemEnum, ItemStruct, Lifetime, LitStr, Token, TypePath, Variant};
+use syn::{AngleBracketedGenericArguments, Field, Fields, GenericArgument, Generics, Ident, ItemEnum, ItemStruct, Lifetime, LitStr, Token, TypePath, Variant, bracketed, parse::{Parse, ParseStream, Parser}, token::Bracket};
 use itertools::Itertools as _;
 use std::{cell::RefCell, collections::{HashMap, HashSet}};
 use crate::{
@@ -224,13 +224,14 @@ impl Parse for AttributeProps {
         let mut properties = HashMap::new();
 
         // Then parse the key-value pairs
-        for tt in unparsed_kvs {
+        for tokens in unparsed_kvs {
             match Parser::parse2(|input: ParseStream|
                 // Syntax: key = value
                 Ok((input.parse::<Ident>()?, {
                     input.parse::<Token![=]>()?;
                     input.parse()?
-                })), tt
+                })),
+                tokens
             ) {
                 Ok((key, value)) =>
                     // Error when a property is assigned more than once
@@ -362,7 +363,7 @@ impl FieldAttr {
 struct ClassAttr {
     dimensions: u32,
     outer_brackets: Option<Bracket>,
-    class: Class,
+    base_component_class: Class,
 }
 impl Spanned for ClassAttr {
     fn span(&self) -> Span {
@@ -370,40 +371,51 @@ impl Spanned for ClassAttr {
             Some(brackets) => {
                 let tokens = &mut TokenStream::new();
                 brackets.surround(tokens, |tokens| {
-                    tokens.append(Ident::new("a", self.class.span()));
+                    tokens.append(Ident::new("a", self.base_component_class.span()));
                 });
                 tokens.span()
             },
-            None => self.class.span()
+            None => self.base_component_class.span()
         }
     }
 }
 impl SigType for ClassAttr {
     fn sig_type(&self) -> LitStr {
-        LitStr::new(&format!("{}{}", "[".repeat(self.dimensions as usize), self.class.sig_type().value()), self.span())
+        LitStr::new(&format!("{}{}", "[".repeat(self.dimensions as usize), self.base_component_class.sig_type().value()), self.span())
     }
 }
 impl Parse for ClassAttr {
     fn parse(input: ParseStream) -> syn::Result<Self> {
+        if !input.peek(Bracket) {
+            return Ok(Self {
+                dimensions: 0,
+                outer_brackets: None,
+                base_component_class: input.parse()?,
+            });
+        };
+
         // Parse the brackets (if any) and determine the number of dimensions
-        let mut dimensions = 0;
-        let mut outer_brackets = None;
-
-        let mut current = input.cursor();
-        while let Some((inner, span, next)) = current.group(Delimiter::Bracket) {
-            current = inner;
-            if !next.eof() {
-                return Err(syn::Error::new(next.span(), "Unexpected tokens"));
-            }
-
+        let mut current;
+        let outer_brackets = Some(bracketed!(current in input));
+        let mut dimensions = 1;
+        while current.peek(Bracket) {
             dimensions += 1;
-            if outer_brackets.is_none() {
-                outer_brackets = Some(Bracket { span: span })
+            let next;
+            bracketed!(next in current);
+            // There should not be any other tokens after the inner array
+            if !current.cursor().eof() {
+                return Err(current.error("Unexpected tokens"));
             }
+            current = next;
         }
-        // Once the next token is no longer a brackets, there should be a Class
+        let base_component_class = current.parse()?;
+
+        // There should not be any other tokens after the array
+        if !input.cursor().eof() {
+            return Err(input.error("Unexpected tokens"));
+        }
         
-        Ok(Self { dimensions, outer_brackets, class: input.parse()? })
+        Ok(Self { dimensions, outer_brackets, base_component_class })
     }
 }
 
@@ -443,7 +455,7 @@ fn struct_constructor(fields: &Fields) -> syn::Result<TokenStream> {
             let field_ty = &field.ty;
             let class_attr = attr.class
                 .as_ref()
-                .map(|attr| &attr.class);
+                .map(|attr| &attr.base_component_class);
             // The type signature of the Java field.
             // Is determined by either the class attribute or the field_ty (in that order).
             let sig_ty = match &attr.class {

@@ -76,7 +76,7 @@ fn from_object_derive() {
                         `()` implements `FromJValue<'_>`
                         `Box<[T]>` implements `FromJValue<'local>`
                         `MyClass<'local>` implements `FromJValue<'local>`
-                        `ObjectArray<'local, T, Array>` implements `FromJValue<'local>`
+                        `ObjectArray<T, Array>` implements `FromJValue<'local>`
                         `Option<T>` implements `FromJValue<'local>`
                         `Vec<T>` implements `FromJValue<'local>`
                         `bool` implements `FromJValue<'_>`
@@ -135,7 +135,7 @@ fn from_object_derive() {
                         `()` implements `FromJValue<'_>`
                         `Box<[T]>` implements `FromJValue<'local>`
                         `MyClass<'local>` implements `FromJValue<'local>`
-                        `ObjectArray<'local, T, Array>` implements `FromJValue<'local>`
+                        `ObjectArray<T, Array>` implements `FromJValue<'local>`
                         `Option<T>` implements `FromJValue<'local>`
                         `Vec<T>` implements `FromJValue<'local>`
                         `bool` implements `FromJValue<'_>`
@@ -151,7 +151,7 @@ fn from_object_derive() {
         #[derive(FromObject)]
         #[class(me.test.Test)]
         struct MyClass<'local> {
-            member: ObjectArray<'local, JObject<'local>>,
+            member: ObjectArray<JObject<'local>>,
         }
     "), [ErrorContent {
         code: Some("E0277"),
@@ -159,8 +159,8 @@ fn from_object_derive() {
         loc: "9:13",
         preview: indoc!("
           |
-        9 |     member: ObjectArray<'local, JObject<'local>>,
-          |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `Class` is not implemented for `JObject<'local>`
+        9 |     member: ObjectArray<JObject<'local>>,
+          |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `Class` is not implemented for `JObject<'local>`
           |
           = help: the following other types implement trait `Class`:
                     &T
@@ -172,7 +172,7 @@ fn from_object_derive() {
                     JClass<'_>
                     JString<'_>
                   and $N others
-          = note: required for `ObjectArray<'local>` to implement `Class`
+          = note: required for `ObjectArray<JObject<'local>>` to implement `Class`
         note: required by a bound in `field_from_jvalue`
          --> src/utils/object.rs
           |
@@ -188,7 +188,7 @@ fn from_object_derive() {
         #[derive(FromObject)]
         #[class(me.test.Test)]
         struct MyClass<'local> {
-            member: ObjectArray<'local, JThrowable<'local>>,
+            member: ObjectArray<JThrowable<'local>>,
         }
     "), [ErrorContent {
         code: Some("E0277"),
@@ -196,8 +196,8 @@ fn from_object_derive() {
         loc: "9:13",
         preview: indoc!("
           |
-        9 |     member: ObjectArray<'local, JThrowable<'local>>,
-          |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `Class` is not implemented for `JThrowable<'local>`
+        9 |     member: ObjectArray<JThrowable<'local>>,
+          |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `Class` is not implemented for `JThrowable<'local>`
           |
           = help: the following other types implement trait `Class`:
                     &T
@@ -209,7 +209,7 @@ fn from_object_derive() {
                     JClass<'_>
                     JString<'_>
                   and $N others
-          = note: required for `ObjectArray<'local, JThrowable<'local>>` to implement `Class`
+          = note: required for `ObjectArray<JThrowable<'local>>` to implement `Class`
         note: required by a bound in `field_from_jvalue`
          --> src/utils/object.rs
           |

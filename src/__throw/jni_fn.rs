@@ -79,6 +79,9 @@ pub unsafe fn run_with_jnienv_helper<'local, R: Sized>(
         static PANIC_BACKTRACE: RefCell<Option<StdBacktrace>> = const { RefCell::new(None) };
     };
 
+    // FIXME: I may have a HUGE race condition in this function (tee-hee 🤭)
+    // Sometimes the PANIC_LOCATION is reported as not set, and the program aborts
+
     let prev_hook = std::panic::take_hook();
     // Set panic hook to grab [`PANIC_LOCATION`] data.
     std::panic::set_hook(Box::new(move |info| {
@@ -143,7 +146,7 @@ fn my_catch<'local, R>(f: impl FnOnce() -> R) -> R {
     std::panic::catch_unwind(AssertUnwindSafe(|| f()))
         .map_err(|payload| match PanicType::from(payload) {
             PanicType::Message(msg) => msg,
-            PanicType::Object(_) => panic!("UNREACHABLE"),
+            PanicType::Object(_) => Cow::Borrowed("UNREACHABLE"),
             PanicType::Unknown => Cow::Borrowed(PanicType::UNKNOWN_PAYLOAD_TYPE_MSG)
         })
         .unwrap_or_else(|panic_msg| {

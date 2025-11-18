@@ -85,8 +85,8 @@ impl From<FromJValueError> for FromObjectError {
 ///                  Note: [`JObject`] and [`JThrowable`] require the user to provide a specic class using this attribute.
 /// 
 /// ```
-/// # use ez_jni::FromObject;
-/// # use ez_jni::ObjectArray;
+/// # use ez_jni::{FromObject, ObjectArray};
+/// # use jni::objects::JObject;
 /// 
 /// #[derive(FromObject)]
 /// #[class(me.author.MyClass)]
