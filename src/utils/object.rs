@@ -109,6 +109,7 @@ where T: FromJValue<'local> + Class {
     fn field_from_jvalue(val: JValueOwned<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromJValueError> {
         <Self as FromJValue>::from_jvalue_env(val.borrow(), env)
     }
+    #[inline(always)]
     fn guess_sig(env: &mut JNIEnv<'local>) -> Cow<'static, str> {
         match T::from_jvalue_env(JValue::Bool(1) /* Fake value */, env) {
             Ok(_) => Cow::Borrowed("Z"),
@@ -146,7 +147,8 @@ fn __guess_sig(err: FromJValueError, get_class: fn() -> Cow<'static, str>) -> Co
 }
 
 impl<'local, T> FieldFromJValueClass<'_, 'local> for T
-where T: FromObject<'local> + Class {
+where T: FromObject<'local> {
+    #[inline(always)]
     fn field_from_jvalue_with_class(val: JValueOwned<'_>, class: &str, env: &mut JNIEnv<'local>) -> Result<Self, FromJValueError> {
         let object = jvalue_to_jobject(val)?;
         check_object_class(&object, class, env)?;

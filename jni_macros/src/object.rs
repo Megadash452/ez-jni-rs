@@ -424,10 +424,10 @@ impl Parse for ClassAttr {
 /// 
 /// Passing a **class** will force the use of `FromObject` instead of `FromJValue`.
 /// **class** is *required* if the type is [`JObject`][jni::objects::JObject] or [`JThrowable`][jni::objects::JThrowable].
-fn convert_field_value(ty: &syn::Type, class_attr: Option<&Class>, value: &TokenStream) -> TokenStream {
+fn convert_field_value(ty: &syn::Type, class_attr: Option<&ClassAttr>, value: &TokenStream) -> TokenStream {
     match class_attr {
         Some(class) => {
-            let class = class.to_jni_class_path();
+            let class = class.sig_type();
             quote_spanned! {ty.span()=> <#ty as ::ez_jni::utils::FieldFromJValueClass>::field_from_jvalue_with_class(#value, #class, env)? }
         },
         None => quote_spanned! {ty.span()=> <#ty as ::ez_jni::utils::FieldFromJValue>::field_from_jvalue(#value, env)? }
@@ -453,9 +453,6 @@ fn struct_constructor(fields: &Fields) -> syn::Result<TokenStream> {
         .map(|field| {
             let attr = FieldAttr::get_from_attrs(field)?;
             let field_ty = &field.ty;
-            let class_attr = attr.class
-                .as_ref()
-                .map(|attr| &attr.base_component_class);
             // The type signature of the Java field.
             // Is determined by either the class attribute or the field_ty (in that order).
             let sig_ty = match &attr.class {
@@ -467,7 +464,7 @@ fn struct_constructor(fields: &Fields) -> syn::Result<TokenStream> {
             };
 
             let get_field = |name: String| {
-                convert_field_value(&field_ty, class_attr, &quote_spanned! {field.span()=>
+                convert_field_value(&field_ty, attr.class.as_ref(), &quote_spanned! {field.span()=>
                     ::ez_jni::utils::from_object_get_field(&object, #name, #sig_ty, env)?
                 })
             };
@@ -476,12 +473,12 @@ fn struct_constructor(fields: &Fields) -> syn::Result<TokenStream> {
                 // Use the "name" of the field attribute
                 get_field(name.to_string())
             } else if let Some(call) = attr.call {
-                // Call the Java method
+                // Call the Java gettter method instead of accessing field
                 let method = LitStr::new(&call.to_string(), call.span());
                 // Transform the obtained field signature to a function signature
                 let sig = quote_spanned! {field_ty.span()=> &format!("(){}", #sig_ty) };
                 
-                convert_field_value(&field_ty, class_attr, &quote_spanned! {method.span()=>
+                convert_field_value(&field_ty, attr.class.as_ref(), &quote_spanned! {method.span()=>
                     ::ez_jni::utils::call_obj_method(&object, #method, #sig, &[], env)
                         .unwrap_or_else(|exception| ::ez_jni::__throw::panic_exception(exception))
                 })

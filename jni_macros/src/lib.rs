@@ -78,10 +78,10 @@ use utils::{item_from_derive_input, SynResultExt as _};
 ///     fn f<'local>(class: JClass<'local>, s: String) -> i32 {
 ///         3
 ///     }
-///     ez_jni::__throw::run_with_jnienv(env, move |env| {
+///     unsafe { ez_jni::__throw::run_with_jnienv(env, move |env| {
 ///         let s = <String as FromObject>::from_object_env(&s, env).unwrap();
 ///         f(class, s)
-///     })
+///     }) }
 /// }
 /// ```
 /// > **Note on `unsafe(no_mangle)`**: Since Rust 2024 edition,
@@ -435,7 +435,7 @@ fn parse<T>(input: proc_macro::TokenStream, parser: impl FnOnce(syn::parse::Pars
 /// 
 /// ### Example
 /// ```
-/// static BYTE_CODE: &[u8] = ez_jni::compile_java_class!("./src/", "me/marti/ezjni/RustPanic");
+/// static BYTE_CODE: &[u8] = ez_jni_macros::compile_java_class!("./src/", "me/marti/ezjni/RustPanic");
 /// ```
 /// 
 /// This is only used internally used by `ez_jni::__throw::throw_panic()`.
