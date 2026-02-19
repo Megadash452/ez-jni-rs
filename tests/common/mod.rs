@@ -30,6 +30,7 @@ pub fn get_env<'local>() -> JNIEnv<'local> {
 /// Set up the [`JNIEnv`] from the test [`JVM`][JavaVM] and run some test code `f`.
 /// 
 /// The funciton `f` is allowed to `panic!`.
+/// Will abort if `f` panics.
 pub fn run_with_jnienv(f: impl FnOnce() + UnwindSafe) {
     let (result, mut env) = unsafe { ez_jni::__throw::run_with_jnienv_helper(get_env(), false, |_| f()) };
     let env = &mut env;
@@ -70,16 +71,13 @@ pub fn run_with_jnienv(f: impl FnOnce() + UnwindSafe) {
         // Catch a panic caused by generating the panic print
         match catch_unwind(AssertUnwindSafe(|| create_panic_stmnt(panic, env))) {
             Ok(panic) => {
-                // Display panic info
-                std::panic::set_hook(Box::new(|_| {})); // Disable panic hook to print my own panic info
                 // After Panic Hook is disabled, a panic! won't print anything.
                 // So we print it manually.
-                print!("{panic}");
-                panic!()
+                eprintln!("{panic}");
+                std::process::abort();
             },
             Err(payload) => std::panic::resume_unwind(payload)
         };
-
     }
 }
 

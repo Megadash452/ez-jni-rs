@@ -9,6 +9,8 @@ static NATIVE_TEST_DIR: LazyLock<PathBuf> = LazyLock::new(|| absolute_path("./te
 /// Tests building a binary library (`/tests/native_test`) that exports Rust functions to be called from Java.
 #[test]
 fn jni_fn() {
+    let library_path = absolute_path("./target/debug");
+
     // Create directory where Class binaries are stored (if it's not created already)
     run(Command::new("mkdir")
         .args(["-p", CLASS_DIR])
@@ -26,9 +28,8 @@ fn jni_fn() {
     ).unwrap_or_else(|err| panic!("{err}"));
     // Run Java binary
     run(Command::new("java")
-        .env("LD_LIBRARY_PATH", absolute_path("./target/debug"))
         .current_dir(absolute_path(CLASS_DIR))
-        .stdout(std::io::stdout())
+        .arg(format!("-Djava.library.path={}", library_path.display()))
         .args(["-ea", "me/test/Native"])
     ).unwrap_or_else(|err| panic!("{err}"));
 }

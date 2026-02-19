@@ -1,5 +1,5 @@
 //! This is an utils crate with functions that are used in the main crate, macros, and tests
-use std::{io, path::{Path, PathBuf}, process::Command};
+use std::{io, fmt::Write, path::{Path, PathBuf}, process::Command};
 
 pub static CLASS_DIR: &'static str = "./target/tmp/classes";
 
@@ -34,6 +34,7 @@ pub fn absolute_path(path: impl AsRef<Path>) -> PathBuf {
     path.canonicalize()
         .unwrap_or_else(|err| panic!("Failed to make path \"{}\" absolute: {err}", path.display()))
 }
+
 pub fn run(command: &mut Command) -> io::Result<String> {
     let command_name = command.get_program().to_string_lossy().to_string();
     // Spawn the command, waiting for it to return.
@@ -41,8 +42,25 @@ pub fn run(command: &mut Command) -> io::Result<String> {
         .map_err(|err| io::Error::new(err.kind(), format!("Failed to spawn command \"{command_name}\": {err}")))?;
     // Return the command's error stream if it returned an error
     if !output.status.success() {
-        let error = String::from_utf8_lossy(&output.stderr);
-        return Err(io::Error::other(format!("Command \"{command_name}\" exited with error:\n{error}")))
+        let mut buf = String::new();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        writeln!(buf, "Command \"{command_name}\" exited with error:").unwrap();
+        if !stdout.is_empty() {
+            writeln!(buf, "stdout:").unwrap();
+            for line in stdout.lines() {
+                writeln!(buf, "  {line}").unwrap();
+            }
+        }
+        if !stderr.is_empty() {
+            writeln!(buf, "stderr:").unwrap();
+            for line in stderr.lines() {
+                writeln!(buf, "  {line}").unwrap();
+            }
+        }
+
+        return Err(io::Error::other(buf))
     }
 
     String::from_utf8(output.stdout)
