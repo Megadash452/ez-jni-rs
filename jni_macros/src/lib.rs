@@ -193,12 +193,12 @@ pub fn jni_fn(input: TokenStream) -> TokenStream {
 /// All arguments have a **type** (see the [types section][call!#types]),
 /// followed by a **value** (wrapped in parenthesis).
 /// 
-/// Argument **values** are converted to a [**Java Value**][ez_jni::ToJValue] so that they can be passed to the *JNI call*.
+/// Argument **values** are converted to a [**Java Value**](https://docs.rs/ez_jni/latest/ez_jni/trait.ToJValue.html) so that they can be passed to the *JNI call*.
 /// 
 /// [`Option`] is not allowed in arguments, except if it is within an **Array** (e.g. `[Option<String>]`).
 /// This is to have better *readability* of the types in the arguments.
 /// If you have an [`Option`] to pass as an argument (e.g. `Option<String>`),
-/// manually convert it [to an object][ez_jni::ToObject] or use the [null keyword][call!#null-keyword].
+/// manually convert it [to an object](https://docs.rs/ez_jni/latest/ez_jni/trait.ToObject.html) or use the [null keyword][call!#null-keyword].
 // TODO: deprecate the use of option and nul keyword
 /// 
 /// #### Null keyword
@@ -265,7 +265,7 @@ pub fn call(input: TokenStream) -> TokenStream {
 /// new!(me.author.ClassName() throws Exception)
 /// ```
 /// 
-/// See [`JavaException`][https://docs.rs/ez_jni/latest/ez_jni/struct.JavaException.html].
+/// See [`JavaException`](https://docs.rs/ez_jni/latest/ez_jni/struct.JavaException.html).
 #[proc_macro]
 pub fn new(input: TokenStream) -> TokenStream {
     let call = syn::parse_macro_input!(input as ConstructorCall);
@@ -277,7 +277,7 @@ pub fn new(input: TokenStream) -> TokenStream {
 /// This macro will try to access the *Java field* directly.
 /// If the field coudln't be accessed (because it doesn't exist, it's private, etc.),
 /// then this macro will call a *Getter method* with that name.
-/// This is similar to Kotlin does [properties for Java classses](https://kotlinlang.org/docs/java-interop.html#getters-and-setters).
+/// This is similar to what Kotlin does in [properties for Java classses](https://kotlinlang.org/docs/java-interop.html#getters-and-setters).
 /// 
 /// # Syntax
 /// 

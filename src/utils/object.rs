@@ -27,8 +27,8 @@ pub trait FieldFromJValue<'obj, 'local>: Class + Sized {
 /// So the method uses the [`FromObject`] implementation instead of [`FromJValue`].
 /// 
 /// This separate trait is necessary because most types already implement [`Class`], so the user does not need to provide a **class** for the object.
-/// However, [`JObject`], [`JThrowable`], and [`ObjectArray`] don't implement [`Class`] because users *should* specify a *descendant* **class** for these types.
-/// To enforce this check in [`FromObject derive`][FromObject], these types don't implement [`FieldFromJValue`], but do implement this trait.
+/// However, [`JObject`], [`JThrowable`], and [`ObjectArray`][crate::array::ObjectArray] don't implement [`Class`] because users *should* specify a *descendant* **class** for these types.
+/// To enforce this check in [`FromObject` derive][FromObject], these types don't implement [`FieldFromJValue`], but do implement this trait.
 /// 
 /// This is used for *getting* a **field** in [`FromObject derive`][FromObject].
 pub trait FieldFromJValueClass<'obj, 'local>: Sized {
@@ -175,7 +175,7 @@ pub fn jvalue_to_jobject<'obj>(val: JValueOwned<'obj>) -> Result<JObject<'obj>, 
 /// This function is the same as [`get_obj_field()`][crate::utils::get_obj_field()]
 /// but returns [`FieldNotFound`][FromObjectError::FieldNotFound] if the **field** or **getter** method were not found.
 /// 
-/// This is used by the derive macros of [`FromObject`][crate::FromObject] and [`FromObject`][crate::FromException].
+/// This is used by [`FromObject` derive][crate::FromObject].
 pub fn from_object_get_field<'local>(object: &JObject<'_>, name: &'static str, ty: &str, env: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, FromObjectError> {
     field_helper(super::Callee::Object(object), name, ty,
         |env| env.get_field(object, name, ty),
@@ -209,7 +209,7 @@ pub fn from_object_get_field<'local>(object: &JObject<'_>, name: &'static str, t
         })
 }
 
-/// Helper function for the [`FromObject`][ez_jni::FromObject] [derive macro][ez_jni_macros::from_object] to check whether the *object*'s Class matches the struct's *target Class*.
+/// Helper function for the [`FromObject`][ez_jni::FromObject] [derive macro][ez_jni_macros::FromObject] to check whether the *object*'s Class matches the struct's *target Class*.
 pub fn check_object_class(object: &JObject, target_class: &str, env: &mut JNIEnv<'_>) -> Result<(), FromObjectError> {
     if object.is_null() {
         return Err(FromObjectError::Null);

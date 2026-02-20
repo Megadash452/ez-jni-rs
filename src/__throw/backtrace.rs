@@ -89,8 +89,8 @@ pub enum ParseBacktraceError {
 /// Gets full [`Backtrace`] as a `String` and parses each line as a [`BacktraceElement`].
 /// The returned array will never be empty.
 /// 
-/// This will also strip the Bakctrace of verbose/unecessary Stack frames.`
-pub fn parse_rust_backtrace(backtrace: &str) -> Result<Backtrace, ParseBacktraceError> {
+/// This will also strip the Bakctrace of verbose/unecessary Stack frames.
+fn parse_rust_backtrace(backtrace: &str) -> Result<Backtrace, ParseBacktraceError> {
     // Currenlty we are only able to get the full backtrace as a String
     // until [this Issue](https://github.com/rust-lang/rust/issues/79676) is resolved.
     // Filter backtrace frames because some are verbose

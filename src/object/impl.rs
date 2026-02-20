@@ -102,10 +102,6 @@ where [T]: ToObject {
 // Implementation for String types
 
 impl FromObject<'_> for String {
-    /// Get a [`String`] from some random Object.
-    /// 
-    /// Don't use this function, it only exist for compatibility.
-    /// Use [`get_string()`][crate::utils::get_string] instead because you will mostly be using it with [`JString`][jni::objects::JString].
     fn from_object_env(object: &JObject, env: &mut JNIEnv) -> Result<Self, FromObjectError> {
         check_object_class(object, &Self::class(), env)?;
         // Already checked that it is java.lang.String and is not NULL

@@ -71,7 +71,7 @@ pub enum FromJValueError {
         actual: JValueType,
         expected: JValueType,
     },
-    /// This variant occurs only when the [`JValue`] is [`Object`][JObject] and the [`FromObject`] call returned an error.
+    /// This variant occurs only when the [`JValue`] is [`Object`][jni::objects::JObject] and the [`FromObject`] call returned an error.
     #[error("{0}")]
     Object(#[from] FromObjectError)
 }
@@ -186,7 +186,7 @@ impl ToJValue for char {
 }
 
 /// Implements the [`FromJValue`] and [`ToJValue`] traits with simple primitive conversion.
-/// If value was [`JObject`] in [`FromJValue`], this calls the [`FromObject`] implementation.
+/// If value was [`JObject`][jni::objects::JObject] in [`FromJValue`], this calls the [`FromObject`] implementation.
 macro_rules! map_primitive_impl {
     (for $ty:ty, $jvariant:ident, $jty:ident) => {
         impl FromJValue<'_> for $ty {

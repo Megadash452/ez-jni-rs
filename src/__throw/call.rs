@@ -1,4 +1,4 @@
-//! These functions are used in [`call!`] and *similar macros*.
+//! These functions are used in [`call!`][ez_jni_macros::call!] and *similar macros*.
 use std::sync::OnceLock;
 use jni::{errors::Error as JNIError, objects::GlobalRef};
 use super::*;
@@ -128,7 +128,8 @@ pub(crate) fn is_error<'local>(object: &JThrowable<'_>, env: &mut JNIEnv<'local>
         .unwrap_or_else(|error| handle_jni_call_error(error, env))
 }
 
-/// Gets the message associated with the [`JNIError`] either from the [`Exception`] or the 
+/// Gets the message associated with the [`JNIError`] either from the error enum itself,
+/// or from the [`JavaException`] object.
 pub fn get_jni_error_msg(error: JNIError, env: &mut JNIEnv<'_>) -> String {
     match error {
         JNIError::JavaException => {

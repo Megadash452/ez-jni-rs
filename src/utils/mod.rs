@@ -15,7 +15,7 @@ use crate::{call, FromObject, LOCAL_JNIENV_STACK};
 #[doc(hidden)]
 pub use cfg_if;
 
-/// Error message for when a *JNI call* returns [`Exception`][JNIError::JavaException],
+/// Error message for when a *JNI call* returns [`Exception`][jni::errors::Error::JavaException],
 /// but no Exception was found.
 pub(crate) static JNI_CALL_GHOST_EXCEPTION: &str = "JNI Call returned with Error::JavaException, but no exception was found.";
 
@@ -63,30 +63,6 @@ mod android {
         eprintln!("Hello, World!");
     }
 }
-
-// /// Get a [`String`] from a `java.lang.String`, asserting that the object is NOT **`NULL`**.
-// pub fn get_string(arg: JString, env: &mut JNIEnv) -> String {
-//     String::from(
-//         env.get_string(&arg)
-//             .expect("String argument can't be NULL")
-//     )
-// }
-// /// Get [`String`] from a `java.lang.String`, which could be **`NULL`**.
-// pub fn get_nullable_string(arg: JString, env: &mut JNIEnv) -> Option<String> {
-//     if arg.is_null() {
-//         None
-//     } else {
-//         env.get_string(&arg)
-//             .ok()
-//             .map(String::from)
-//     }
-// }
-// /// Create a *Java String* from a *Rust [`String`]*.
-// pub fn new_string<'local>(s: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
-//     env.new_string(s)
-//         .unwrap_or_else(|err| panic!("Error creating Java String: {err}"))
-//         .into()
-// }
 
 // TODO: doc
 // TODO: ensure the returned JNIEnv can't escape the function it was called from
