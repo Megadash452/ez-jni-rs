@@ -11,10 +11,8 @@ use ez_jni_macros::new;
 use std::{any::Any, borrow::Cow, cell::{Cell, RefCell}};
 
 thread_local! {
-    /// Tells whether [`set_panic_hook()`] was called and the *hook* was set.
-    /// 
-    /// This will only be `true` if [`catch_throw()`] was called (i.e. Rust was enetered from Java via a [`jni_fn`][ez_jni::jni_fn!]).
-    static PANIC_HOOK_SET: Cell<bool> = const { Cell::new(false) };
+    /// Set only by [`run_with_jnienv_helper`].
+    static INTEGRATION_TEST: Cell<bool> = const { Cell::new(false) };
 }
 
 /// A lot like [std::panic::Location], but uses a [String] instead of `&str`.

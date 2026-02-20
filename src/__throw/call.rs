@@ -44,7 +44,7 @@ where E: FromObject<'local> {
 pub fn panic_exception(ex: JavaException) -> ! {
     // If the panic hook was set, this means that the panic payload will be thrown to Java,
     // so the payload should be the exception itself.
-    if PANIC_HOOK_SET.get() {
+    if INTEGRATION_TEST.get() {
         // DO NOT inject bactrace here. That is done in throw_panic().
         ::std::panic::panic_any::<GlobalRef>(ex.into())
     } else {

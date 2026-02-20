@@ -17,6 +17,17 @@ static JVM: LazyLock<JavaVM> = LazyLock::new(|| {
     )
         .unwrap_or_else(|err| panic!("Error starting JavaVM: {err}"))
 });
+fn compile_java() -> Result<(), Box<dyn std::error::Error>> {
+    std::fs::create_dir_all(CLASS_DIR)?;
+    let output = Command::new("javac")
+        .args(["./tests/Test.java", "-d", CLASS_DIR])
+        .output()?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).into())
+    }
+    
+    Ok(())
+}
 
 /// Gets a [`JNIEnv`] from the global [`JVM`][JavaVM].
 /// 
@@ -29,10 +40,11 @@ pub fn get_env<'local>() -> JNIEnv<'local> {
 
 /// Set up the [`JNIEnv`] from the test [`JVM`][JavaVM] and run some test code `f`.
 /// 
-/// The funciton `f` is allowed to `panic!`.
-/// Will abort if `f` panics.
+/// This function can `panic!`.
+/// Panics are not caught in `test` builds because the panic will not unwind thrugh a *language boundary*,
+/// and it allows the test process to display error outputs correctly.
 pub fn run_with_jnienv(f: impl FnOnce() + UnwindSafe) {
-    let (result, mut env) = unsafe { ez_jni::__throw::run_with_jnienv_helper(get_env(), false, |_| f()) };
+    let (result, mut env) = unsafe { ez_jni::__throw::run_with_jnienv_helper(get_env(), true, |_| f()) };
     let env = &mut env;
 
     /// This is allowed to panic
@@ -65,25 +77,15 @@ pub fn run_with_jnienv(f: impl FnOnce() + UnwindSafe) {
         format!("thread{thread_name} panicked at {loc}:\n{msg}\n{backtrace}", loc=panic.location)
     }
 
-    
-
     if let Err(panic) = result {
         // Catch a panic caused by generating the panic print
-        match catch_unwind(AssertUnwindSafe(|| create_panic_stmnt(panic, env))) {
-            Ok(panic) => {
-                // After Panic Hook is disabled, a panic! won't print anything.
-                // So we print it manually.
-                eprintln!("{panic}");
-                std::process::abort();
-            },
-            Err(payload) => std::panic::resume_unwind(payload)
-        };
+        std::panic::resume_unwind(Box::new(create_panic_stmnt(panic, env)))
     }
 }
 
 /// Assert that a test (**f**) should **fail** (`panic!`) with a specific **error message**.
 pub fn fail_with(f: impl FnOnce() + UnwindSafe, expected_error: &str) {
-    let (result, env) = unsafe { ez_jni::__throw::run_with_jnienv_helper(get_env(), false, |_| f()) };
+    let (result, env) = unsafe { ez_jni::__throw::run_with_jnienv_helper(get_env(), true, |_| f()) };
 
     let msg = result
         .map_err(|panic| match panic.panic {
@@ -99,16 +101,4 @@ pub fn fail_with(f: impl FnOnce() + UnwindSafe, expected_error: &str) {
     if msg != expected_error {
         panic!("Expected function to fail with error:\n    {expected_error}\nBut the actual error was:\n    {msg}")
     }
-}
-
-fn compile_java() -> Result<(), Box<dyn std::error::Error>> {
-    std::fs::create_dir_all(CLASS_DIR)?;
-    let output = Command::new("javac")
-        .args(["./tests/Test.java", "-d", CLASS_DIR])
-        .output()?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).into())
-    }
-    
-    Ok(())
 }

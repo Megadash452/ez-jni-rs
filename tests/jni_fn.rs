@@ -51,3 +51,28 @@ fn throw_panic_catch() {
         assert_eq!(&"Release me!", err.downcast::<&'static str>().unwrap().as_ref());
     }) };
 }
+
+// fn panic_with_jni(i: usize) {
+//     if i == 5 {
+//         panic!("Release me {i}");
+//     }
+//     unsafe { ez_jni::__throw::run_with_jnienv_helper::<()>(get_env(), false, |_| {
+//         panic_with_jni(i + 1);
+//     }).0.unwrap_err() };
+//     if i > 0 {
+//         panic!("Release me {i}");
+//     }
+// }
+
+// #[test]
+// fn run_with_jni_recursion() {
+//     panic_with_jni(0);
+// }
+
+// #[test]
+// fn run_with_jni_recursion_multithreaded() {
+//     let t1 = std::thread::spawn(|| panic_with_jni(0));
+//     let t2 = std::thread::spawn(|| panic_with_jni(0));
+//     t1.join().unwrap();
+//     t2.join().unwrap();
+// }
