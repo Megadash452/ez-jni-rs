@@ -2,7 +2,7 @@
 use std::sync::OnceLock;
 use jni::{errors::Error as JNIError, objects::GlobalRef};
 use super::*;
-use crate::{utils::{ResultExt, JNI_CALL_GHOST_EXCEPTION}, FromObject, JavaException};
+use crate::{FromObject, JavaException, utils::{check_object_class, JNI_CALL_GHOST_EXCEPTION, JniResultExt as _, ResultExt as _}};
 
 /// Checks if there is a *pending Exception* that was thrown from a previous JNI call,
 /// and tries to convert it to an `E` and the Exception is caught and cleared.
@@ -24,7 +24,7 @@ where E: FromObject<'local> {
         })
 }
 /// Same as [`try_catch()`], but also catches `java.lang.Error`.
-pub(crate) fn try_catch_throwable<'local, E>(env: &mut JNIEnv<'local>) -> Option<E>
+pub fn try_catch_throwable<'local, E>(env: &mut JNIEnv<'local>) -> Option<E>
 where E: FromObject<'local> {
     catch_throwable(env)
         .and_then(|ex|
@@ -34,30 +34,21 @@ where E: FromObject<'local> {
         )
 }
 
-
 /// Panics with a *Java Exception* instead of *Rust String message*.
-/// 
-/// If this is called within the *context* of a [`jni_fn`][crate::jni_fn!],
-/// this will `panic!` with the [**Exception Object**][jni::objects::GlobalRef] as the payload instead of a regular `panic!` message.
-/// Otherwise, the panic payload will be a [`String`].
 #[track_caller]
 pub fn panic_exception(ex: JavaException) -> ! {
-    if INTEGRATION_TEST.get() {
-        // If running in an integration test, just panic with the exception message.
-        // There is no need to inject backtrace if panics are not being caught.
-        panic!("{ex}");
-    } else {
-        // Otherwise, the panic payload will be thrown to Java,
-        // so the payload should be the exception itself.
-        // DO NOT inject bactrace here. That is done in throw_panic().
-        ::std::panic::panic_any::<GlobalRef>(ex.into())
-    }
+    // The panic payload will be thrown to Java,
+    // so the payload should be the exception itself.
+    // DO NOT inject bactrace here. That is done in throw_panic().
+    ::std::panic::panic_any::<GlobalRef>(ex.into())
 }
 
 /// Like [`panic_exception()`], but can take any [`Throwable`][JThrowable] Object.
 #[inline(always)]
 pub fn panic_throwable(object: &JThrowable<'_>, env: &mut JNIEnv<'_>) -> ! {
-    panic_exception(JavaException::from_throwable(object, env))
+    // Check that the object can be thrown.
+    check_object_class(object, "java/lang/Throwable", env).unwrap_display();
+    std::panic::panic_any(env.new_global_ref(object).unwrap_jni(env))
 }
 
 /// Handles the error returned by any [*JNI Call*](https://docs.rs/jni/0.21.1/jni/struct.JNIEnv.html#implementations) by `panic!king` with the error.
@@ -84,20 +75,19 @@ pub fn handle_jni_call_error(error: JNIError, env: &mut JNIEnv<'_>) -> ! {
 /// This is according to the [Java documentation](https://docs.oracle.com/javase/8/docs/api/java/lang/Error.html), that `java.lang.Error` should *never* be caught.
 pub fn catch_exception(env: &mut JNIEnv<'_>) -> Option<JavaException> {
     let ex = catch_throwable(env)?;
-    let ex = JavaException::from_object_env(&ex, env).unwrap_display();
     
     // Check if Object is `java.lang.Error` and `panic!`.
     if is_error(&ex, env) {
-        panic_exception(ex)
+        panic_throwable(&ex, env)
     } else {
-        Some(ex)
+        Some(JavaException::from_throwable(&ex, env))
     }
 }
 
 /// Same as [`catch_exception()`], but can catch any `Throwable`, including `java.lang.Error`.
 /// 
 /// The returned Object will NEVER be `NULL`.
-pub(crate) fn catch_throwable<'local>(env: &mut JNIEnv<'local>) -> Option<JThrowable<'local>> {
+pub fn catch_throwable<'local>(env: &mut JNIEnv<'local>) -> Option<JThrowable<'local>> {
      env.exception_occurred().ok().and_then(|ex| {
         // NOTICE: Can't call any function (including print) between the time when the exception is thrown and when `JNIEnv::exception_clear()` is called.
         // This means that if a method call could throw, the checks (call, type, and null) should be done AFTER the exception is caught.

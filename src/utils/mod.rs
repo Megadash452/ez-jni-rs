@@ -68,7 +68,8 @@ mod android {
 // TODO: ensure the returned JNIEnv can't escape the function it was called from
 pub fn get_env<'a, 'local>() -> &'a mut JNIEnv<'local> {
     LOCAL_JNIENV_STACK.with_borrow_mut(|stack| {
-        let env = stack.back_mut().expect("There are no JNIEnvs in the stack, meaning you are not in a JNI enviroment.");
+        let env = stack.back_mut()
+            .expect("There are no JNIEnvs in the stack, meaning you are not in a JNI enviroment.");
         /* Safety: the reference will remain valid as long as the current Java stack frame lives,
           which is essentially until the root Rust function (that called this one) returns.
           Thus, the return value cannot exit that root function. */

@@ -1,5 +1,5 @@
 use super::*;
-use std::{backtrace::{BacktraceStatus, Backtrace as StdBacktrace}, marker::PhantomData, panic::{AssertUnwindSafe, UnwindSafe}, sync::OnceLock};
+use std::{backtrace::{Backtrace as StdBacktrace, BacktraceStatus}, marker::PhantomData, panic::{AssertUnwindSafe, UnwindSafe}, sync::{Mutex, MutexGuard, OnceLock}};
 use jni::objects::{JClass, JObject};
 use crate::{compile_java_class, utils::get_env, LOCAL_JNIENV_STACK};
 
@@ -89,9 +89,8 @@ pub unsafe fn run_with_jnienv_helper<'local, R: Sized>(
 
     INTEGRATION_TEST.set(integration_test);
 
-    let prev_hook = std::panic::take_hook();
     // Set panic hook to grab [`PANIC_LOCATION`] data.
-    std::panic::set_hook(Box::new(move |info| {
+    let hooks = PanicHookStack::push(Box::new(move |info| {
         PANIC_LOCATION.set(Some(info.location().unwrap().into()));
         PANIC_BACKTRACE.set(Some(if integration_test {
             StdBacktrace::capture()
@@ -101,8 +100,34 @@ pub unsafe fn run_with_jnienv_helper<'local, R: Sized>(
         }));
     }));
 
+    fn count_stack() -> usize {
+        LOCAL_JNIENV_STACK.with_borrow(|stack| stack.len())
+    }
+    fn hook_name(hook: &(dyn Fn(&std::panic::PanicHookInfo<'_>) + Send + Sync)) -> &'static str {
+        if std::any::type_name_of_val(hook).starts_with("ez_jni") {
+            "<custom_panic_hook>"
+        } else {
+            "<default_panic_hook>"
+        }
+    }
+    println!("Called run_with_jnienv_helper():");
+    println!("  > Thread = {}", std::thread::current().name().unwrap_or("<unnamed>"));
+    println!("  > prev_hook = {}", hook_name(&*hooks.prev));
+    println!("  > There are {} envs in the stack; Pushing 1 more", count_stack());
+
     // Assign the JNIEnv used for this jni call
-    let stack_env = StackEnv::push(env);
+    let stack_env = StackEnv::push(env); 
+
+    // Run the function
+    // Pass a reference of the JNIEnv that was just pushed; for conversions
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| f(get_env::<'_, 'local>())));
+
+    println!("  < Reset panic hook.");
+    println!("  < There are {} envs in the stack; Taking 1.", count_stack());
+    // Reset panic hook so that Rust behaves normally after this
+    hooks.pop();
+    // Remove the JNIEnv when the function finishes running
+    env = stack_env.pop();
 
     // Put in separate function to reduce Generic code duplication.
     fn convert_panic(payload: Box<dyn Any + Send>, integration_test: bool) -> JniRunPanic {
@@ -133,20 +158,9 @@ pub unsafe fn run_with_jnienv_helper<'local, R: Sized>(
             
             JniRunPanic { location, rust_backtrace, panic: PanicType::from(payload) }
         })
-    } 
+    }
 
-    // Run the function
-    // Pass a reference of the JNIEnv that was just pushed; for conversions
-    let result = std::panic::catch_unwind(AssertUnwindSafe(|| f(get_env::<'_, 'local>())))
-        .map_err(|payload| convert_panic(payload, integration_test));
-
-    // Remove the JNIEnv when the function finishes running
-    env = stack_env.pop();
-
-    // Reset panic hook so that Rust behaves normally after this
-    std::panic::set_hook(prev_hook);
-
-    (result, env)
+    (result.map_err(|payload| convert_panic(payload, integration_test)), env)
 }
 
 /// Helper to *catch unwinding* `panic!s` of regular rust functions that interface between the Rust and Java **language boundaries**,
@@ -168,7 +182,8 @@ fn catch_error<R>(f: impl FnOnce() -> R) -> R {
         .unwrap_or_else(|panic_msg| {
             if INTEGRATION_TEST.get() {
                 // Printing and aborting in tests will cause nothing to be printed, unless the --no-capture flag is set.
-                // Simply do a panic in that case.
+                // Simply do a normal panic in that case.
+                let _ = std::panic::take_hook();
                 panic!("Panicked due to error in {caller_location} :\n{panic_msg}\n")
             } else {
                 // Panicking accross language boundaries is UB. Abort instead.
@@ -176,6 +191,35 @@ fn catch_error<R>(f: impl FnOnce() -> R) -> R {
                 std::process::abort();
             }
         })
+}
+
+static PANIC_HOOK_LOCK: Mutex<()> = Mutex::new(());
+type PanicHook = Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Send + Sync>;
+
+/// Thread-safe way of setting a temporary panic hook.
+/// 
+/// Seems like I was wrong about panic::set_hook, it really isn't thread safe.
+struct PanicHookStack {
+    prev: PanicHook,
+}
+impl PanicHookStack {
+    fn lock() -> MutexGuard<'static, ()> {
+        catch_error(|| PANIC_HOOK_LOCK.lock().expect("Can't be poisoned"))
+    }
+    pub fn push(hook: PanicHook) -> Self {
+        let lock = Self::lock();
+
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(hook);
+
+        drop(lock);
+        Self { prev }
+    }
+    pub fn pop(self) {
+        let lock = Self::lock();
+        std::panic::set_hook(self.prev);
+        drop(lock);
+    }
 }
 
 /// Represents a [`JNIEnv`] that currently lives in the [`LOCAL_JNIENV_STACK`].

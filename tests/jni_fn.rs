@@ -71,6 +71,7 @@ fn throw_panic_catch() {
 
 // #[test]
 // fn run_with_jni_recursion_multithreaded() {
+//     // TODO: These should execute at the exact same time (maybe set a timer?)
 //     let t1 = std::thread::spawn(|| panic_with_jni(0));
 //     let t2 = std::thread::spawn(|| panic_with_jni(0));
 //     t1.join().unwrap();
