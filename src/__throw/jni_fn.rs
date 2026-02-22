@@ -99,31 +99,12 @@ pub unsafe fn run_with_jnienv_helper<'local, R: Sized>(
             StdBacktrace::force_capture()
         }));
     }));
-
-    fn count_stack() -> usize {
-        LOCAL_JNIENV_STACK.with_borrow(|stack| stack.len())
-    }
-    fn hook_name(hook: &(dyn Fn(&std::panic::PanicHookInfo<'_>) + Send + Sync)) -> &'static str {
-        if std::any::type_name_of_val(hook).starts_with("ez_jni") {
-            "<custom_panic_hook>"
-        } else {
-            "<default_panic_hook>"
-        }
-    }
-    println!("Called run_with_jnienv_helper():");
-    println!("  > Thread = {}", std::thread::current().name().unwrap_or("<unnamed>"));
-    println!("  > prev_hook = {}", hook_name(&*hooks.prev));
-    println!("  > There are {} envs in the stack; Pushing 1 more", count_stack());
-
     // Assign the JNIEnv used for this jni call
     let stack_env = StackEnv::push(env); 
 
     // Run the function
     // Pass a reference of the JNIEnv that was just pushed; for conversions
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| f(get_env::<'_, 'local>())));
-
-    println!("  < Reset panic hook.");
-    println!("  < There are {} envs in the stack; Taking 1.", count_stack());
     // Reset panic hook so that Rust behaves normally after this
     hooks.pop();
     // Remove the JNIEnv when the function finishes running
