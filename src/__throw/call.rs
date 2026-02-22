@@ -42,15 +42,15 @@ where E: FromObject<'local> {
 /// Otherwise, the panic payload will be a [`String`].
 #[track_caller]
 pub fn panic_exception(ex: JavaException) -> ! {
-    // If the panic hook was set, this means that the panic payload will be thrown to Java,
-    // so the payload should be the exception itself.
     if INTEGRATION_TEST.get() {
-        // DO NOT inject bactrace here. That is done in throw_panic().
-        ::std::panic::panic_any::<GlobalRef>(ex.into())
-    } else {
-        // Otherwise, just panic with the exception message and exit execution.
+        // If running in an integration test, just panic with the exception message.
         // There is no need to inject backtrace if panics are not being caught.
         panic!("{ex}");
+    } else {
+        // Otherwise, the panic payload will be thrown to Java,
+        // so the payload should be the exception itself.
+        // DO NOT inject bactrace here. That is done in throw_panic().
+        ::std::panic::panic_any::<GlobalRef>(ex.into())
     }
 }
 
