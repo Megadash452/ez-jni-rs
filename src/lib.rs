@@ -89,6 +89,8 @@ thread_local! {
 }
 
 mod private {
+    /// A trait bound that is used as a *"key"* for **traits** that can't be implemented by users of this library.
     pub trait Sealed { }
-    pub struct Token;
+    /// An argument that is passed as a *"key"* to **trait methods** that can't be re-implemented by users of this library.
+    pub struct SealedMethod;
 }

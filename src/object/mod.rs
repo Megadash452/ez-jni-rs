@@ -135,7 +135,7 @@ where Self: Sized + 'local {
     /// The only types that can override it are primitives.
     #[doc(hidden)]
     #[inline(always)]
-    fn __from_array_object(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Box<[Self]>, FromObjectError> {
+    fn __from_array_object(object: &JObject<'_>, env: &mut JNIEnv<'local>, _: crate::private::Token) -> Result<Box<[Self]>, FromObjectError> {
         get_object_array_converted(object, env)
     }
 }
@@ -172,7 +172,7 @@ pub trait ToObject {
     /// The only types that can override it are primitives.
     #[doc(hidden)]
     #[inline(always)]
-    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>) -> JObject<'local>
+    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>, _: crate::private::Token) -> JObject<'local>
     where Self: Class + Sized {
         create_object_array_converted(slice, Self::to_object_env, &Self::class(), env)
     }
