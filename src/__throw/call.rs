@@ -1,5 +1,5 @@
 //! These functions are used in [`call!`][ez_jni_macros::call!] and *similar macros*.
-use std::{fmt::Display, sync::OnceLock};
+use std::{fmt::{Debug, Display}, sync::OnceLock};
 use jni::{objects::GlobalRef};
 use super::*;
 use crate::{JavaException, utils::{JNI_CALL_GHOST_EXCEPTION, JniResultExt as _, ResultExt as _, check_object_class}};
@@ -35,7 +35,6 @@ pub(crate) fn __panic_jni_error(error: jni::errors::Error, env: &mut JNIEnv<'_>)
 }
 
 /// Encapsulates a [`JNI Error`][jni::errors::Error] in a similar type that stores the `Exception` variant with the [`Exception Object`][crate::JavaException].
-#[derive(Debug)]
 pub enum JniError {
     Exception(JavaException),
     Jni(jni::errors::Error),
@@ -69,8 +68,17 @@ impl Display for JniError {
     #[inline(always)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Exception(ex) => f.write_str(&ex.to_string()),
-            Self::Jni(error) => f.write_str(&error.to_string()),
+            Self::Exception(ex) => <JavaException as Display>::fmt(ex, f),
+            Self::Jni(err) => <jni::errors::Error as Display>::fmt(err, f),
+        }
+    }
+}
+impl Debug for JniError {
+    #[inline(always)]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Exception(ex) => <JavaException as Debug>::fmt(ex, f),
+            Self::Jni(err) => <jni::errors::Error as Debug>::fmt(err, f),
         }
     }
 }

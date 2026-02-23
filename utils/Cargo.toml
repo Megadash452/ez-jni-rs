@@ -9,3 +9,6 @@ license = "MIT"
 [lib]
 name = "utils"
 path = "./lib.rs"
+
+[dependencies]
+jni = { workspace = true }

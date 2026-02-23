@@ -1,7 +1,32 @@
 //! This is an utils crate with functions that are used in the main crate, macros, and tests
-use std::{io, fmt::Write, path::{Path, PathBuf}, process::Command};
+use std::{fmt::Write, io, path::{Path, PathBuf}, process::Command, sync::LazyLock};
+
+use jni::JavaVM;
 
 pub static CLASS_DIR: &'static str = "./target/tmp/classes";
+
+pub static TEST_JVM: LazyLock<JavaVM> = LazyLock::new(new_test_jvm);
+fn new_test_jvm() -> JavaVM {
+    // Compile Test class
+    std::fs::create_dir_all(CLASS_DIR)
+        .unwrap_or_else(|err| panic!("Error creating directory \"{CLASS_DIR}\": {err}"));
+    let output = Command::new("javac")
+        .args(["./tests/Test.java", "-d", CLASS_DIR])
+        .output()
+        .unwrap_or_else(|err| panic!("Error spawning Java compiler: {err}"));
+    if !output.status.success() {
+        panic!("Error compiling Java file:\n{}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    // Start JVM with the classes directory and Assertions.
+    JavaVM::new(jni::InitArgsBuilder::new()
+        .option(format!("-Djava.class.path={CLASS_DIR}"))
+        .option("-ea")
+        .build()
+        .unwrap()
+    )
+        .unwrap_or_else(|err| panic!("Error starting JVM: {err}"))
+}
 
 /// Convert the first letter of a String into uppercase
 pub fn first_char_uppercase(s: &str) -> String {

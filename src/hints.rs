@@ -695,22 +695,13 @@ impl Display for FieldHintReport {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::LazyLock;
-    use jni::JavaVM;
     use super::*;
-
-    pub static JVM: LazyLock<JavaVM> = LazyLock::new(|| {
-        JavaVM::new(jni::InitArgsBuilder::new()
-            .build()
-            .unwrap()
-        )
-            .unwrap_or_else(|err| panic!("Error starting JavaVM: {err}"))
-    });
 
     macro_rules! setup_env {
         ($var:ident) => {
-            let mut $var = JVM.attach_current_thread_permanently()
+            let mut $var = ::utils::TEST_JVM.attach_current_thread_permanently()
                 .unwrap_or_else(|err| panic!("Error attaching current thread to JavaVM: {err}"));
+            let $var = &mut $var;
         };
     }
 
@@ -730,52 +721,57 @@ mod tests {
 
         // Same Name and same Sig Methods
         report = MethodHintReport::check_method_existence(
-            &env.find_class("java/lang/Integer").unwrap_jni(&mut env),
-            "hashCode",
+            &env.find_class("me/test/Test").catch(env).unwrap(),
+            "memberGetter",
             "()I",
             true,
-            &mut env
+            env
         );
         check_report_hint!(report.hint => MethodHint::MatchNameAndSig { method: Method { mods, name, params, return_ty, .. }, .. } => {
             assert_eq!(mods.staticness(), "non-static");
-            assert_eq!(name, "hashCode");
+            assert_eq!(name, "memberGetter");
             assert!(params.is_empty());
             assert_eq!(return_ty, "int");
         });
         // Same Name but different Sig Methods
         report = MethodHintReport::check_method_existence(
-            &env.find_class("java/lang/Integer").unwrap_jni(&mut env),
-            "hashCode",
+            &env.find_class("me/test/Test").catch(env).unwrap(),
+            "memberGetter",
             "()V",
             false,
-            &mut env
+            env
         );
         check_report_hint!(report.hint => MethodHint::MatchName { method: Method { name, params, return_ty, .. }, .. } => {
-            assert_eq!(name, "hashCode");
+            assert_eq!(name, "memberGetter");
             assert!(params.is_empty());
             assert_eq!(return_ty, "int");
         });
         // Different Name but same Sig Methods
         report = MethodHintReport::check_method_existence(
-            &env.find_class("java/lang/Integer").unwrap_jni(&mut env),
-            "myOwnMethod",
-            "(II)I",
-            false,
-            &mut env
+            &env.find_class("me/test/Test").catch(env).unwrap(),
+            "myFakeMethod",
+            "(Ljava/lang/Object;Ljava/lang/String;)V",
+            true,
+            env
         );
         check_report_hint!(report.hint => MethodHint::MatchSig { methods, .. } => {
-            let method = methods.iter().find(|method| method.name == "compare").unwrap();
-            assert!(method.params[0] == "int");
-            assert!(method.params[1] == "int");
-            assert_eq!(method.return_ty, "int");
+            // Check that a known method with this signature is matched.
+            methods.iter().find(|method| method.name == "objArgs").unwrap();
+            // Check that all matched methods have the same signature.
+            for method in methods.iter() {
+                assert!(method.params.len() == 2);
+                assert!(method.params[0] == "java.lang.Object");
+                assert!(method.params[1] == "java.lang.String");
+                assert_eq!(method.return_ty, "void");
+            }
         });
         // No matches
         report = MethodHintReport::check_method_existence(
-            &env.find_class("java/lang/Integer").unwrap_jni(&mut env),
-            "myOwnMethod",
-            "(Lme.my.Class;)V",
+            &env.find_class("me/test/Test").catch(env).unwrap(),
+            "myFakeMethod",
+            "(Lmy.fake.Class;)V",
             false,
-            &mut env
+            env
         );
         assert!(matches!(report.hint, MethodHint::NoMatch))
     }
@@ -787,86 +783,95 @@ mod tests {
 
         // Same Name and same Type Fields
         report = FieldHintReport::check_field_existence(
-            &env.find_class("java/lang/Integer").unwrap_jni(&mut env),
-            "SIZE",
+            &env.find_class("me/test/Test").catch(env).unwrap(),
+            "member1",
             "I",
             false,
-            &mut env
+            env
         );
         check_report_hint!(report.hint => FieldHint::MatchFieldNameAndType { field: Field { mods, name, ty, .. }, .. } => {
             assert_eq!(mods.staticness(), "static");
-            assert_eq!(name, "SIZE");
+            assert_eq!(name, "member1");
             assert_eq!(ty, "int");
         });
         // Same Name but different Type Fields
         report = FieldHintReport::check_field_existence(
-            &env.find_class("java/lang/Integer").unwrap_jni(&mut env),
-            "SIZE",
+            &env.find_class("me/test/Test").catch(env).unwrap(),
+            "member1",
             "J",
             true,
-            &mut env
+            env
         );
         check_report_hint!(report.hint => FieldHint::MatchFieldName { field: Field { name, ty, .. }, .. } => {
-            assert_eq!(name, "SIZE");
+            assert_eq!(name, "member1");
             assert_eq!(ty, "int");
         });
         // Similar Name and same Type Methods
         report = FieldHintReport::check_field_existence(
-            &env.find_class("java/lang/Integer").unwrap_jni(&mut env),
-            "intValue",
+            &env.find_class("me/test/Test").catch(env).unwrap(),
+            "memberGetter",
             "I",
             false,
-            &mut env
+            env
         );
         check_report_hint!(report.hint => FieldHint::MatchMethodNameAndType { methods, .. } => {
-            assert_eq!(methods[0].name, "intValue");
+            assert_eq!(methods[0].name, "memberGetter");
             assert_eq!(methods[0].return_ty, "int");
         });
+        // Different Name but same Type Methods
         report = FieldHintReport::check_field_existence(
-            &env.find_class("java/lang/Integer").unwrap_jni(&mut env),
+            &env.find_class("me/test/Test").catch(env).unwrap(),
             "string",
             "Ljava/lang/String;",
             false,
-            &mut env
+            env
         );
         check_report_hint!(report.hint => FieldHint::MatchMethodNameAndType { methods, .. } => {
-            assert_eq!(methods[0].name, "toString");
+            assert_eq!(methods[0].name, "getString");
             assert_eq!(methods[0].return_ty, "java.lang.String");
         });
         // Similar Name but different Type Methods
         report = FieldHintReport::check_field_existence(
-            &env.find_class("java/lang/Integer").unwrap_jni(&mut env),
-            "intValue",
+            &env.find_class("me/test/Test").catch(env).unwrap(),
+            "memberGetter",
             "J",
             false,
-            &mut env
+            env
         );
         check_report_hint!(report.hint => FieldHint::MatchMethodName { methods, .. } => {
-            assert_eq!(methods[0].name, "intValue");
+            assert_eq!(methods[0].name, "memberGetter");
             assert_eq!(methods[0].return_ty, "int");
         });
         // Fields and Methods with the same Type
         report = FieldHintReport::check_field_existence(
-            &env.find_class("java/lang/Integer").unwrap_jni(&mut env),
-            "myOwnField",
+            &env.find_class("me/test/Test").catch(env).unwrap(),
+            "myFakeField",
             "I",
             false,
-            &mut env
+            env
         );
         check_report_hint!(report.hint => FieldHint::MatchType { fields, methods, .. } => {
-            let field = fields.iter().find(|field| field.name == "SIZE").unwrap();
-            assert_eq!(field.ty, "int");
-            let method = methods.iter().find(|method| method.name == "intValue").unwrap();
-            assert!(method.params.is_empty());
-            assert_eq!(method.return_ty, "int");
+            // Check that a known method with this type is matched.
+            fields.iter().find(|field| field.name == "memberField").unwrap();
+            // Check that all matched fields have the same type.
+            for field in fields.iter() {
+                assert_eq!(field.ty, "int");
+            }
+            // Check that a known method with this signature is matched.
+            methods.iter().find(|method| method.name == "memberGetter").unwrap();
+            // Check that all matched methods have the same signature.
+            for method in methods.iter() {
+                assert!(method.params.is_empty());
+                assert_eq!(method.return_ty, "int");
+            }
         });
         // No matches
         report = FieldHintReport::check_field_existence(
-            &env.find_class("java/lang/Integer").unwrap_jni(&mut env),
-            "myOwnField",
-            "Lme.my.Class;",
+            &env.find_class("me/test/Test").catch(env).unwrap(),
+            "myFakeField",
+            "Lmy.fake.Class;",
             false,
-            &mut env
+            env
         );
         assert!(matches!(report.hint, FieldHint::NoMatch))
     }
@@ -902,19 +907,37 @@ mod tests {
         // Test Java compatibility
         use ez_jni_macros::class;
         use std::collections::HashMap;
-
         setup_env!(env);
-        let env = &mut env;
-        let methods = call!(env=> class!(env=> java.lang.Integer).getDeclaredMethods() -> [java.lang.reflect.Method])
+
+        let methods = call!(env=> class!(env=> me.test.Test).getDeclaredMethods() -> [java.lang.reflect.Method])
             .into_iter()
             .map(|obj| Method::from_object_env(&obj, env).unwrap_display())
-            .filter(|method| method.name == "compare" || method.name == "compareTo")
+            .filter(|method| method.name == "objArgs" || method.name == "memberGetter")
             .map(|method| (method.name.clone(), method))
             .collect::<HashMap<String, Method>>();
+        
         assert_eq!(methods.len(), 2);
+        assert_eq!(methods["objArgs"].to_string(), "public static void me.test.Test.objArgs(java.lang.Object, java.lang.String)");
+        assert_eq!(methods["memberGetter"].to_string(), "public int me.test.Test.memberGetter()");
+    }
 
-        assert_eq!(methods["compare"].to_string(), "public static int java.lang.Integer.compare(int, int)");
-        assert_eq!(methods["compareTo"].to_string(), "public int java.lang.Integer.compareTo(java.lang.Object)");
+    #[test]
+    fn field_from_object() {
+        // Test Java compatibility
+        use ez_jni_macros::class;
+        use std::collections::HashMap;
+        setup_env!(env);
+
+        let fields = call!(env=> class!(env=> me.test.Test).getDeclaredFields() -> [java.lang.reflect.Field])
+            .into_iter()
+            .map(|obj| Field::from_object_env(&obj, env).unwrap_display())
+            .filter(|field| field.name == "memberField" || field.name == "member1")
+            .map(|field| (field.name.clone(), field))
+            .collect::<HashMap<String, Field>>();
+
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields["memberField"].to_string(), "public int me.test.Test.memberField");
+        assert_eq!(fields["member1"].to_string(), "public static int me.test.Test.member1");
     }
 
     #[test]
