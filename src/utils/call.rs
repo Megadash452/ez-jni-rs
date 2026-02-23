@@ -6,6 +6,7 @@ use jni::{
 };
 use utils::first_char_uppercase;
 use crate::{__throw::JniError, FromJValue, FromObject, JavaException, utils::{JniResultExt as _, ResultExt as _}};
+#[cfg_attr(not(debug_assertions), allow(unused))]
 use super::{MethodNotFound, FieldNotFound};
 
 
@@ -21,6 +22,7 @@ pub enum ClassRepr<'a, 'obj> {
 }
 
 /// A [`Cow`][std::borrow::Cow] specifically designed for [`JObject`].
+#[cfg_attr(not(debug_assertions), allow(unused))]
 enum CowObject<'a, T> {
     Borrowed(&'a T),
     Owned(T)
@@ -100,11 +102,13 @@ pub fn create_object<'local>(class: ClassRepr<'_, '_>, sig: &str, args: &[JValue
     }.map_err(|error| handle_call_error(error, class.into(), "<init>", sig, env))
 }
 
+#[cfg_attr(not(debug_assertions), allow(unused))]
 pub(super) enum Callee<'a, 'obj> {
     ClassPath(&'a str),
     Class(&'a JClass<'obj>),
     Object(&'a JObject<'obj>)
 }
+#[cfg_attr(not(debug_assertions), allow(unused))]
 impl<'a, 'obj> Callee<'a, 'obj> {
     fn is_static(&self) -> bool {
         match self {
@@ -147,6 +151,7 @@ impl<'a, 'local> From<&'a JObject<'local>> for Callee<'a, 'local> {
 /// but not if the code inside the *java method* fails.
 /// 
 /// If built in **debug** mode, may also output a hint on why the call *failed* and suggestions to fix it.
+#[cfg_attr(not(debug_assertions), allow(unused_variables))]
 #[track_caller]
 fn handle_call_error<'local>(
     error: jni::errors::Error,
@@ -329,7 +334,7 @@ pub(super) fn field_helper<'local>(
                 if #[cfg(debug_assertions)] {
                     call_method_op(env)
                 } else {
-                    method_op(env)
+                    method_op(env).catch(env)
                 }
             } },
             JniError::Exception(exception) => {
@@ -339,7 +344,7 @@ pub(super) fn field_helper<'local>(
                         if #[cfg(debug_assertions)] {
                             call_method_op(env)
                         } else {
-                            method_op(env)
+                            method_op(env).catch(env)
                         }
                     }
                 } else {
