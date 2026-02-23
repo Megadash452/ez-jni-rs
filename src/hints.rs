@@ -729,7 +729,13 @@ mod tests {
         let mut report;
 
         // Same Name and same Sig Methods
-        report = MethodHintReport::check_method_existence(&env.find_class("java/lang/Integer").unwrap(), "hashCode", "()I", true, &mut env);
+        report = MethodHintReport::check_method_existence(
+            &env.find_class("java/lang/Integer").unwrap_jni(&mut env),
+            "hashCode",
+            "()I",
+            true,
+            &mut env
+        );
         check_report_hint!(report.hint => MethodHint::MatchNameAndSig { method: Method { mods, name, params, return_ty, .. }, .. } => {
             assert_eq!(mods.staticness(), "non-static");
             assert_eq!(name, "hashCode");
@@ -737,14 +743,26 @@ mod tests {
             assert_eq!(return_ty, "int");
         });
         // Same Name but different Sig Methods
-        report = MethodHintReport::check_method_existence(&env.find_class("java/lang/Integer").unwrap(), "hashCode", "()V", false, &mut env);
+        report = MethodHintReport::check_method_existence(
+            &env.find_class("java/lang/Integer").unwrap_jni(&mut env),
+            "hashCode",
+            "()V",
+            false,
+            &mut env
+        );
         check_report_hint!(report.hint => MethodHint::MatchName { method: Method { name, params, return_ty, .. }, .. } => {
             assert_eq!(name, "hashCode");
             assert!(params.is_empty());
             assert_eq!(return_ty, "int");
         });
         // Different Name but same Sig Methods
-        report = MethodHintReport::check_method_existence(&env.find_class("java/lang/Integer").unwrap(), "myOwnMethod", "(II)I", false, &mut env);
+        report = MethodHintReport::check_method_existence(
+            &env.find_class("java/lang/Integer").unwrap_jni(&mut env),
+            "myOwnMethod",
+            "(II)I",
+            false,
+            &mut env
+        );
         check_report_hint!(report.hint => MethodHint::MatchSig { methods, .. } => {
             let method = methods.iter().find(|method| method.name == "compare").unwrap();
             assert!(method.params[0] == "int");
@@ -752,7 +770,13 @@ mod tests {
             assert_eq!(method.return_ty, "int");
         });
         // No matches
-        report = MethodHintReport::check_method_existence(&env.find_class("java/lang/Integer").unwrap(), "myOwnMethod", "(Lme.my.Class;)V", false, &mut env);
+        report = MethodHintReport::check_method_existence(
+            &env.find_class("java/lang/Integer").unwrap_jni(&mut env),
+            "myOwnMethod",
+            "(Lme.my.Class;)V",
+            false,
+            &mut env
+        );
         assert!(matches!(report.hint, MethodHint::NoMatch))
     }
 
@@ -762,37 +786,73 @@ mod tests {
         let mut report;
 
         // Same Name and same Type Fields
-        report = FieldHintReport::check_field_existence(&env.find_class("java/lang/Integer").unwrap(), "SIZE", "I", false, &mut env);
+        report = FieldHintReport::check_field_existence(
+            &env.find_class("java/lang/Integer").unwrap_jni(&mut env),
+            "SIZE",
+            "I",
+            false,
+            &mut env
+        );
         check_report_hint!(report.hint => FieldHint::MatchFieldNameAndType { field: Field { mods, name, ty, .. }, .. } => {
             assert_eq!(mods.staticness(), "static");
             assert_eq!(name, "SIZE");
             assert_eq!(ty, "int");
         });
         // Same Name but different Type Fields
-        report = FieldHintReport::check_field_existence(&env.find_class("java/lang/Integer").unwrap(), "SIZE", "J", true, &mut env);
+        report = FieldHintReport::check_field_existence(
+            &env.find_class("java/lang/Integer").unwrap_jni(&mut env),
+            "SIZE",
+            "J",
+            true,
+            &mut env
+        );
         check_report_hint!(report.hint => FieldHint::MatchFieldName { field: Field { name, ty, .. }, .. } => {
             assert_eq!(name, "SIZE");
             assert_eq!(ty, "int");
         });
         // Similar Name and same Type Methods
-        report = FieldHintReport::check_field_existence(&env.find_class("java/lang/Integer").unwrap(), "intValue", "I", false, &mut env);
+        report = FieldHintReport::check_field_existence(
+            &env.find_class("java/lang/Integer").unwrap_jni(&mut env),
+            "intValue",
+            "I",
+            false,
+            &mut env
+        );
         check_report_hint!(report.hint => FieldHint::MatchMethodNameAndType { methods, .. } => {
             assert_eq!(methods[0].name, "intValue");
             assert_eq!(methods[0].return_ty, "int");
         });
-        report = FieldHintReport::check_field_existence(&env.find_class("java/lang/Integer").unwrap(), "string", "Ljava/lang/String;", false, &mut env);
+        report = FieldHintReport::check_field_existence(
+            &env.find_class("java/lang/Integer").unwrap_jni(&mut env),
+            "string",
+            "Ljava/lang/String;",
+            false,
+            &mut env
+        );
         check_report_hint!(report.hint => FieldHint::MatchMethodNameAndType { methods, .. } => {
             assert_eq!(methods[0].name, "toString");
             assert_eq!(methods[0].return_ty, "java.lang.String");
         });
         // Similar Name but different Type Methods
-        report = FieldHintReport::check_field_existence(&env.find_class("java/lang/Integer").unwrap(), "intValue", "J", false, &mut env);
+        report = FieldHintReport::check_field_existence(
+            &env.find_class("java/lang/Integer").unwrap_jni(&mut env),
+            "intValue",
+            "J",
+            false,
+            &mut env
+        );
         check_report_hint!(report.hint => FieldHint::MatchMethodName { methods, .. } => {
             assert_eq!(methods[0].name, "intValue");
             assert_eq!(methods[0].return_ty, "int");
         });
         // Fields and Methods with the same Type
-        report = FieldHintReport::check_field_existence(&env.find_class("java/lang/Integer").unwrap(), "myOwnField", "I", false, &mut env);
+        report = FieldHintReport::check_field_existence(
+            &env.find_class("java/lang/Integer").unwrap_jni(&mut env),
+            "myOwnField",
+            "I",
+            false,
+            &mut env
+        );
         check_report_hint!(report.hint => FieldHint::MatchType { fields, methods, .. } => {
             let field = fields.iter().find(|field| field.name == "SIZE").unwrap();
             assert_eq!(field.ty, "int");
@@ -801,7 +861,13 @@ mod tests {
             assert_eq!(method.return_ty, "int");
         });
         // No matches
-        report = FieldHintReport::check_field_existence(&env.find_class("java/lang/Integer").unwrap(), "myOwnField", "Lme.my.Class;", false, &mut env);
+        report = FieldHintReport::check_field_existence(
+            &env.find_class("java/lang/Integer").unwrap_jni(&mut env),
+            "myOwnField",
+            "Lme.my.Class;",
+            false,
+            &mut env
+        );
         assert!(matches!(report.hint, FieldHint::NoMatch))
     }
 

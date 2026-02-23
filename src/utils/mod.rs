@@ -10,7 +10,7 @@ pub use object::*;
 pub use array::*;
 
 use jni::{objects::JObject, errors::Error as JniError, JNIEnv};
-use crate::{call, FromObject, LOCAL_JNIENV_STACK};
+use crate::{FromObject, LOCAL_JNIENV_STACK, call, private::Sealed};
 
 #[doc(hidden)]
 pub use cfg_if;
@@ -86,7 +86,9 @@ pub fn get_object_class_name(object: &JObject<'_>, env: &mut JNIEnv<'_>) -> Stri
     call!(env=> class.getName() -> String)
 }
 
-pub trait ResultExt<T> {
+impl <T, E> Sealed for Result<T, E> { }
+
+pub trait ResultExt<T>: Sealed {
     /// The same as [`Result::unwrap()`], but prints the error with [`Display`] instead of [`Debug`].
     fn unwrap_display(self) -> T;
 }
@@ -102,7 +104,7 @@ where E: Debug + Display {
     }   
 }
 
-pub trait JniResultExt<T> {
+pub trait JniResultExt<T>: Sealed {
     /// The same as [`Result::unwrap()`], but gets the full **error** message from the [`JniError`].
     /// 
     /// This can catch *exceptions* and print out the class and message,
@@ -117,7 +119,7 @@ impl<T> JniResultExt<T> for Result<T, JniError> {
             Ok(t) => t,
             Err(error) => ez_jni::__throw::handle_jni_call_error(error, env),
         }
-    }   
+    }
 }
 
 #[doc(hidden)]

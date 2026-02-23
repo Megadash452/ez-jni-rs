@@ -1,6 +1,6 @@
 use std::mem::MaybeUninit;
 use jni::{JNIEnv, objects::{GlobalRef, JClass, JObject, JString, JThrowable}};
-use crate::{FromObjectError, utils::{create_object_array_converted, get_object_array_owned}};
+use crate::{FromObjectError, utils::{create_object_array_converted, get_object_array_owned, JniResultExt as _}};
 use super::ObjectArray;
 
 // This pattern allows renaming ToObject2 to Seal to make it clear to the user.
@@ -68,8 +68,7 @@ macro_rules! impl_obj_array {
             #[inline(always)]
             fn to_object<'local>(&self, _: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
                 // Can create a new_local_ref because this is done inside a local frame
-                env.new_local_ref(self)
-                    .unwrap_or_else(|err| $crate::__throw::handle_jni_call_error(err, env))
+                env.new_local_ref(self).unwrap_jni(env)
             }
         }
     };
@@ -93,8 +92,7 @@ impl ToObject2 for GlobalRef {
     #[inline(always)]
     fn to_object<'local>(&self, _: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
         // Can create a new_local_ref because this is done inside a local frame
-        env.new_local_ref(self)
-            .unwrap_or_else(|err| crate::__throw::handle_jni_call_error(err, env))
+        env.new_local_ref(self).unwrap_jni(env)
     }
 }
 

@@ -87,3 +87,8 @@ thread_local! {
     /// Instead, use [`get_env()`][crate::utils::get_env()].
     static LOCAL_JNIENV_STACK: RefCell<LinkedList<JNIEnv<'static>>> = const { RefCell::new(LinkedList::new()) };
 }
+
+mod private {
+    pub trait Sealed { }
+    pub struct Token;
+}
