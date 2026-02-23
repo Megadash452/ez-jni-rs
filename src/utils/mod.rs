@@ -8,8 +8,9 @@ pub use call::*;
 #[doc(hidden)]
 pub use object::*;
 pub use array::*;
+pub use crate::__throw::JniError;
 
-use jni::{objects::JObject, errors::Error as JniError, JNIEnv};
+use jni::{JNIEnv, objects::JObject};
 use crate::{FromObject, LOCAL_JNIENV_STACK, call, private::Sealed};
 
 #[doc(hidden)]
@@ -109,16 +110,33 @@ pub trait JniResultExt<T>: Sealed {
     /// 
     /// This can catch *exceptions* and print out the class and message,
     /// so the [`JNIEnv`] is required for this method.
+    /// 
+    /// > Either [`catch`][JniResultExt::catch] or `this` function must be called directly after all *JNI calls*.
     fn unwrap_jni(self, env: &mut JNIEnv<'_>) -> T;
+    /// Encapsulates an [`Error`][jni::errors::Error] from a [*JNI Call*](https://docs.rs/jni/0.21.1/jni/struct.JNIEnv.html#implementations)
+    /// in a similar type that stores the `Exception` variant with the [`Exception Object`][crate::JavaException].
+    /// 
+    /// If the *JNI call* returned an error with [`Exception`][jni::errors::Error::JavaException],
+    /// the variant does not have a reference to the [thrown object][jni::objects::JThrowable]
+    /// and the JVM is kept in the **throw** state.
+    /// While in this state, most *JNI calls* will fail and the error will be mixed up with the thrown object.
+    /// This function **catches** the [`Exception`][jni::objects::JThrowable] so that the program can handle the error properly.
+    /// 
+    /// > Either [`unwrap_jni`][JniResultExt::unwrap_jni] or `this` function must be called directly after all *JNI calls*.
+    fn catch(self, env: &mut JNIEnv<'_>) -> Result<T, JniError>;
 }
-impl<T> JniResultExt<T> for Result<T, JniError> {
+impl<T> JniResultExt<T> for Result<T, jni::errors::Error> {
     #[inline(always)]
     #[track_caller]
     fn unwrap_jni(self, env: &mut JNIEnv<'_>) -> T {
         match self {
             Ok(t) => t,
-            Err(error) => ez_jni::__throw::handle_jni_call_error(error, env),
+            Err(error) => ez_jni::__throw::__panic_jni_error(error, env),
         }
+    }
+    #[inline(always)]
+    fn catch(self, env: &mut JNIEnv<'_>) -> Result<T, JniError> {
+        self.map_err(|error| JniError::new(error, env))
     }
 }
 

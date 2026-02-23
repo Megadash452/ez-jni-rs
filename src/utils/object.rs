@@ -1,9 +1,9 @@
 //! Contains helper functions for the macros in `/jni_macros/src/object.rs`.
 use std::borrow::Cow;
 use jni::{
-    JNIEnv, errors::Error as JNIError, objects::{GlobalRef, JClass, JObject, JString, JThrowable, JValue, JValueGen, JValueOwned}
+    JNIEnv, objects::{GlobalRef, JClass, JObject, JString, JThrowable, JValue, JValueGen, JValueOwned}
 };
-use crate::{__throw::{get_jni_error_msg, try_catch}, Class, FromJValue, FromJValueError, FromObject, FromObjectError, JValueType, call, utils::get_object_class_name};
+use crate::{__throw::JniError, Class, FromJValue, FromJValueError, FromObject, FromObjectError, JValueType, call, utils::{JniResultExt as _, get_object_class_name}};
 use super::{field_helper, getter_name_and_sig, FieldNotFound, MethodNotFound};
 
 /// Trait for [`FromObject derive`][FromObject] to use to convert [`JValue`]s to **Rust Values**.
@@ -191,20 +191,21 @@ pub fn from_object_get_field<'local>(object: &JObject<'_>, name: &'static str, t
                 ty: ty.to_string(),
                 target_class: get_object_class_name(object, env)
             };
+
             match err {
                 // NUll was already checked, will not appear here
-                JNIError::FieldNotFound { .. }
-                | JNIError::MethodNotFound { .. } => not_found_error,
-                JNIError::JavaException => {
-                    if let Some(FieldNotFound) = try_catch(env) {
+                JniError::Exception(exception) => {
+                    if FieldNotFound::from_object_env(&exception, env).is_ok() {
                         not_found_error
-                    } else if let Some(MethodNotFound) = try_catch(env) {
+                    } else if MethodNotFound::from_object_env(&exception, env).is_ok() {
                         not_found_error
                     } else {
-                        crate::__throw::handle_jni_call_error(JNIError::JavaException, env)
+                        crate::__throw::panic_exception(exception)
                     }
                 },
-                err => crate::__throw::handle_jni_call_error(err, env)
+                JniError::Jni(jni::errors::Error::FieldNotFound { .. })
+                | JniError::Jni(jni::errors::Error::MethodNotFound { .. }) => not_found_error,
+                error => error.panic(),
             }
         })
 }
@@ -216,13 +217,16 @@ pub fn check_object_class(object: &JObject, target_class: &str, env: &mut JNIEnv
     }
 
     let class = env.get_object_class(object)
-        .unwrap_or_else(|err| panic!("Failed to get Object's class: {}", get_jni_error_msg(err, env)));
+        .catch(env)
+        .unwrap_or_else(|err| panic!("Failed to get Object's class: {err}"));
 
     let target_class_obj = env.find_class(target_class)
-        .map_err(|_| FromObjectError::ClassNotFound(target_class.to_string()))?;
+        .catch(env)
+        .map_err(|_| { FromObjectError::ClassNotFound(target_class.to_string())})?;
     
     if !env.is_instance_of(object, target_class_obj)
-        .unwrap_or_else(|err| panic!("Failed check Object's classes: {}", get_jni_error_msg(err, env)))
+        .catch(env)
+        .unwrap_or_else(|err| panic!("Failed check Object's classes: {err}"))
     {
         return Err(FromObjectError::ClassMismatch {
             obj_class: call!(env=> class.getName() -> String),

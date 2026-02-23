@@ -1,7 +1,7 @@
 use super::*;
 use std::{backtrace::{Backtrace as StdBacktrace, BacktraceStatus}, marker::PhantomData, panic::{AssertUnwindSafe, UnwindSafe}, sync::{Mutex, MutexGuard, OnceLock}};
 use jni::objects::{JClass, JObject};
-use crate::{compile_java_class, utils::get_env, LOCAL_JNIENV_STACK};
+use crate::{LOCAL_JNIENV_STACK, compile_java_class, utils::{JniResultExt as _, get_env}};
 
 /// Runs a Rust function and returns its value, catching any `panics!` and throwing them as *Java Exceptions*.
 /// Specifically, this will throw a `me.marti.ezjni.RustPanic` exception.
@@ -285,6 +285,7 @@ fn throw_panic(panic: JniRunPanic, env: &mut JNIEnv<'_>) { catch_error(|| {
         if #[cfg(not(docsrs))] {
             let panic_class = PANIC_CLASS.get_or_init(|| {
                 let class = env.find_class("me/marti/ezjni/RustPanic")
+                    .catch(env)
                     .or_else(|_| env.define_class("me/marti/ezjni/RustPanic", &JObject::null(), compile_java_class!("./src/", "me/marti/ezjni/RustPanic")))
                     .expect("Failed loading/finding RustPanic class");
                 env.new_global_ref(class)

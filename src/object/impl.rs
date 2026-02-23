@@ -1,6 +1,6 @@
 use std::mem::MaybeUninit;
 use jni::objects::{GlobalRef, JClass, JString};
-use crate::{Class, private::SealedMethod, utils::{check_object_class, create_java_prim_array, get_java_prim_array}};
+use crate::{Class, private::SealedMethod, utils::{JniResultExt as _, check_object_class, create_java_prim_array, get_java_prim_array}};
 use super::*;
 
 impl<T> ToObject for &T
@@ -107,6 +107,7 @@ impl FromObject<'_> for String {
         // Already checked that it is java.lang.String and is not NULL
         Ok(unsafe {
             env.get_string_unchecked(object.into())
+                .catch(env)
                 .unwrap_or_else(|err| panic!("ENV error while getting String: {err}"))
                 .into()
         })
@@ -121,6 +122,7 @@ impl ToObject for String {
 impl ToObject for str {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
         env.new_string(self)
+            .catch(env)
             .unwrap_or_else(|err| panic!("Error converting Rust string to Java String: {err}"))
             .into()
     }
@@ -408,7 +410,8 @@ impl FromObjectOwned<'_> for GlobalRef {
             return Err(FromObjectError::Null);
         }
         env.new_global_ref(object)
-            .map_err(|error| FromObjectError::from_jni_with_msg("Failed to create new Global reference", error, env))
+            .catch(env)
+            .map_err(FromObjectError::from)
     }
 }
 impl<'obj, T> FromObjectOwned<'obj> for Option<T>

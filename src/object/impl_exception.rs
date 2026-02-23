@@ -1,7 +1,7 @@
 use jni::objects::GlobalRef;
 use std::{fmt::{Debug, Display}, io, ops::Deref};
 use ez_jni_macros::new;
-use crate::utils::{get_object_class_name, JniResultExt as _};
+use crate::utils::{JniResultExt as _, get_object_class_name};
 
 use super::*;
 
@@ -97,7 +97,8 @@ impl FromObject<'_> for JavaException {
 
         // Check that Object is an Exception
         if !env.is_instance_of(object, <Self as Class>::class())
-            .map_err(|err| FromObjectError::from_jni_with_msg("Error calling 'instanceof'", err, env))?
+            .catch(env)
+            .map_err(|error| FromObjectError::from_jni_with_msg("Error calling 'instanceof'", error))?
         {
             return Err(FromObjectError::ClassMismatch {
                 obj_class: class,
@@ -109,7 +110,8 @@ impl FromObject<'_> for JavaException {
             class,
             message: call!(env=> object.getMessage() -> Option<String>),
             exception: env.new_global_ref(&object)
-                .map_err(|err| FromObjectError::from_jni(err, env))?,
+                .catch(env)
+                .map_err(FromObjectError::from)?,
         })
     }
 }
@@ -162,7 +164,7 @@ impl FromObject<'_> for std::io::Error {
 
         // All classes in map extend java.io.IOException.
         // Check this before the classes in map to avoid a bunch of pointless JNI calls
-        if !env.is_instance_of(object, IO_ERROR_BASE_PATH).unwrap() {
+        if !env.is_instance_of(object, IO_ERROR_BASE_PATH).unwrap_jni(env) {
             return Err(FromObjectError::ClassMismatch {
                 obj_class: class,
                 target_class: Some(IO_ERROR_BASE_PATH.to_string()),
@@ -170,7 +172,7 @@ impl FromObject<'_> for std::io::Error {
         }
 
         for &(class, error_kind) in MAP {
-            if env.is_instance_of(object, class).unwrap() {
+            if env.is_instance_of(object, class).unwrap_jni(env) {
                 return Ok(Self::new(error_kind, msg));
             }
         }
@@ -209,8 +211,7 @@ impl ToObject for std::io::Error {
             .find(|(err, _)| self.kind() == *err)
             .map(|(_, class)| *class)
             .unwrap_or(IO_ERROR_BASE_PATH);
-        let class = env.find_class(class)
-            .expect(&format!("Error getting class \"{class}\""));
+        let class = env.find_class(class).unwrap_jni(env);
 
         new!(env=> class(String(self.to_string())))
     }
@@ -218,7 +219,8 @@ impl ToObject for std::io::Error {
 
 impl FromObject<'_> for Box<dyn std::error::Error> {
     fn from_object_env(object: &JObject, env: &mut JNIEnv) -> Result<Self, FromObjectError> {
-        JavaException::from_object_env(object, env).map(|ex| ex.into())
+        JavaException::from_object_env(object, env)
+            .map(JavaException::into)
     }
 }
 impl ToObject for dyn std::error::Error {

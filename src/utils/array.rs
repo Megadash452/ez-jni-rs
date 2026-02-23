@@ -1,6 +1,6 @@
 //! Contains helper functions for the To/FromObject implementatios in `/src/object/impl_array.rs`.
 use jni::{objects::{AutoLocal, JObject, JObjectArray, JPrimitiveArray}, sys::jsize, JNIEnv};
-use crate::{utils::get_object_class_name, FromObject, FromObjectError, Primitive, __throw::get_jni_error_msg};
+use crate::{FromObject, FromObjectError, Primitive, utils::{JniResultExt as _, get_object_class_name}};
 
 /// Create a Java **Array** from a Rust [slice](https://doc.rust-lang.org/std/primitive.slice.html),
 /// where the element `T` is a [`Primitive`].
@@ -20,10 +20,12 @@ where T: Primitive {
 
     // Allocate the array
     let array = T::array_alloc(slice.len() as jsize, env)
-        .unwrap_or_else(|err| panic!("Failed to create {} Array: {}", T::JNAME, get_jni_error_msg(err, env)));
+        .catch(env)
+        .unwrap_or_else(|err| panic!("Failed to create {} Array: {err}", T::JNAME));
     // Fill the Array
     T::array_filler(&array, slice, env)
-        .unwrap_or_else(|err| panic!("Error filling {} Array: {}", T::JNAME, get_jni_error_msg(err, env)));
+        .catch(env)
+        .unwrap_or_else(|err| panic!("Error filling {} Array: {err}", T::JNAME));
 
     array.into()
 }
@@ -46,18 +48,20 @@ where T: Primitive + for<'local> FromObject<'local> {
     if array_class == format!("[{}", T::JSIG) {
         // Array contains primitives
         let len = env.get_array_length(array)
-            .map_err(|err| FromObjectError::from_jni_with_msg("Failed to check Array's length", err, env))?
+            .catch(env)
+            .map_err(|err| FromObjectError::from_jni_with_msg("Failed to check Array's length", err))?
             as usize;
         // Allocate boxed slice
         let mut vec = vec![unsafe { std::mem::zeroed() }; len].into_boxed_slice();
 
         // Fill slice
         T::slice_filler(&array, &mut vec, env)
-            .map_err(|err| FromObjectError::from_jni_with_msg("Failed to read Array elements", err, env))?;
+            .catch(env)
+            .map_err(|err| FromObjectError::from_jni_with_msg("Failed to read Array elements", err))?;
 
         Ok(match T::CONVERT_JAVA_TO_RUST {
             Some(elem_conversion) => vec.into_iter()
-                .map(#[inline] |t| elem_conversion(t))
+                .map(elem_conversion)
                 .collect::<Box<[_]>>(),
             // If the type requires no conversion, then T and T::JType are the same and are safe to transmute.
             None => unsafe { std::mem::transmute::<Box<[T::JNIType]>, Box<[T]>>(vec) }
@@ -93,14 +97,16 @@ pub fn get_object_array_owned<'local, T>(
     let array = <&JObjectArray<'_>>::from(obj);
 
     let len = env.get_array_length(array)
-        .map_err(|err| FromObjectError::from_jni_with_msg("Failed to check Array's length", err, env))?
+        .catch(env)
+        .map_err(|err| FromObjectError::from_jni_with_msg("Failed to check Array's length", err))?
         as usize;
 
     let mut vec = Vec::with_capacity(len);
 
     for i in 0..len {
         let elem = env.get_object_array_element(array, i as jsize)
-                .map_err(|err| FromObjectError::ArrayElement { index: i, error: Box::new(FromObjectError::from_jni(err, env)) })?;
+            .catch(env)
+            .map_err(|err| FromObjectError::ArrayElement { index: i, error: Box::new(FromObjectError::from(err)) })?;
         vec.push(conversion(elem, env)
             .map_err(|error| FromObjectError::ArrayElement { index: i, error: Box::new(error) })?
         )
@@ -148,12 +154,14 @@ pub fn create_object_array<'local, 'obj>(items: &[impl AsRef<JObject<'obj>>], el
         elem_class, // elem_class MUST be passed here, or else the created Object will have an invalid class when queried.
         JObject::null()
     )
-        .unwrap_or_else(|err| panic!("Failed to create Java Object array: {}", get_jni_error_msg(err, env)));
+        .catch(env)
+        .unwrap_or_else(|err| panic!("Failed to create Java Object array: {err}"));
 
     // Fill the array
     for (i, element) in items.iter().enumerate() {
         env.set_object_array_element(&array, i as jsize, element)
-            .unwrap_or_else(|err| panic!("Failed to set the value of Object array at index {i}:\n    {}", get_jni_error_msg(err, env)));
+            .catch(env)
+            .unwrap_or_else(|err| panic!("Failed to set the value of Object array at index {i}:\n    {err}"));
     }
 
     array.into()
@@ -176,5 +184,7 @@ pub fn create_object_array_converted<'local, T>(
             .map(#[inline] |t| elem_conversion(t, env))
             .collect::<Box<[_]>>(); // Must collect in box to consume iterator, which holds a refernce to env
         Ok(create_object_array(&items, elem_class, env))
-    }).unwrap_or_else(|err| panic!("Failed to create new local frame: {}", get_jni_error_msg(err, env)))
+    })
+        .catch(env)
+        .unwrap_or_else(|err| panic!("Failed to create new local frame: {err}"))
 }

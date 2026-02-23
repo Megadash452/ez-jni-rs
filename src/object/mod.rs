@@ -3,16 +3,22 @@ mod impl_exception;
 pub(crate) mod array;
 
 use std::{cmp::Ordering, fmt::Display};
-use jni::{objects::{JObject, JThrowable}, JNIEnv, errors::Error as JNIError};
+use jni::{objects::{JObject, JThrowable}, JNIEnv};
 use thiserror::Error;
 use ez_jni_macros::call;
-use crate::{__throw::get_jni_error_msg, Class, FromJValueError, utils::{create_object_array_converted, get_env, get_object_array_converted}};
+use crate::{__throw::JniError, Class, FromJValueError, private::SealedMethod, utils::{create_object_array_converted, get_env, get_object_array_converted}};
 
 #[doc(hidden)]
 pub use r#impl::FromObjectOwned;
 pub use impl_exception::JavaException;
 pub use array::ObjectArray;
 
+// TODO:
+// #[derive(Debug)]
+// pub struct FromObjectError {
+//     ty: ErrorType,
+//     caused_by: Option<JniError>,
+// }
 #[derive(Debug, Error)]
 pub enum FromObjectError {
     #[error("Object can't be NULL")]
@@ -27,7 +33,11 @@ pub enum FromObjectError {
     #[error("Could not find class \"{0}\"")]
     ClassNotFound(String),
     #[error("Could not instantiate Type from element in Java Object Array at index {index}:\n    {error}")]
-    ArrayElement { index: usize, error: Box<Self> },
+    ArrayElement {
+        index: usize,
+        #[source]
+        error: Box<Self>
+    },
     #[error("{}", match actual_len.cmp(expected_len) {
         Ordering::Equal => panic!("UNREACHABLE"),
         Ordering::Less => format!("Java Array is too long. Can't put {actual_len} elements, in an array of length {expected_len}"),
@@ -38,15 +48,20 @@ pub enum FromObjectError {
     Other(String)
 }
 impl FromObjectError {
-    /// Convert a [`JNIError`] to a [`FromObjectError`] by generating an error message.
+    /// Convert from a [`JniError`] to by generating an error message,
+    /// and passing a **prefix** message to display *before* the [`JniError`] message.
     #[inline(always)]
-    pub fn from_jni(error: JNIError, env: &mut JNIEnv<'_>) -> Self {
-        Self::Other(get_jni_error_msg(error, env))
+    pub fn from_jni_with_msg(prefix: impl Display, error: JniError) -> Self {
+        Self::Other(format!("{prefix}: {error}"))
     }
-    /// Like [`Self::from_jni()`], but allows passing a message to display *before* the [`JNIError`] message.
-    #[inline(always)]
-    pub fn from_jni_with_msg(prefix: impl Display, error: JNIError, env: &mut JNIEnv<'_>) -> Self {
-        Self::Other(format!("{prefix}: {}", get_jni_error_msg(error, env)))
+}
+impl From<JniError> for FromObjectError {
+    fn from(value: JniError) -> Self {
+        // TODO: implement actual matching
+        // match value {
+        //     JniError::Jni()
+        // }
+        Self::Other(value.to_string())
     }
 }
 impl From<FromJValueError> for FromObjectError {
@@ -135,7 +150,7 @@ where Self: Sized + 'local {
     /// The only types that can override it are primitives.
     #[doc(hidden)]
     #[inline(always)]
-    fn __from_array_object(object: &JObject<'_>, env: &mut JNIEnv<'local>, _: crate::private::Token) -> Result<Box<[Self]>, FromObjectError> {
+    fn __from_array_object(object: &JObject<'_>, env: &mut JNIEnv<'local>, _: SealedMethod) -> Result<Box<[Self]>, FromObjectError> {
         get_object_array_converted(object, env)
     }
 }
@@ -172,7 +187,7 @@ pub trait ToObject {
     /// The only types that can override it are primitives.
     #[doc(hidden)]
     #[inline(always)]
-    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>, _: crate::private::Token) -> JObject<'local>
+    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>, _: SealedMethod) -> JObject<'local>
     where Self: Class + Sized {
         create_object_array_converted(slice, Self::to_object_env, &Self::class(), env)
     }
