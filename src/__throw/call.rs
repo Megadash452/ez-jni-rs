@@ -2,37 +2,7 @@
 use std::{fmt::Display, sync::OnceLock};
 use jni::{objects::GlobalRef};
 use super::*;
-use crate::{FromObject, JavaException, utils::{JNI_CALL_GHOST_EXCEPTION, JniResultExt as _, ResultExt as _, check_object_class}};
-
-/// Checks if there is a *pending Exception* that was thrown from a previous JNI call,
-/// and tries to convert it to an `E` and the Exception is caught and cleared.
-/// 
-/// If the `Exception` can't be converted to an `E`,
-/// this function will *re-throw* the Exception so that another [`try_catch`] call can catch the exception.
-pub fn try_catch<'local, E>(env: &mut JNIEnv<'local>) -> Option<E>
-where E: FromObject<'local> {
-    catch_throwable(env)
-        .and_then(|ex| {
-            // Check if Object is `java.lang.Error` and `panic!`.
-            if is_error(&ex, env) {
-                panic_throwable(&ex, env)
-            }
-            
-            E::from_object_env(&ex, env)
-                .inspect_err(|_| env.throw(ex).unwrap())
-                .ok()
-        })
-}
-/// Same as [`try_catch()`], but also catches `java.lang.Error`.
-pub fn try_catch_throwable<'local, E>(env: &mut JNIEnv<'local>) -> Option<E>
-where E: FromObject<'local> {
-    catch_throwable(env)
-        .and_then(|ex|
-            E::from_object_env(&ex, env)
-                .inspect_err(|_| env.throw(ex).unwrap())
-                .ok()
-        )
-}
+use crate::{JavaException, utils::{JNI_CALL_GHOST_EXCEPTION, JniResultExt as _, ResultExt as _, check_object_class}};
 
 /// Panics with a *Java Exception* instead of *Rust String message*.
 #[track_caller]
@@ -99,8 +69,8 @@ impl Display for JniError {
     #[inline(always)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Exception(ex) => f.write_str(ex.message()),
-            Self::Jni(error) => write!(f, "{error}"),
+            Self::Exception(ex) => f.write_str(&ex.to_string()),
+            Self::Jni(error) => f.write_str(&error.to_string()),
         }
     }
 }
@@ -125,17 +95,22 @@ pub fn catch_exception(env: &mut JNIEnv<'_>) -> Option<JavaException> {
 /// 
 /// The returned Object will NEVER be `NULL`.
 pub fn catch_throwable<'local>(env: &mut JNIEnv<'local>) -> Option<JThrowable<'local>> {
-     env.exception_occurred().ok().and_then(|ex| {
-        // NOTICE: Can't call any function (including print) between the time when the exception is thrown and when `JNIEnv::exception_clear()` is called.
-        // This means that if a method call could throw, the checks (call, type, and null) should be done AFTER the exception is caught.
-        env.exception_clear().unwrap();
+    // Don't use unwrap_jni() here, it will cause infinite recursion.
+    let result = env.exception_occurred();
+    // NOTICE: Can't call any function (including print) between the time when the exception is thrown and when `JNIEnv::exception_clear()` is called.
+    // This means that if a method call could throw, the checks (call, type, and null) should be done AFTER the exception is caught.
+    env.exception_clear().unwrap();
+    let ex = match result {
+        Ok(ex) => ex,
+        Err(jni::errors::Error::JavaException) => unreachable!("Result always returns OK if the error was Exception."),
+        Err(err) => panic!("{err}"),
+    };
 
-        if ex.is_null() {
-            None
-        } else {
-            Some(ex)
-        }
-    })
+    if ex.is_null() {
+        None
+    } else {
+        Some(ex)
+    }
 }
 
 /// Checks if the **Object** is of *Class* `java.lang.Error`,

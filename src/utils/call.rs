@@ -5,7 +5,7 @@ use jni::{
     JNIEnv
 };
 use utils::first_char_uppercase;
-use crate::{__throw::{JniError, try_catch_throwable}, FromJValue, FromObject, JavaException, utils::{JniResultExt as _, ResultExt as _}};
+use crate::{__throw::JniError, FromJValue, FromObject, JavaException, utils::{JniResultExt as _, ResultExt as _}};
 use super::{MethodNotFound, FieldNotFound};
 
 
@@ -26,6 +26,7 @@ enum CowObject<'a, T> {
     Owned(T)
 }
 impl<T> Borrow<T> for CowObject<'_, T> {
+    #[inline(always)]
     fn borrow(&self) -> &T {
         match self {
             Self::Borrowed(t) => t,
@@ -34,6 +35,7 @@ impl<T> Borrow<T> for CowObject<'_, T> {
     }
 }
 impl<T> AsRef<T> for CowObject<'_, T> {
+    #[inline(always)]
     fn as_ref(&self) -> &T {
         match self {
             Self::Borrowed(t) => t,
@@ -44,6 +46,7 @@ impl<T> AsRef<T> for CowObject<'_, T> {
 impl<T> Deref for CowObject<'_, T> {
     type Target = T;
 
+    #[inline(always)]
     fn deref(&self) -> &Self::Target {
         match self {
             Self::Borrowed(t) => t,
@@ -132,6 +135,7 @@ impl<'a, 'local> From<ClassRepr<'a, 'local>> for Callee<'a, 'local> {
     }
 }
 impl<'a, 'local> From<&'a JObject<'local>> for Callee<'a, 'local> {
+    #[inline(always)]
     fn from(object: &'a JObject<'local>) -> Self {
         Self::Object(object)
     }
@@ -318,6 +322,7 @@ pub(super) fn field_helper<'local>(
 
     field_op(env)
         .catch(env)
+        .inspect_err(|err| println!("field_op() error: {err}"))
         .or_else(|err| match err {
             JniError::Jni(jni::errors::Error::FieldNotFound { .. }) => { cfg_if::cfg_if! {
                 // Field does not exist, try calling a Getter
@@ -328,7 +333,7 @@ pub(super) fn field_helper<'local>(
                 }
             } },
             JniError::Exception(exception) => {
-                if let Some(FieldNotFound) = try_catch_throwable(env) {
+                if FieldNotFound::from_object_env(&exception, env).is_ok() {
                     // Try calling Getter/Setter if Field was not found
                     cfg_if::cfg_if! {
                         if #[cfg(debug_assertions)] {
