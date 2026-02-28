@@ -3,7 +3,7 @@
 use jni::{JNIEnv, objects::{JObject, JClass}};
 use std::fmt::Display;
 use itertools::Itertools;
-use crate::{call, utils::{check_object_class, ResultExt as _, JniResultExt as _}, Class, FromObject};
+use crate::{Class, FromObject, call, error::FromObjectError, utils::{JniResultExt as _, ResultExt as _, check_object_class}};
 
 pub fn print_method_existence_report(class: &JClass<'_>, method_name: &'static str, method_sig: &str, is_static: bool, env: &mut JNIEnv<'_>) {
     println!("{}", MethodHintReport::check_method_existence(class, method_name, method_sig, is_static, env))
@@ -68,7 +68,7 @@ impl Method {
     }
 }
 impl FromObject<'_> for Method {
-    fn from_object_env(obj: &JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Self, crate::FromObjectError> {
+    fn from_object_env(obj: &JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         check_object_class(obj, &Self::class(), env)?;
         Ok(Self {
             mods: Mods(call!(env=> obj.getModifiers() -> int)),
@@ -124,7 +124,7 @@ impl Field {
     }
 }
 impl FromObject<'_> for Field {
-    fn from_object_env(obj: &JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Self, crate::FromObjectError> {
+    fn from_object_env(obj: &JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         Ok(Self {
             class: call!(env=> call!(env=> obj.getDeclaringClass() -> Class).getTypeName() -> String),
             name: call!(env=> obj.getName() -> String),
@@ -245,14 +245,14 @@ impl Display for Mods {
 
 /// A **Type** as it would be written in *Java source code*.
 #[derive(Debug, Eq, PartialEq)]
-struct Type(String);
+pub(super) struct Type(String);
 impl Type {
     /// Parse a Java **method's signature** by splitting the *parameter types* by the character.
     /// 
     /// The input signature must have the format of a JNI [*method type signature*](https://docs.oracle.com/javase/8/docs/technotes/guides/jni/spec/types.html#type_signatures).
     /// 
     /// Returns a tuple with the the **list of parameters** and the **return type**.
-    fn parse_method_sig(sig: &str) -> Result<(Box<[Self]>, Self), &'static str> {
+    pub fn parse_method_sig(sig: &str) -> Result<(Box<[Self]>, Self), &'static str> {
         // The params variable is a cursor of which character the param parser is looking at.
         let (mut params, return_ty) = sig.strip_prefix('(')
             .ok_or("Expected method signature to start with a perenthesis (")?

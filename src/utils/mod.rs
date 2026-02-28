@@ -11,7 +11,7 @@ pub use array::*;
 pub use crate::__throw::JniError;
 
 use jni::{JNIEnv, objects::JObject};
-use crate::{FromObject, LOCAL_JNIENV_STACK, call, private::Sealed};
+use crate::{LOCAL_JNIENV_STACK, call, private::Sealed};
 
 #[doc(hidden)]
 pub use cfg_if;
@@ -19,16 +19,6 @@ pub use cfg_if;
 /// Error message for when a *JNI call* returns [`Exception`][jni::errors::Error::JavaException],
 /// but no Exception was found.
 pub(crate) static JNI_CALL_GHOST_EXCEPTION: &str = "JNI Call returned with Error::JavaException, but no exception was found.";
-
-/// A wrapper type for a `java.lang.NoSuchFieldError` **Exception**.
-#[derive(FromObject)]
-#[class(java.lang.NoSuchFieldError)]
-struct FieldNotFound;
-
-/// A wrapper type for a `java.lang.NoSuchMethodError` **Exception**.
-#[derive(FromObject)]
-#[class(java.lang.NoSuchMethodError)]
-struct MethodNotFound;
 
 #[cfg(target_os = "android")]
 pub use android::*;

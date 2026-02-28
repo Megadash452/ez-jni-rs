@@ -1,7 +1,6 @@
 use std::fmt::Display;
 use jni::{objects::{JValue, JValueGen, JValueOwned}, JNIEnv};
-use thiserror::Error;
-use crate::{utils::get_env, FromObject, FromObjectError, ObjectArray, Primitive, ToObject};
+use crate::{FromObject, ObjectArray, Primitive, ToObject, error::FromJValueError, utils::get_env};
 use crate::object::array::ObjectArrayElement;
 
 /// Get a **Rust** value from a **Java** value.
@@ -61,19 +60,6 @@ pub trait ToJValue {
     /// 
     /// Only implement *this* method for the trait.
     fn to_jvalue_env<'local>(&self, env: &mut JNIEnv<'local>) -> JValueOwned<'local>;
-}
-
-/// Error returned by [`FromJValue::from_jvalue()`].
-#[derive(Debug, Error)]
-pub enum FromJValueError {
-    #[error("Expected java type '{expected}', found java type '{actual}'")]
-    IncorrectType {
-        actual: JValueType,
-        expected: JValueType,
-    },
-    /// This variant occurs only when the [`JValue`] is [`Object`][jni::objects::JObject] and the [`FromObject`] call returned an error.
-    #[error("{0}")]
-    Object(#[from] FromObjectError)
 }
 
 #[derive(Debug)]
@@ -151,7 +137,8 @@ impl FromJValue<'_> for bool {
     fn from_jvalue_env(val: JValue<'_, '_>, env: &mut JNIEnv<'_>) -> Result<Self, FromJValueError> {
         match val {
             JValueGen::Bool(b) => Ok(crate::utils::jboolean_to_bool(b)),
-            JValueGen::Object(object) => Ok(Self::from_object_env(object, env)?),
+            JValueGen::Object(object) => Self::from_object_env(object, env)
+                .map_err(::ez_jni::error::FromJValueError::from),
             val => Err(FromJValueError::IncorrectType {
                 actual: JValueType::from(val),
                 expected: JValueType::Bool,
@@ -171,7 +158,8 @@ impl FromJValue<'_> for char {
         match val {
             // Decode UTF-16
             JValueGen::Char(c) => Ok(crate::utils::jchar_to_char(c)),
-            JValueGen::Object(object) => Ok(Self::from_object_env(object, env)?),
+            JValueGen::Object(object) => Self::from_object_env(object, env)
+                .map_err(::ez_jni::error::FromJValueError::from),
             val => Err(FromJValueError::IncorrectType {
                 actual: JValueType::from(val),
                 expected: JValueType::Char,
@@ -193,7 +181,8 @@ macro_rules! map_primitive_impl {
             fn from_jvalue_env(val: ::jni::objects::JValue<'_, '_>, env: &mut ::jni::JNIEnv<'_>) -> Result<Self, FromJValueError> {
                 match val {
                     ::jni::objects::JValueGen::$jvariant(val) => Ok(val as Self),
-                    ::jni::objects::JValueGen::Object(object) => Ok(Self::from_object_env(object, env)?),
+                    ::jni::objects::JValueGen::Object(object) => Self::from_object_env(object, env)
+                        .map_err(::ez_jni::error::FromJValueError::from),
                     val => Err(FromJValueError::IncorrectType {
                         actual: JValueType::from(val),
                         expected: JValueType::$jvariant,
@@ -228,10 +217,11 @@ map_primitive_impl!(for f64, Double, jdouble);
 macro_rules! impl_from_jvalue_env {
     () => { impl_from_jvalue_env! { <'_> } };
     (< $lt_local:lifetime >) => {
-        fn from_jvalue_env(val: ::jni::objects::JValue<'_, '_>, env: &mut ::jni::JNIEnv<$lt_local>) -> ::std::result::Result<Self, ::ez_jni::FromJValueError> {
+        fn from_jvalue_env(val: ::jni::objects::JValue<'_, '_>, env: &mut ::jni::JNIEnv<$lt_local>) -> ::std::result::Result<Self, ::ez_jni::error::FromJValueError> {
             match val {
-                ::jni::objects::JValue::Object(object) => <Self as ::ez_jni::FromObject>::from_object_env(object, env).map_err(::ez_jni::FromJValueError::from),
-                val => ::std::result::Result::Err(::ez_jni::FromJValueError::IncorrectType {
+                ::jni::objects::JValue::Object(object) => <Self as ::ez_jni::FromObject>::from_object_env(object, env)
+                    .map_err(::ez_jni::error::FromJValueError::from),
+                val => ::std::result::Result::Err(::ez_jni::error::FromJValueError::IncorrectType {
                     actual: ::ez_jni::JValueType::from(val),
                     expected: ::ez_jni::JValueType::Object,
                 })

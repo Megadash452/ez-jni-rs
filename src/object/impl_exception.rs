@@ -46,6 +46,13 @@ impl JavaException {
             exception: env.new_global_ref(&object).unwrap_jni(env),
         }
     }
+
+    /// Tells whether the [`Exception`][JavaException] Object's class extends to `T`'s Class,
+    /// and therefore the `Exception` can be converted to a `T`.
+    pub fn is_instance_of<T: Class>(&self) -> bool {
+        let env = crate::utils::get_env();
+        env.is_instance_of(self, T::class()).unwrap_jni(env)
+    }
 }
 impl AsRef<JObject<'static>> for JavaException {
     fn as_ref(&self) -> &JObject<'static> {
@@ -96,10 +103,7 @@ impl FromObject<'_> for JavaException {
         let class = get_object_class_name(object, env);
 
         // Check that Object is an Exception
-        if !env.is_instance_of(object, <Self as Class>::class())
-            .catch(env)
-            .map_err(|error| FromObjectError::from_jni_with_msg("Error calling 'instanceof'", error))?
-        {
+        if !env.is_instance_of(object, <Self as Class>::class()).unwrap_jni(env) {
             return Err(FromObjectError::ClassMismatch {
                 obj_class: class,
                 target_class: Some(<Self as Class>::class().to_string()),
@@ -110,8 +114,7 @@ impl FromObject<'_> for JavaException {
             class,
             message: call!(env=> object.getMessage() -> Option<String>),
             exception: env.new_global_ref(&object)
-                .catch(env)
-                .map_err(FromObjectError::from)?,
+                .catch(env)?,
         })
     }
 }
@@ -160,19 +163,21 @@ impl FromObject<'_> for std::io::Error {
         }
         
         let class = get_object_class_name(object, env);
-        let msg = call!(env=> object.getMessage() -> String);
 
         // All classes in map extend java.io.IOException.
         // Check this before the classes in map to avoid a bunch of pointless JNI calls
-        if !env.is_instance_of(object, IO_ERROR_BASE_PATH).unwrap_jni(env) {
+        if !env.is_instance_of(object, IO_ERROR_BASE_PATH).catch(env)? {
             return Err(FromObjectError::ClassMismatch {
                 obj_class: class,
                 target_class: Some(IO_ERROR_BASE_PATH.to_string()),
             });
         }
 
+        // Get message after checking class
+        let msg = call!(env=> object.getMessage() -> String);
+
         for &(class, error_kind) in MAP {
-            if env.is_instance_of(object, class).unwrap_jni(env) {
+            if env.is_instance_of(object, class).catch(env)? {
                 return Ok(Self::new(error_kind, msg));
             }
         }
@@ -211,13 +216,15 @@ impl ToObject for std::io::Error {
             .find(|(err, _)| self.kind() == *err)
             .map(|(_, class)| *class)
             .unwrap_or(IO_ERROR_BASE_PATH);
-        let class = env.find_class(class).unwrap_jni(env);
+        let class = env.find_class(class)
+            .catch(env)?;
 
         new!(env=> class(String(self.to_string())))
     }
 }
 
 impl FromObject<'_> for Box<dyn std::error::Error> {
+    #[inline(always)]
     fn from_object_env(object: &JObject, env: &mut JNIEnv) -> Result<Self, FromObjectError> {
         JavaException::from_object_env(object, env)
             .map(JavaException::into)

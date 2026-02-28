@@ -51,6 +51,13 @@ impl JniError {
         }
     }
 
+    pub fn into_exception(self) -> Option<JavaException> {
+        match self {
+            JniError::Exception(ex) => Some(ex),
+            JniError::Jni(_) => None,
+        }
+    }
+
     /// Handles the error returned by any [*JNI Call*](https://docs.rs/jni/0.21.1/jni/struct.JNIEnv.html#implementations) by `panic!king` with the error.
     /// 
     /// The error most likely is an `Exception`.
@@ -62,6 +69,14 @@ impl JniError {
             Self::Exception(ex) => panic_exception(ex),
             Self::Jni(err) => panic!("{err}"),
         }
+    }
+}
+impl std::error::Error for JniError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(match self {
+            Self::Exception(ex) => ex,
+            Self::Jni(error) => error,
+        })
     }
 }
 impl Display for JniError {

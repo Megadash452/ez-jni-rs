@@ -54,10 +54,15 @@ where Box<[T]>: for<'a, 'obj> FromObject<'local> {
 impl<'local, const N: usize, T> FromObject<'local> for [T; N]
 where Box<[T]>: for<'a, 'obj> FromObject<'local> {
     fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
-        // Get an unized array from the Java Array
+        // Get an unsized array from the Java Array.
+        // Note: Can't fill Java elements straight into the stack array because
+        // the __from_array_object() implementation can treat primitives and Objects differently (and it returns Box<[T]>).
         let boxed = Box::<[T]>::from_object_env(object, env)?;
         if boxed.len() != N {
-            return Err(FromObjectError::ArrayTooLong { expected_len: N, actual_len: boxed.len() });
+            return Err(FromObjectError::ArraySizeMismatch {
+                expected_len: N,
+                actual_len: boxed.len()
+            });
         }
 
         // SAFETY: taken from uninit crate: https://docs.rs/uninit/0.6.2/uninit/macro.uninit_array.html, but can't use it directly because of generic const

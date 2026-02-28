@@ -3,8 +3,8 @@ use std::borrow::Cow;
 use jni::{
     JNIEnv, objects::{GlobalRef, JClass, JObject, JString, JThrowable, JValue, JValueGen, JValueOwned}
 };
-use crate::{__throw::JniError, Class, FromJValue, FromJValueError, FromObject, FromObjectError, JValueType, call, utils::{JniResultExt as _, get_object_class_name}};
-use super::{field_helper, getter_name_and_sig, FieldNotFound, MethodNotFound};
+use crate::{Class, FromJValue, FromObject, JValueType, call, error::{FromJValueError, FromObjectError}, utils::JniResultExt as _};
+use super::{field_helper, getter_name_and_sig};
 
 /// Trait for [`FromObject derive`][FromObject] to use to convert [`JValue`]s to **Rust Values**.
 pub trait FieldFromJValue<'obj, 'local>: Class + Sized {
@@ -184,30 +184,7 @@ pub fn from_object_get_field<'local>(object: &JObject<'_>, name: &'static str, t
             env.call_method(object, name, sig, &[])
         },
     env)
-        .map_err(|err| {
-            // Create the error that will be returned before checking
-            let not_found_error = FromObjectError::FieldNotFound {
-                name: name.to_string(),
-                ty: ty.to_string(),
-                target_class: get_object_class_name(object, env)
-            };
-
-            match err {
-                // NUll was already checked, will not appear here
-                JniError::Exception(exception) => {
-                    if FieldNotFound::from_object_env(&exception, env).is_ok() {
-                        not_found_error
-                    } else if MethodNotFound::from_object_env(&exception, env).is_ok() {
-                        not_found_error
-                    } else {
-                        crate::__throw::panic_exception(exception)
-                    }
-                },
-                JniError::Jni(jni::errors::Error::FieldNotFound { .. })
-                | JniError::Jni(jni::errors::Error::MethodNotFound { .. }) => not_found_error,
-                error => error.panic(),
-            }
-        })
+        .map_err(FromObjectError::from)
 }
 
 /// Helper function for the [`FromObject`][ez_jni::FromObject] [derive macro][ez_jni_macros::FromObject] to check whether the *object*'s Class matches the struct's *target Class*.
@@ -218,16 +195,11 @@ pub fn check_object_class(object: &JObject, target_class: &str, env: &mut JNIEnv
 
     let class = env.get_object_class(object)
         .catch(env)
-        .unwrap_or_else(|err| panic!("Failed to get Object's class: {err}"));
+        .map_err(|err| FromObjectError::from_jni_with_msg("Failed to get Object's class", err))?;
 
-    let target_class_obj = env.find_class(target_class)
-        .catch(env)
-        .map_err(|_| { FromObjectError::ClassNotFound(target_class.to_string())})?;
+    let target_class_obj = env.find_class(target_class).catch(env)?;
     
-    if !env.is_instance_of(object, target_class_obj)
-        .catch(env)
-        .unwrap_or_else(|err| panic!("Failed check Object's classes: {err}"))
-    {
+    if !env.is_instance_of(object, target_class_obj).catch(env)? {
         return Err(FromObjectError::ClassMismatch {
             obj_class: call!(env=> class.getName() -> String),
             target_class: Some(target_class.to_string())

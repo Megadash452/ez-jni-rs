@@ -45,6 +45,7 @@
 pub mod __throw;
 #[macro_use]
 pub mod utils;
+pub mod error;
 mod object;
 mod jvalue;
 mod hints;

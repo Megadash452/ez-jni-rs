@@ -1,6 +1,8 @@
 //! Contains helper functions for the To/FromObject implementatios in `/src/object/impl_array.rs`.
+use std::mem::MaybeUninit;
+
 use jni::{objects::{AutoLocal, JObject, JObjectArray, JPrimitiveArray}, sys::jsize, JNIEnv};
-use crate::{FromObject, FromObjectError, Primitive, utils::{JniResultExt as _, get_object_class_name}};
+use crate::{FromObject, Primitive, error::FromObjectError, utils::{JniResultExt as _, get_object_class_name}};
 
 /// Create a Java **Array** from a Rust [slice](https://doc.rust-lang.org/std/primitive.slice.html),
 /// where the element `T` is a [`Primitive`].
@@ -98,7 +100,7 @@ pub fn get_object_array_owned<'local, T>(
 
     let len = env.get_array_length(array)
         .catch(env)
-        .map_err(|err| FromObjectError::from_jni_with_msg("Failed to check Array's length", err))?
+        .map_err(FromObjectError::from)?
         as usize;
 
     let mut vec = Vec::with_capacity(len);
@@ -106,9 +108,16 @@ pub fn get_object_array_owned<'local, T>(
     for i in 0..len {
         let elem = env.get_object_array_element(array, i as jsize)
             .catch(env)
-            .map_err(|err| FromObjectError::ArrayElement { index: i, error: Box::new(FromObjectError::from(err)) })?;
-        vec.push(conversion(elem, env)
-            .map_err(|error| FromObjectError::ArrayElement { index: i, error: Box::new(error) })?
+            .map_err(|err| FromObjectError::ArrayElement {
+                index: i,
+                error: Box::new(FromObjectError::from(err))
+            })?;
+        vec.push(
+            conversion(elem, env)
+                .map_err(|error| FromObjectError::ArrayElement {
+                    index: i,
+                    error: Box::new(error)
+                })?
         )
     }
 
@@ -187,4 +196,23 @@ pub fn create_object_array_converted<'local, T>(
     })
         .catch(env)
         .unwrap_or_else(|err| panic!("Failed to create new local frame: {err}"))
+}
+
+pub(crate) fn box_to_array<T: Sized, const N: usize>(slice: Box<[T]>) -> Result<[T; N], FromObjectError> {
+    if slice.len() != N {
+        return Err(FromObjectError::ArraySizeMismatch {
+            expected_len: N,
+            actual_len: slice.len()
+        });
+    }
+
+    let mut array = [const { MaybeUninit::uninit() }; N];
+    // Move the elements from the unsized array to the sized/inline array
+    for (i, v) in slice.into_iter().enumerate() {
+        array[i].write(v);
+    }
+
+    // SAFETY: All elements were initialized.
+    // SAFETY: A pointer of th eslice can be cast to the initialized type: https://stackoverflow.com/a/78699200
+    Ok(unsafe { array.as_ptr().cast::<[T; N]>().read() })
 }

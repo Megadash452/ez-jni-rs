@@ -150,6 +150,7 @@ where T: ObjectArrayElement + 'local,
         let array = <Array as ArrayFromObject>::from_object(obj, env)?;
 
         // Get elem_class ***after*** constructing Array so FromObject2 can do the null and class check. This also avoids unnecessary jni calls.
+        // FIXME: use Class object instead so that it can do is_instance_of()
         let array_class = get_object_class_name(object, env);
         let base_elem_class = array_class.trim_start_matches('[')
             .strip_prefix('L')

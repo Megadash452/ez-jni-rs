@@ -1,6 +1,5 @@
-use std::mem::MaybeUninit;
 use jni::{JNIEnv, objects::{GlobalRef, JClass, JObject, JString, JThrowable}};
-use crate::{FromObjectError, utils::{create_object_array_converted, get_object_array_owned, JniResultExt as _}};
+use crate::{error::FromObjectError, utils::{JniResultExt as _, box_to_array, create_object_array_converted, get_object_array_owned}};
 use super::ObjectArray;
 
 // This pattern allows renaming ToObject2 to Seal to make it clear to the user.
@@ -182,7 +181,6 @@ impl<'local, T> FromObject2<'local> for Box<[T]>
 where T: FromObject2<'local> {
     #[inline(always)]
     fn from_object(object: JObject<'local>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
-        // SAFETY: Callers of FromObject2 for Array types assume that object is only used as borrow (even though its owned in the signature).
         get_object_array_owned(&object, <T as FromObject2>::from_object, env)
     }
 }
@@ -199,21 +197,9 @@ impl<'local, const N: usize, T> FromObject2<'local> for [T; N]
 where Box<[T]>: for<'a, 'obj> FromObject2<'local>,
              T: ObjectArrayElement,
 {
+    #[inline(always)]
     fn from_object(object: JObject<'local>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
-        // Get an unized array from the Java Array
-        let boxed = <Box<[T]> as FromObject2>::from_object(object, env)?;
-        if boxed.len() != N {
-            return Err(FromObjectError::ArrayTooLong { expected_len: N, actual_len: boxed.len() });
-        }
-
-        // SAFETY: taken from uninit crate: https://docs.rs/uninit/0.6.2/uninit/macro.uninit_array.html, but can't use it directly because of generic const
-        let mut array = unsafe { MaybeUninit::<[MaybeUninit<T>; N]>::uninit().assume_init() };
-        // Move the elements from the unsized array to the sized/inline array
-        for (i, v) in boxed.into_iter().enumerate() {
-            array[i] = MaybeUninit::new(v)
-        }
-
-        Ok(array.map(|v| unsafe { v.assume_init() }))
+        box_to_array(<Box<[T]> as FromObject2>::from_object(object, env)?)
     }
 }
 impl<'local, T, Array> FromObject2<'local> for ObjectArray<T, Array>

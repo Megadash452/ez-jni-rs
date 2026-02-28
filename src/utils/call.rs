@@ -1,14 +1,12 @@
 //! Contains helper functions for the macros in `/jni_macros/src/call.rs`.
 use std::{borrow::Borrow, ops::Deref};
+use ez_jni_macros::call;
 use jni::{
     objects::{JClass, JObject, JValue, JValueOwned},
     JNIEnv
 };
 use utils::first_char_uppercase;
-use crate::{__throw::JniError, FromJValue, FromObject, JavaException, utils::{JniResultExt as _, ResultExt as _}};
-#[cfg_attr(not(debug_assertions), allow(unused))]
-use super::{MethodNotFound, FieldNotFound};
-
+use crate::{__throw::JniError, FromJValue, JavaException, error::{ClassNotFoundError, FieldError, FieldNotFoundError, MethodCallError, MethodNotFoundError}, utils::{JniResultExt as _, ResultExt as _}};
 
 /// A wrapper for a `Class` value that will be used in a **JNI Call**.
 #[derive(Clone, Copy)]
@@ -77,29 +75,34 @@ impl<'a, T> From<&'a T> for CowObject<'a, T> {
 /// This functions returns the *value returned* by the method, or an [`Exception`][JavaException] if the method *throws*.
 /// If an error other than an [`Exception`][JavaException] occurs (or is [`MethodNotFound`](https://docs.oracle.com/javaee/7/api/javax/el/MethodNotFoundException.html)),
 /// the function will `panic!`.
-pub fn call_obj_method<'local>(object: &JObject<'_>, name: &'static str, sig: &str, args: &[JValue], env: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, JavaException> {
-    env.call_method(object, name, sig, args)
-        .map_err(|error| handle_call_error(error, object.into(), name, sig, env))
+pub fn call_obj_method<'local>(object: &JObject<'_>, name: &'static str, sig: &str, args: &[JValue], env: &mut JNIEnv<'local>) -> Result<Result<JValueOwned<'local>, JavaException>, MethodCallError> {
+    call_helper(object.into(), name, sig, |env| {
+        env.call_method(object, name, sig, args)
+    }, env)
 }
 /// Same as [`call_obj_method()`] but for `static` methods.
-pub fn call_static_method<'local>(class: ClassRepr<'_, '_>, name: &'static str, sig: &str, args: &[JValue], env: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, JavaException> {
-    match class {
-        ClassRepr::String(class_path) => {
-            let class = env.find_class(class_path).unwrap_jni(env);
-            env.call_static_method(class, name, sig, args)
-        },
-        ClassRepr::Object(class) => env.call_static_method(class, name, sig, args),
-    }.map_err(|error| handle_call_error(error, class.into(), name, sig, env))
+pub fn call_static_method<'local>(class: ClassRepr<'_, '_>, name: &'static str, sig: &str, args: &[JValue], env: &mut JNIEnv<'local>) -> Result<Result<JValueOwned<'local>, JavaException>, MethodCallError> {
+    call_helper(class.into(), name, sig, |env| {
+        match class {
+            ClassRepr::String(class_path) => {
+                let class = env.find_class(class_path)?;
+                env.call_static_method(class, name, sig, args)
+            },
+            ClassRepr::Object(class) => env.call_static_method(class, name, sig, args),
+        }
+    }, env)
 }
 
 /// Creates a new [`Object`][JObject] by calling a *constructor* of a *class*.
 /// 
 /// This is to [`call_static_method()`], but does not take a *method name* and uses a different **JNI Call** under the hood.
-pub fn create_object<'local>(class: ClassRepr<'_, '_>, sig: &str, args: &[JValue], env: &mut JNIEnv<'local>) -> Result<JObject<'local>, JavaException> {
-    match class {
-        ClassRepr::String(class) => env.new_object(class, sig, args),
-        ClassRepr::Object(class) => env.new_object(class, sig, args),
-    }.map_err(|error| handle_call_error(error, class.into(), "<init>", sig, env))
+pub fn create_object<'local>(class: ClassRepr<'_, '_>, sig: &str, args: &[JValue], env: &mut JNIEnv<'local>) -> Result<Result<JObject<'local>, JavaException>, MethodCallError> {
+    call_helper(class.into(), "<init>", sig, |env| {
+        match class {
+            ClassRepr::String(class) => env.new_object(class, sig, args),
+            ClassRepr::Object(class) => env.new_object(class, sig, args),
+        }
+    }, env)
 }
 
 #[cfg_attr(not(debug_assertions), allow(unused))]
@@ -124,9 +127,9 @@ impl<'a, 'obj> Callee<'a, 'obj> {
     fn get_class<'local>(&self, env: &mut JNIEnv<'local>) -> CowObject<'a, JClass<'obj>>
     where 'local: 'obj {
         match self {
-            Self::ClassPath(class) => CowObject::Owned(env.find_class(class).unwrap_jni(env)),
+            Self::ClassPath(class) => CowObject::Owned(env.find_class(class)?),
             Self::Class(class) => CowObject::Borrowed(*class),
-            Self::Object(object) => CowObject::Owned(env.get_object_class(object).unwrap_jni(env)),
+            Self::Object(object) => CowObject::Owned(env.get_object_class(object)?),
         }
     }
 }
@@ -153,40 +156,59 @@ impl<'a, 'local> From<&'a JObject<'local>> for Callee<'a, 'local> {
 /// If built in **debug** mode, may also output a hint on why the call *failed* and suggestions to fix it.
 #[cfg_attr(not(debug_assertions), allow(unused_variables))]
 #[track_caller]
-fn handle_call_error<'local>(
-    error: jni::errors::Error,
+fn call_helper<'local, T>(
     callee: Callee<'_, '_>,
     method_name: &'static str,
     method_sig: &str,
+    call: impl FnOnce(&mut JNIEnv<'local>) -> jni::errors::Result<T>,
     env: &mut JNIEnv<'local>
-) -> JavaException {
-    #[cfg(debug_assertions)]
-    let check_method_existence = |env: &mut JNIEnv<'local>| {
-        let class = callee.get_class(env);
-        crate::hints::print_method_existence_report(&class, method_name, method_sig, callee.is_static(), env);
+) -> Result<Result<T, JavaException>, MethodCallError> {
+    match callee {
+        Callee::Class(class) if class.is_null() => return Err(MethodCallError::Null),
+        Callee::Object(obj) if obj.is_null() => return Err(MethodCallError::Null),
+        _ => { },
+    }
+
+    let callee_class = callee.get_class(env).as_ref();
+    let target_class = call!(env=> callee_class.getName() -> String);
+
+    let result = call(env)
+        .catch(env)
+        .map(|t| Ok(t))
+        .or_else(|err| match err {
+            JniError::Jni(jni::errors::Error::MethodNotFound { name, sig })
+                => Err(MethodCallError::MethodNotFound(MethodNotFoundError::from_jni(target_class, name, sig))),
+            JniError::Jni(error) => Err(MethodCallError::Unknown { error: JniError::Jni(error) }),
+            JniError::Exception(exception) => {
+                if exception.is_instance_of::<MethodNotFoundError>() {
+                    Err(MethodCallError::MethodNotFound(MethodNotFoundError {
+                        target_class,
+                        ..MethodNotFoundError::from_exception(exception)
+                    }))
+                } else if exception.is_instance_of::<ClassNotFoundError>() {
+                    Err(MethodCallError::ClassNotFound(ClassNotFoundError::from_exception(exception)))
+                } else if is_error(&exception) {
+                    // Classes that represent a JVM Error should be returned as a JNI MethodCallError.
+                    Err(MethodCallError::Unknown { error: JniError::Exception(exception) })
+                } else {
+                    // All other Exception classes are returned directly,
+                    // treating it like the JNI call succeeded, but the method itself did not.
+                    Ok(Err(exception))
+                }
+            },
+        });
+
+    // Check hints of why the method was not found (typo, private, etc.).
+    //
+    // This only happens in DEBUG builds.
+    #[cfg(debug_assertions)] {
+        (&result).inspect_err(|error| match error {
+            MethodCallError::MethodNotFound { .. } => crate::hints::print_method_existence_report(callee_class, method_name, method_sig, callee.is_static(), env),
+            _ => { },
+        })
     };
 
-    match JniError::new(error, env) {
-        error @ JniError::Jni(jni::errors::Error::MethodNotFound { .. }) => {
-            cfg_if::cfg_if! {
-                if #[cfg(debug_assertions)] {
-                    check_method_existence(env);
-                }
-            }
-            error.panic()
-        },
-        JniError::Exception(exception) => {
-            cfg_if::cfg_if! {
-                if #[cfg(debug_assertions)] {
-                    if MethodNotFound::from_object_env(&exception, env).is_ok() {
-                        check_method_existence(env);
-                    }
-                }
-            }
-            exception
-        },
-        error => error.panic(),
-    }
+    result
 }
 
 /// Generates the **name** and **signature** of the *Getter Method* that is called if a Field was not found.
@@ -209,17 +231,17 @@ fn setter_name_and_sig(field_name: &'static str, ty: &str) -> (String, String) {
 /// then `java.lang.String getMessage()` will be called.
 /// 
 /// This function already handles any errors returned by the *JNI Call* with a `panic!`.
-pub fn get_obj_field<'local>(object: &JObject<'_>, name: &'static str, ty: &'static str, env: &mut JNIEnv<'local>) -> JValueOwned<'local> {
+pub fn get_obj_field<'local>(object: &JObject<'_>, name: &'static str, ty: &'static str, env: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, FieldError> {
     field_helper(Callee::Object(object), name, ty,
         |env| env.get_field(object, name, ty),
         |env| {
             let (name, sig) = getter_name_and_sig(name, ty);
             env.call_method(object, name, sig, &[])
         },
-    env).unwrap_or_else(|err| err.panic())
+    env)
 }
 /// Like [`get_obj_field()`], but gets the value of a `static` field of a **Class**.
-pub fn get_static_field<'local>(class: ClassRepr<'_, '_>, name: &'static str, ty: &'static str, env: &mut JNIEnv<'local>) -> JValueOwned<'local> {
+pub fn get_static_field<'local>(class: ClassRepr<'_, '_>, name: &'static str, ty: &'static str, env: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, FieldError> {
     field_helper(Callee::from(class), name, ty,
         |env| match class {
             ClassRepr::String(class) => env.get_static_field(class, name, ty),
@@ -232,7 +254,7 @@ pub fn get_static_field<'local>(class: ClassRepr<'_, '_>, name: &'static str, ty
                 ClassRepr::Object(class) => env.call_static_method(class, name, sig, &[]),
             }
         },
-    env).unwrap_or_else(|err| err.panic())
+    env)
 }
 
 /// Sets the value of a **field** of a *Java Object*, given the **name** of the field and its **type**.
@@ -244,7 +266,7 @@ pub fn get_static_field<'local>(class: ClassRepr<'_, '_>, name: &'static str, ty
 /// then `java.lang.String setMessage(val)` will be called.
 /// 
 /// This function already handles any errors returned by the *JNI Call* with a `panic!`.
-pub fn set_obj_field(object: &JObject<'_>, name: &'static str, ty: &'static str, val: JValue<'_, '_>, env: &mut JNIEnv<'_>) {
+pub fn set_obj_field(object: &JObject<'_>, name: &'static str, ty: &'static str, val: JValue<'_, '_>, env: &mut JNIEnv<'_>) -> Result<(), FieldError> {
     field_helper(Callee::Object(object), name, ty,
         |env| {
             env.set_field(object, name, ty, val)?;
@@ -256,16 +278,15 @@ pub fn set_obj_field(object: &JObject<'_>, name: &'static str, ty: &'static str,
         },
     env)
         .map(|val| <() as FromJValue>::from_jvalue(val.borrow()).unwrap_display())
-        .unwrap_or_else(|err| err.panic())
 }
 /// Like [`set_obj_field()`], but sets the value of a `static` field of a **Class**.
-pub fn set_static_field<'local>(class: ClassRepr<'_, '_>, name: &'static str, ty: &'static str, val: JValue<'_, '_>, env: &mut JNIEnv<'local>) {
+pub fn set_static_field<'local>(class: ClassRepr<'_, '_>, name: &'static str, ty: &'static str, val: JValue<'_, '_>, env: &mut JNIEnv<'local>) -> Result<(), FieldError> {
     field_helper(Callee::from(class), name, ty,
         |env| {
             match class {
                 ClassRepr::String(class) => {
                     // Lookup the class object, which is necessary for both operation on the Field AND looking up the Field (apparently).
-                    let class = env.find_class(class).unwrap_jni(env);
+                    let class = env.find_class(class)?;
                     env.set_static_field(&class, (&class, name, ty), val)
                 },
                 ClassRepr::Object(class) => env.set_static_field(class, (class, name, ty), val),
@@ -281,7 +302,6 @@ pub fn set_static_field<'local>(class: ClassRepr<'_, '_>, name: &'static str, ty
         },
     env)
         .map(|val| <() as FromJValue>::from_jvalue(val.borrow()).unwrap_display())
-        .unwrap_or_else(|err| err.panic())
 }
 
 /// Performs a *Field operation* (i.e. accessing or setting value).
@@ -295,63 +315,73 @@ pub(super) fn field_helper<'local>(
     name: &'static str,
     ty: &str,
     field_op: impl FnOnce(&mut JNIEnv<'local>) -> jni::errors::Result<JValueOwned<'local>>,
+    // TODO: make optional?
     method_op: impl FnOnce(&mut JNIEnv<'local>) -> jni::errors::Result<JValueOwned<'local>>,
     env: &mut JNIEnv<'local>
-) -> Result<JValueOwned<'local>, JniError> {
-    #![allow(unused_variables)]
-    // This closure is ran if the Field was not found in field_op.
-    // method_op will be called, and if a Method for this field was still not found,
-    // another function will be called to check why a Field or Method was not found (typo, private, etc.).
+) -> Result<JValueOwned<'local>, FieldError> {
+    match callee {
+        Callee::Class(class) if class.is_null() => return Err(FieldError::Null),
+        Callee::Object(obj) if obj.is_null() => return Err(FieldError::Null),
+        _ => { },
+    }
+
+    let callee_class = callee.get_class(env).as_ref();
+    let target_class = call!(env=> callee_class.getName() -> String);
+
+    let result = field_op(env)
+        .catch(env)
+        .or_else(|err| {
+            // Only call method_op() if the error was FieldNotFound
+            let field_access_error = match err {
+                JniError::Jni(jni::errors::Error::FieldNotFound { name, sig })
+                    => FieldNotFoundError::from_jni(target_class, name, sig),
+                JniError::Exception(exception) => FieldNotFoundError {
+                    target_class,
+                    ..FieldNotFoundError::from_exception(exception)
+                },
+                err => return Err((err, None)),
+            };
+
+            method_op(env)
+                .catch(env)
+                // Bundle the FieldNotFoundError from field_op() with the error from method_op().
+                .map_err(|err| (err, Some(field_access_error)))
+        })
+        // Previous returns the Error of field_op() if 2nd arg is None, and the Error of mathod_op() if 2nd arg is Some.
+        .map_err(|(error, field_error)| match error {
+            JniError::Jni(jni::errors::Error::MethodNotFound { name, sig })
+            if field_error.is_some() => FieldError::MethodNotFound {
+                field_error: field_error.unwrap(),
+                error: MethodNotFoundError::from_jni(target_class, name, sig),
+            },
+            JniError::Exception(exception)
+            if exception.is_instance_of::<MethodNotFoundError>()
+            && field_error.is_some() => FieldError::MethodNotFound {
+                field_error: field_error.unwrap(),
+                error: MethodNotFoundError {
+                    target_class,
+                    ..MethodNotFoundError::from_exception(exception)
+                },
+            },
+            JniError::Exception(exception)
+            if exception.is_instance_of::<ClassNotFoundError>() => {
+                FieldError::ClassNotFound(ClassNotFoundError::from_exception(exception))
+            },
+            // If the error is FieldNotFound or MethodNotFound here it is not because field_op() or method_op() themselves failed,
+            // but because some other method called by those caused it to fail.
+            error => FieldError::Unknown { error },
+        });
+
+    // Check hints of why the field or method were not found (typo, private, etc.).
     //
     // This only happens in DEBUG builds.
-    #[cfg(debug_assertions)]
-    let call_method_op = |env: &mut JNIEnv<'local>| {
-        method_op(env)
-            .catch(env)
-            // Inspect call failure: Check Field and Getter Method failure
-            .inspect_err(|error| {
-                let class = &callee.get_class(env);
-
-                match error {
-                    JniError::Jni(jni::errors::Error::MethodNotFound { .. })
-                        => crate::hints::print_field_existence_report(class, name, ty, callee.is_static(), env),
-                    JniError::Exception(exception) => {
-                        if MethodNotFound::from_object_env(exception, env).is_ok() {
-                            crate::hints::print_field_existence_report(class, name, ty, callee.is_static(), env)
-                        }
-                    },
-                    _ => { }
-                }
-            })
+    #[cfg(debug_assertions)] {
+        (&result).inspect_err(|error| match error {
+            FieldError::FieldNotFound(_)
+            | FieldError::MethodNotFound { .. } => crate::hints::print_field_existence_report(callee_class, name, ty, callee.is_static(), env),
+            _ => { },
+        })
     };
 
-    field_op(env)
-        .catch(env)
-        .inspect_err(|err| println!("field_op() error: {err}"))
-        .or_else(|err| match err {
-            JniError::Jni(jni::errors::Error::FieldNotFound { .. }) => { cfg_if::cfg_if! {
-                // Field does not exist, try calling a Getter
-                if #[cfg(debug_assertions)] {
-                    call_method_op(env)
-                } else {
-                    method_op(env).catch(env)
-                }
-            } },
-            JniError::Exception(exception) => {
-                if FieldNotFound::from_object_env(&exception, env).is_ok() {
-                    // Try calling Getter/Setter if Field was not found
-                    cfg_if::cfg_if! {
-                        if #[cfg(debug_assertions)] {
-                            call_method_op(env)
-                        } else {
-                            method_op(env).catch(env)
-                        }
-                    }
-                } else {
-                    // Other unexpected exception
-                    Err(JniError::Exception(exception))
-                }
-            },
-            err => Err(err)
-        })
+    result
 }

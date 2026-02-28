@@ -2,73 +2,14 @@ mod r#impl;
 mod impl_exception;
 pub(crate) mod array;
 
-use std::{cmp::Ordering, fmt::Display};
 use jni::{objects::{JObject, JThrowable}, JNIEnv};
-use thiserror::Error;
 use ez_jni_macros::call;
-use crate::{__throw::JniError, Class, FromJValueError, private::SealedMethod, utils::{create_object_array_converted, get_env, get_object_array_converted}};
+use crate::{Class, error::FromObjectError, private::SealedMethod, utils::{create_object_array_converted, get_env, get_object_array_converted}};
 
 #[doc(hidden)]
 pub use r#impl::FromObjectOwned;
 pub use impl_exception::JavaException;
 pub use array::ObjectArray;
-
-// TODO:
-// #[derive(Debug)]
-// pub struct FromObjectError {
-//     ty: ErrorType,
-//     caused_by: Option<JniError>,
-// }
-#[derive(Debug, Error)]
-pub enum FromObjectError {
-    #[error("Object can't be NULL")]
-    Null,
-    #[error("{}", match target_class {
-        Some(target_class) => format!("Expected the Object to be the Class or a descendant of the Class \"{target_class}\", but the actual Class of the Object is \"{obj_class}\""),
-        None => format!("The Class Object did not match any of the classes of the variants; Found Class \"{obj_class}\"")
-    })]
-    ClassMismatch { obj_class: String, target_class: Option<String> },
-    #[error("Could not find field {name:?} of type {ty} in class {target_class}; maybe its private?")]
-    FieldNotFound { name: String, ty: String, target_class: String },
-    #[error("Could not find class \"{0}\"")]
-    ClassNotFound(String),
-    #[error("Could not instantiate Type from element in Java Object Array at index {index}:\n    {error}")]
-    ArrayElement {
-        index: usize,
-        #[source]
-        error: Box<Self>
-    },
-    #[error("{}", match actual_len.cmp(expected_len) {
-        Ordering::Equal => panic!("UNREACHABLE"),
-        Ordering::Less => format!("Java Array is too long. Can't put {actual_len} elements, in an array of length {expected_len}"),
-        Ordering::Greater => format!("Expected Java Array to contain {expected_len} elements, but it has {actual_len} elements")
-    })]
-    ArrayTooLong { expected_len: usize, actual_len: usize },
-    #[error("Error converting Java Object: {0}")]
-    Other(String)
-}
-impl FromObjectError {
-    /// Convert from a [`JniError`] to by generating an error message,
-    /// and passing a **prefix** message to display *before* the [`JniError`] message.
-    #[inline(always)]
-    pub fn from_jni_with_msg(prefix: impl Display, error: JniError) -> Self {
-        Self::Other(format!("{prefix}: {error}"))
-    }
-}
-impl From<JniError> for FromObjectError {
-    fn from(value: JniError) -> Self {
-        // TODO: implement actual matching
-        // match value {
-        //     JniError::Jni()
-        // }
-        Self::Other(value.to_string())
-    }
-}
-impl From<FromJValueError> for FromObjectError {
-    fn from(err: FromJValueError) -> Self {
-        Self::Other(err.to_string())
-    }
-}
 
 /// Allows converting a *Java Object* to a Rust type by reading the Object's data.
 /// 
