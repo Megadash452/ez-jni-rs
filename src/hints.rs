@@ -1,15 +1,37 @@
 #![cfg(debug_assertions)]
 
-use jni::{JNIEnv, objects::{JObject, JClass}};
-use std::fmt::Display;
+use jni::{JNIEnv, objects::{JClass, JObject, JThrowable}};
+use std::{fmt::Display, panic::{AssertUnwindSafe, UnwindSafe}};
 use itertools::Itertools;
-use crate::{Class, FromObject, call, error::FromObjectError, utils::{JniResultExt as _, ResultExt as _, check_object_class}};
+use crate::{__throw::PanicType, Class, FromObject, JavaException, call, error::FromObjectError, utils::{JniResultExt as _, ResultExt as _, check_object_class}};
+
+fn print_report<T: Display>(generate_report: impl FnOnce(&mut JNIEnv<'_>) -> T + UnwindSafe, error_prefix: &'static str, env: &mut JNIEnv<'_>) {
+    match std::panic::catch_unwind(AssertUnwindSafe(|| generate_report(env))) {
+        Ok(report) => println!("{report}"),
+        Err(payload) => println!("{error_prefix}: {}",
+            match PanicType::from(payload) {
+                PanicType::Message(msg) => msg.to_string(),
+                PanicType::Object(obj) => {
+                    JavaException::from_throwable(<&JThrowable>::from(obj.as_obj()), env)
+                        .to_string()
+                },
+                PanicType::Unknown => PanicType::UNKNOWN_PAYLOAD_TYPE_MSG.to_string(),
+            },
+        )
+    }
+}
 
 pub fn print_method_existence_report(class: &JClass<'_>, method_name: &'static str, method_sig: &str, is_static: bool, env: &mut JNIEnv<'_>) {
-    println!("{}", MethodHintReport::check_method_existence(class, method_name, method_sig, is_static, env))
+    print_report(
+        |env| MethodHintReport::check_method_existence(class, method_name, method_sig, is_static, env),
+        "Failed to check why JNI method call failed",
+    env)
 }
 pub fn print_field_existence_report(class: &JClass<'_>, field_name: &'static str, field_ty: &str, is_static: bool, env: &mut JNIEnv<'_>) {
-    println!("{}", FieldHintReport::check_field_existence(class, field_name, field_ty, is_static, env))
+    print_report(
+        |env| FieldHintReport::check_field_existence(class, field_name, field_ty, is_static, env),
+        "Failed to check why JNI field access failed",
+    env)
 }
 
 #[derive(Debug)]
