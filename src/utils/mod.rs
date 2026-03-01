@@ -73,7 +73,7 @@ pub fn get_env<'a, 'local>() -> &'a mut JNIEnv<'local> {
 /// `panic!`s if there is an error.
 pub fn get_object_class_name(object: &JObject<'_>, env: &mut JNIEnv<'_>) -> String {
     let class = env.get_object_class(object)
-        .unwrap_jni(env);
+        .unwrap_jni();
     call!(env=> class.getName() -> String)
 }
 
@@ -102,7 +102,7 @@ pub trait JniResultExt<T>: Sealed {
     /// so the [`JNIEnv`] is required for this method.
     /// 
     /// > Either [`catch`][JniResultExt::catch] or `this` function must be called directly after all *JNI calls*.
-    fn unwrap_jni(self, env: &mut JNIEnv<'_>) -> T;
+    fn unwrap_jni(self) -> T;
     /// Encapsulates an [`Error`][jni::errors::Error] from a [*JNI Call*](https://docs.rs/jni/0.21.1/jni/struct.JNIEnv.html#implementations)
     /// in a similar type that stores the `Exception` variant with the [`Exception Object`][crate::JavaException].
     /// 
@@ -118,10 +118,10 @@ pub trait JniResultExt<T>: Sealed {
 impl<T> JniResultExt<T> for Result<T, jni::errors::Error> {
     #[inline(always)]
     #[track_caller]
-    fn unwrap_jni(self, env: &mut JNIEnv<'_>) -> T {
+    fn unwrap_jni(self) -> T {
         match self {
             Ok(t) => t,
-            Err(error) => ez_jni::__throw::__panic_jni_error(error, env),
+            Err(error) => ez_jni::__throw::__panic_jni_error(error),
         }
     }
     #[inline(always)]

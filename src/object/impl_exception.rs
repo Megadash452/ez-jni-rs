@@ -1,7 +1,7 @@
-use jni::objects::GlobalRef;
-use std::{fmt::{Debug, Display}, io, ops::Deref};
+use jni::objects::{GlobalRef, JClass};
+use std::{fmt::{Debug, Display}, io, ops::Deref, panic::Location as StdLocation, sync::OnceLock};
 use ez_jni_macros::new;
-use crate::utils::{JniResultExt as _, get_object_class_name};
+use crate::{__throw::backtrace::{Backtrace, inject_backtrace}, utils::{JniResultExt as _, get_object_class_name}};
 
 use super::*;
 
@@ -39,11 +39,47 @@ impl JavaException {
     /// 
     /// Not for **`public`** use, as it can cause confusion.
     #[doc(hidden)]
-    pub fn from_throwable(object: &JThrowable<'_>, env: &mut JNIEnv<'_>) -> Self {
+    pub(crate) fn from_throwable(object: &JThrowable<'_>, env: &mut JNIEnv<'_>) -> Self {
         Self {
             class: get_object_class_name(object, env),
             message: call!(env=> object.getMessage() -> Option<String>),
-            exception: env.new_global_ref(&object).unwrap_jni(env),
+            exception: env.new_global_ref(&object).unwrap_jni(),
+        }
+    }
+
+    // TODO: doc: make sure to call Std::Location::caller() from a function that tracks caller.
+    pub(crate) fn new_rust_panic<'local>(location: &StdLocation, message: String, cause: Option<Self>, env: &mut JNIEnv<'local>) -> Self {
+        let (file, line, col) = (location.file(), location.line(), location.line());
+
+        /// In-memory cache of custom `Exception` Class Object `me.ezjni.RustPanic`
+        static PANIC_CLASS: OnceLock<GlobalRef> = OnceLock::new();
+        static PANIC_CLASS_NAME: &str = "me/ezjni/RustPanic";
+        // Do not try to build Java Class when building documentation for Docs.rs because it does not allow macros to write to the filesystem.
+        cfg_if::cfg_if! {
+            if #[cfg(not(docsrs))] {
+                let class_binary = crate::compile_java_class!("./src/", "me/ezjni/RustPanic");
+            } else {
+                let class_binary = &[0u8];
+            }
+        }
+        let panic_class = PANIC_CLASS.get_or_init(|| {
+            let class = env.find_class("me/ezjni/RustPanic")
+                .catch(env)
+                .or_else(|_| env.define_class("me/ezjni/RustPanic", &JObject::null(),  class_binary))
+                .expect("Failed loading/finding RustPanic class");
+            env.new_global_ref(class)
+                .expect("Failed to make JClass into GlobalRef")
+        });
+        let panic_class = <&JClass>::from(panic_class.as_obj());
+
+        let exception = JThrowable::from(new!(env=> panic_class(String(location.file), u32(location.line), u32(location.col), String(panic_msg))));
+        // Inject Backtrace to Exception
+        inject_backtrace(&exception, Backtrace::force_capture().as_ref(), env);
+
+        Self {
+            class: "me/ezjni/RustPanic".to_string(),
+            message: Some(message),
+            exception: env.new_global_ref(&exception).unwrap_jni(),
         }
     }
 
@@ -51,7 +87,7 @@ impl JavaException {
     /// and therefore the `Exception` can be converted to a `T`.
     pub fn is_instance_of<T: Class>(&self) -> bool {
         let env = crate::utils::get_env();
-        env.is_instance_of(self, T::class()).unwrap_jni(env)
+        env.is_instance_of(self, T::class()).unwrap_jni()
     }
 }
 impl AsRef<JObject<'static>> for JavaException {
@@ -103,7 +139,7 @@ impl FromObject<'_> for JavaException {
         let class = get_object_class_name(object, env);
 
         // Check that Object is an Exception
-        if !env.is_instance_of(object, <Self as Class>::class()).unwrap_jni(env) {
+        if !env.is_instance_of(object, <Self as Class>::class()).unwrap_jni() {
             return Err(FromObjectError::ClassMismatch {
                 obj_class: class,
                 target_class: Some(<Self as Class>::class().to_string()),
@@ -120,7 +156,7 @@ impl FromObject<'_> for JavaException {
 }
 impl ToObject for JavaException {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        env.new_local_ref(&self.exception).unwrap_jni(env)
+        env.new_local_ref(&self.exception).unwrap_jni()
     }
 }
 

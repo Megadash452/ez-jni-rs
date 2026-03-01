@@ -1,13 +1,12 @@
 mod jni_fn;
 mod call;
-mod backtrace;
+pub(super) mod backtrace;
 
 pub use jni_fn::*;
 pub use call::*;
 use backtrace::*;
 
 use jni::{objects::{GlobalRef, JThrowable}, JNIEnv};
-use ez_jni_macros::new;
 use std::{any::Any, borrow::Cow, cell::{Cell, RefCell}};
 
 thread_local! {

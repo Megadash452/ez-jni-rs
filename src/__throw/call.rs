@@ -2,7 +2,7 @@
 use std::{fmt::{Debug, Display}, sync::OnceLock};
 use jni::{objects::GlobalRef};
 use super::*;
-use crate::{JavaException, utils::{JNI_CALL_GHOST_EXCEPTION, JniResultExt as _, ResultExt as _, check_object_class}};
+use crate::{JavaException, utils::{JNI_CALL_GHOST_EXCEPTION, JniResultExt as _}};
 
 /// Panics with a *Java Exception* instead of *Rust String message*.
 #[track_caller]
@@ -14,21 +14,62 @@ pub fn panic_exception(ex: JavaException) -> ! {
 }
 
 /// Like [`panic_exception()`], but can take any [`Throwable`][JThrowable] Object.
+/// 
+/// This function `panic!s` if the **object** could not be thrown.
+#[track_caller]
 #[inline(always)]
-pub fn panic_throwable(object: &JThrowable<'_>, env: &mut JNIEnv<'_>) -> ! {
-    // Check that the object can be thrown.
-    check_object_class(object, "java/lang/Throwable", env).unwrap_display();
-    std::panic::panic_any(env.new_global_ref(object).unwrap_jni(env))
+pub fn panic_throwable(object: &JThrowable<'_>) -> ! {
+    // NOTE: Unwrap Debug instead of JNI so that a potential Exception is not thrown and confuses the catcher.
+    let env = crate::utils::get_env();
+    let is_throwable = env.with_local_frame(0, |env| {
+        // Keep reference of the Class Object to avoid potentially expensive lookup.
+        static THROWABLE_CLASS: OnceLock<GlobalRef> = OnceLock::new();
+        let class = THROWABLE_CLASS.get_or_init(|| {
+            let class = env.find_class("java/lang/Throwable")
+                .catch(env)
+                .unwrap();
+            env.new_global_ref(class)
+                .catch(env)
+                .unwrap()
+        });
+
+        env.is_instance_of(object, class)
+    }).catch(env).unwrap();
+
+    if !is_throwable {
+        panic!("{}", crate::error::FromObjectError::ClassMismatch {
+            obj_class: env.with_local_frame(0, |env| {
+                env.get_object_class(object)
+                    .map(|class| {
+                        let val = crate::utils::call_obj_method(&class, "getName", "()Ljava/lang/String;", &[], env)
+                            .unwrap_or_else(|err| panic!("Error calling java.lang.Class.getName(): {err}"))
+                            .unwrap_or_else(|exception| panic!("Did not expect java.lang.Class.getName() to throw an Exception: {exception}"));
+                        <String as crate::FromJValue>::from_jvalue_env(val.borrow(), env)
+                            .unwrap_or_else(|err| panic!("Error reading value returned by java.lang.Class.getName(): {err}"))
+                    })
+            }).catch(env).unwrap(),
+            target_class: Some("java.lang.Throwable".to_string()),
+        })
+    }
+
+    std::panic::panic_any(env.new_global_ref(object).catch(env).unwrap())
 }
 
 /// Same as [JniError::panic], but has less operations.
 #[track_caller]
 #[doc(hidden)]
-pub(crate) fn __panic_jni_error(error: jni::errors::Error, env: &mut JNIEnv<'_>) -> ! {
+pub(crate) fn __panic_jni_error(error: jni::errors::Error) -> ! {
     match error {
         jni::errors::Error::JavaException => {
-            let object = catch_throwable(env).expect(JNI_CALL_GHOST_EXCEPTION);
-            panic_throwable(&object, env)
+            let env = crate::utils::get_env();
+
+            let object = JThrowable::from(env.with_local_frame_returning_local(0, |env| Ok({
+                catch_throwable(env)
+                    .expect(JNI_CALL_GHOST_EXCEPTION)
+                    .into()
+            })).catch(env).unwrap());
+            // SAFETY: catch_throwable() always returns an instance of Throwable.
+            panic_throwable(&object)
         },
         error => panic!("{error}")
     }
@@ -108,7 +149,7 @@ pub fn catch_exception(env: &mut JNIEnv<'_>) -> Option<JavaException> {
     
     // Check if Object is `java.lang.Error` and `panic!`.
     if is_error(&ex, env) {
-        panic_throwable(&ex, env)
+        panic_throwable(&ex)
     } else {
         Some(JavaException::from_throwable(&ex, env))
     }
@@ -138,14 +179,14 @@ pub fn catch_throwable<'local>(env: &mut JNIEnv<'local>) -> Option<JThrowable<'l
 
 /// Checks if the **Object** is of *Class* `java.lang.Error`,
 /// which should cause a `panic!`.
-fn is_error<'local>(object: &JThrowable<'_>, env: &mut JNIEnv<'local>) -> bool {
+pub(crate) fn is_error<'local>(object: &JThrowable<'_>, env: &mut JNIEnv<'local>) -> bool {
     /// To make the check faster, **cache** the Class object in memory.
     static ERROR_CLASS: OnceLock<GlobalRef> = OnceLock::new();
 
     let error_class = ERROR_CLASS.get_or_init(|| {
-        let class = env.find_class("java/lang/Error").unwrap_jni(env);
-        env.new_global_ref(class).unwrap_jni(env)
+        let class = env.find_class("java/lang/Error").unwrap_jni();
+        env.new_global_ref(class).unwrap_jni()
     });
 
-    env.is_instance_of(object, error_class).unwrap_jni(env)
+    env.is_instance_of(object, error_class).unwrap_jni()
 }

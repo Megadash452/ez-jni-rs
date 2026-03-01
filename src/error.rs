@@ -1,8 +1,9 @@
-use std::{borrow::Cow, cmp::Ordering, fmt::Display};
+use std::{borrow::Cow, cmp::Ordering, fmt::Display, panic::Location as StdLocation};
+use either::Either;
 use itertools::Itertools;
 use jni::{JNIEnv, objects::JObject};
 use thiserror::Error;
-use crate::{Class, FromObject, JValueType, JavaException, utils::{JniError, check_object_class}};
+use crate::{__throw::panic_exception, Class, FromObject, JValueType, JavaException, utils::{JniError, JniResultExt as _, check_object_class}};
 
 #[derive(Debug, Error)]
 #[error("Could not find method {name}({params}) -> {return_ty} in class {target_class}; maybe its private?{caused_by}",
@@ -19,15 +20,48 @@ pub struct MethodNotFoundError {
 }
 impl MethodNotFoundError {
     /// Create an instance of this type by reading from an [`Exception`][JavaException].
-    /// Use this over [FromObject::from_object_env()] to avoid cloning the [`Exception`][JavaException]
-    /// 
-    /// The caller must check that the [`Exception`][JavaException] is an instance of this type's [Class].
-    /// Any failures will cause a `panic!`.
+    /// Use this over [FromObject::from_object_env()] to avoid cloning the [`Exception`][JavaException].
     /// 
     /// As these types of Exceptions are expected to have a certain message format,
     /// this function will `panic!` if it fails to parse the Exception's message.
     pub(super) fn from_exception(exception: JavaException) -> Self {
-        todo!()
+        let (path, sig) = exception.message() // This Error class always has a message
+            .split_once('(')
+            .expect("NoSuchMethodError's message was malformed: did not contain opening parenthesis ('(') for parameters.");
+
+        let mut components = path.split(|c| c == '.' || c == '/');
+        let mut target_class = String::new();
+        let mut name = String::new();
+
+        while let Some(component) = components.next() {
+            // Last component is the function name.
+            if components.clone().next().is_none() {
+                name = component.to_string();
+                break;
+            }
+            // Don't prepend dot separator if this is the first component.
+            if !target_class.is_empty() {
+                target_class.push('.');
+            }
+            target_class.push_str(component);
+        }
+
+        if target_class.is_empty() || name.is_empty() {
+            panic!("NoSuchMethod's message did not contain the Method path")
+        }
+
+        let (params, return_ty) = crate::hints::Type::parse_method_sig(sig)
+            .expect("NoSuchMethodError's method signature is malformed");
+
+        Self {
+            target_class,
+            name,
+            params: params.into_iter()
+                .map(|t| t.to_string())
+                .collect(),
+            return_ty: return_ty.to_string(),
+            error: Some(exception),
+        }
     }
     /// Create an instance of [`MethodNotFoundError`] given the data from a [jni::errors::Error::MethodNotFound] and a **target_class**.
     /// 
@@ -58,7 +92,8 @@ impl Class for MethodNotFoundError {
 impl FromObject<'_> for MethodNotFoundError {
     fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         check_object_class(object, <Self as Class>::class().as_ref(), env)?;
-        Ok(Self::from_exception(JavaException::from_throwable(object.into(), env)))
+        let exception = JavaException::from_throwable(object.into(), env);
+        Ok(Self::from_exception(exception))
     }
 }
 
@@ -73,10 +108,7 @@ pub struct FieldNotFoundError {
 }
 impl FieldNotFoundError {
     /// Create an instance of this type by reading from an [`Exception`][JavaException].
-    /// Use this over [FromObject::from_object_env()] to avoid cloning the [`Exception`][JavaException]
-    /// 
-    /// The caller must check that the [`Exception`][JavaException] is an instance of this type's [Class].
-    /// Any failures will cause a `panic!`.
+    /// Use this over [FromObject::from_object_env()] to avoid cloning the [`Exception`][JavaException].
     /// 
     /// As these types of Exceptions are expected to have a certain message format,
     /// this function will `panic!` if it fails to parse the Exception's message.
@@ -106,7 +138,8 @@ impl Class for FieldNotFoundError {
 impl FromObject<'_> for FieldNotFoundError {
     fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         check_object_class(object, <Self as Class>::class().as_ref(), env)?;
-        Ok(Self::from_exception(JavaException::from_throwable(object.into(), env)))
+        let exception = JavaException::from_throwable(object.into(), env);
+        Ok(Self::from_exception(exception))
     }
 }
 
@@ -119,10 +152,7 @@ pub struct ClassNotFoundError {
 }
 impl ClassNotFoundError {
     /// Create an instance of this type by reading from an [`Exception`][JavaException].
-    /// Use this over [FromObject::from_object_env()] to avoid cloning the [`Exception`][JavaException]
-    /// 
-    /// The caller must check that the [`Exception`][JavaException] is an instance of this type's [Class].
-    /// Any failures will cause a `panic!`.
+    /// Use this over [FromObject::from_object_env()] to avoid cloning the [`Exception`][JavaException].
     /// 
     /// As these types of Exceptions are expected to have a certain message format,
     /// this function will `panic!` if it fails to parse the Exception's message.
@@ -142,7 +172,8 @@ impl Class for ClassNotFoundError {
 impl FromObject<'_> for ClassNotFoundError {
     fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         check_object_class(object, <Self as Class>::class().as_ref(), env)?;
-        Ok(Self::from_exception(JavaException::from_throwable(object.into(), env)))
+        let exception = JavaException::from_throwable(object.into(), env);
+        Ok(Self::from_exception(exception))
     }
 }
 
@@ -198,6 +229,37 @@ impl FromObjectError {
         }
     }
 }
+impl __PanicErrorImpl for FromObjectError {
+    fn into_payload(self, location: &'static StdLocation<'static>, env: &mut JNIEnv<'_>) -> Either<String, JavaException> {
+        fn into_payload(error: FromObjectError, full_message: String, location: &'static StdLocation<'static>, env: &mut JNIEnv<'_>) -> Either<String, JavaException> {
+            match error {
+                FromObjectError::ArrayElement { .. }
+                | FromObjectError::Other { .. } => unreachable!("These variants are only handled in the loop"),
+                FromObjectError::Null
+                | FromObjectError::ClassMismatch { .. }
+                | FromObjectError::ArraySizeMismatch { .. } => Either::Left(full_message),
+                FromObjectError::FieldNotFound(error) => Either::Right(JavaException::new_rust_panic(location, full_message, error.error, env)),
+                FromObjectError::MethodNotFound(error) => Either::Right(JavaException::new_rust_panic(location, full_message, error.error, env)),
+                FromObjectError::ClassNotFound(error) => Either::Right(JavaException::new_rust_panic(location, full_message, Some(error.exception), env)),
+                FromObjectError::Unknown { error } => match error {
+                    JniError::Exception(ex) => Either::Right(ex),
+                    JniError::Jni(_) => Either::Left(full_message),
+                },
+            }
+        }
+        
+        let full_message = self.to_string();
+        // Iterative method ;)
+        let mut current = self;
+        loop {
+            match current {
+                FromObjectError::ArrayElement { error, .. }
+                | FromObjectError::Other { error, .. } => current = *error,
+                error => break into_payload(error, full_message, location, env),
+            }
+        }
+    }
+}
 impl From<JniError> for FromObjectError {
     fn from(error: JniError) -> Self {
         use jni::errors::Error as JNIError;
@@ -206,25 +268,12 @@ impl From<JniError> for FromObjectError {
             JniError::Jni(error) => match error {
                 JNIError::JavaException => unreachable!("Exception was caught"),
                 JNIError::WrongJValueType(_, _) => unreachable!("Not using JValue in FromObject methods"),
-                JNIError::MethodNotFound { name, sig } => {
-                    let (params, return_ty) = crate::hints::Type::parse_method_sig(&sig)
-                        .expect("JNI provided a malformed method signature");
-                    Self::from(MethodNotFoundError {
-                        target_class: "<unknown>".to_string(),
-                        name,
-                        params: params.into_iter()
-                            .map(|ty| ty.to_string())
-                            .collect(),
-                        return_ty: return_ty.to_string(),
-                        error: None,
-                    })
-                },
-                JNIError::FieldNotFound { name, sig } => Self::from(FieldNotFoundError {
-                    target_class: "<unkown>".to_string(),
-                    name,
-                    ty: crate::hints::Type::from_sig_type(&sig).to_string(),
-                    error: None,
-                }),
+                JNIError::MethodNotFound { name, sig } => Self::MethodNotFound(
+                    MethodNotFoundError::from_jni("<unknown>".to_string(), name, sig)
+                ),
+                JNIError::FieldNotFound { name, sig } => Self::FieldNotFound(
+                    FieldNotFoundError::from_jni("<unknown>".to_string(), name, sig)
+                ),
                 JNIError::NullPtr(msg)
                 | JNIError::NullDeref(msg) => Self::Other {
                     prefix: msg,
@@ -237,6 +286,7 @@ impl From<JniError> for FromObjectError {
 }
 impl From<JavaException> for FromObjectError {
     fn from(exception: JavaException) -> Self {
+        // SAFETY: Exception Object's class is checked before calling ::from_exception().
         if exception.is_instance_of::<MethodNotFoundError>() {
             Self::MethodNotFound(MethodNotFoundError::from_exception(exception))
         } else if exception.is_instance_of::<FieldNotFoundError>() {
@@ -291,6 +341,19 @@ pub enum MethodCallError {
     #[error("{error}")]
     Unknown { #[source] error: JniError }
 }
+impl __PanicErrorImpl for MethodCallError {
+    fn into_payload(self, location: &'static StdLocation<'static>, env: &mut JNIEnv<'_>) -> Either<String, JavaException> {
+        match self {
+            error @ Self::Null => Either::Left(error.to_string()),
+            Self::MethodNotFound(error) => Either::Right(JavaException::new_rust_panic(location, error.to_string(), error.error, env)),
+            Self::ClassNotFound(error) => Either::Right(JavaException::new_rust_panic(location, error.to_string(), Some(error.exception), env)),
+            Self::Unknown { error } => match error {
+                JniError::Exception(ex) => Either::Right(ex),
+                JniError::Jni(err) => Either::Left(err.to_string()),
+            },
+        }
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum FieldError {
@@ -308,6 +371,81 @@ pub enum FieldError {
     ClassNotFound(#[from] ClassNotFoundError),
     #[error("{error}")]
     Unknown { #[source] error: JniError }
+}
+impl __PanicErrorImpl for FieldError {
+    fn into_payload(self, location: &'static StdLocation<'static>, env: &mut JNIEnv<'_>) -> Either<String, JavaException> {
+        match self {
+            error @ Self::Null => Either::Left(error.to_string()),
+            Self::FieldNotFound(error) => Either::Right(JavaException::new_rust_panic(location, error.to_string(), error.error, env)),
+            err @ Self::MethodNotFound { .. } => {
+                let message = err.to_string();
+                let (field_error, method_error) = match err {
+                    Self::MethodNotFound { field_error, error } => (field_error, error),
+                    _ => unreachable!(),
+                };
+                let field_exception = JavaException::new_rust_panic(location, field_error.to_string(), field_error.error, env);
+                let method_exception = JavaException::new_rust_panic(location, method_error.to_string(), Some(field_exception), env);
+
+                Either::Right(JavaException::new_rust_panic(location, message, Some(method_exception), env))
+            },
+            Self::ClassNotFound(error) => Either::Right(JavaException::new_rust_panic(location, error.to_string(), Some(error.exception), env)),
+            Self::Unknown { error } => match error {
+                JniError::Exception(ex) => Either::Right(ex),
+                JniError::Jni(err) => Either::Left(err.to_string()),
+            },
+        }
+    }
+}
+
+/// Provides the [`panic`][PanicError::panic()] method for **Error** types in [`ez_jni`],
+/// allowing the panic *payload* to be either a [`String`] or [`JavaException`],
+/// depending on what data the error type contains.
+//
+// NOTE: do not implement thsi trait directly, implement __PanicErrorImpl instead.
+pub trait PanicError: __PanicErrorImpl {
+    /// Trigger a `panic!` from the *location* this function was called.
+    /// The panic *payload* may be a [`String`] message, or a [`JavaException`] if the error contains one.
+    /// 
+    /// The panic payload can be read with [`PanicType`][crate::__throw::PanicType] to handle whether it is a [`String`] or [`JavaException`].
+    /// 
+    /// > Note: The implementation could `panic!` with an unexpected message/object if it failed to create the actual intended payload.
+    #[track_caller]
+    #[inline(always)]
+    fn panic(self) -> ! {
+        __panic_impl(|location, env| self.into_payload(location, env))
+    }
+}
+impl<T> PanicError for T
+where T: __PanicErrorImpl { }
+/// Implementation of the [`PanicError::panic()`] caller method.
+/// This sets up the arguments for the call of __into_payload()
+#[doc(hidden)]
+#[track_caller]
+fn __panic_impl(get_payload: impl FnOnce(&'static StdLocation<'static>, &mut JNIEnv<'_>) -> Either<String, JavaException>) -> ! {
+    let payload = {
+        let env = crate::utils::get_env();
+        let location = StdLocation::caller();
+
+        // Here we push a new local frame to the JVM.
+        // This is usually not done (especially when multiple Object references are returned),
+        // but since we are panicking here, we are not returning anything.
+        // Pushing the local frame helps with freeing all the Pbject references that were created within it.
+        env.with_local_frame(0, |env| Ok({
+            get_payload(location, env)
+        })).catch(env).unwrap()
+    };
+
+    match payload {
+        Either::Left(msg) => std::panic::panic_any(msg),
+        Either::Right(ex) => panic_exception(ex),
+    }
+}
+
+/// This is the actual traits that implementors of [`PanicError`] must implement.
+trait __PanicErrorImpl: std::error::Error + Sized {
+    /// Implementors of this method should not `panic!`
+    // NOTE: does not need to track caller
+    fn into_payload(self, location: &'static StdLocation<'static>, env: &mut JNIEnv<'_>) -> Either<String, JavaException>;
 }
 
 /// Print a **list of items** to a string, where each item is separated by a *comma*.
@@ -327,3 +465,12 @@ fn exception_cause(exception: Option<&JavaException>) -> String {
 }
 
 // TODO: Test that MethodNotFound and FieldNotFound can actually parse their respective exceptions
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn method_not_found() {
+        todo!()
+    }
+}

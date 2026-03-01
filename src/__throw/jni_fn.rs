@@ -1,7 +1,6 @@
 use super::*;
-use std::{backtrace::{Backtrace as StdBacktrace, BacktraceStatus}, marker::PhantomData, panic::{AssertUnwindSafe, UnwindSafe}, sync::{Mutex, MutexGuard, OnceLock}};
-use jni::objects::{JClass, JObject};
-use crate::{LOCAL_JNIENV_STACK, compile_java_class, utils::{JniResultExt as _, get_env}};
+use std::{backtrace::{Backtrace as StdBacktrace, BacktraceStatus}, marker::PhantomData, panic::{AssertUnwindSafe, UnwindSafe}, sync::{Mutex, MutexGuard}};
+use crate::{JavaException, LOCAL_JNIENV_STACK, utils::get_env};
 
 /// Runs a Rust function and returns its value, catching any `panics!` and throwing them as *Java Exceptions*.
 /// Specifically, this will throw a `me.marti.ezjni.RustPanic` exception.
@@ -255,12 +254,6 @@ impl<'local> StackEnv<'local> {
 /// 
 /// However, it should not call any other ez_jni functions.
 fn throw_panic(panic: JniRunPanic, env: &mut JNIEnv<'_>) { catch_error(|| {
-    /// In-memory cache of custom `Exception` class `me.marti.ez_jni.RustPanic`
-    static PANIC_CLASS: OnceLock<GlobalRef> = OnceLock::new();
-
-    let location = panic.location;
-    let backtrace = panic.rust_backtrace.unwrap(); // Bakctrace is always Some in run_with_jnienv().
-
     let panic_msg = match panic.panic {
         PanicType::Message(msg) => msg,
         PanicType::Unknown => Cow::Borrowed(PanicType::UNKNOWN_PAYLOAD_TYPE_MSG),
@@ -268,9 +261,11 @@ fn throw_panic(panic: JniRunPanic, env: &mut JNIEnv<'_>) { catch_error(|| {
         PanicType::Object(exception) => {
             let exception = <&JThrowable>::from(exception.as_obj());
             // Inject Backtrace to Exception
-            // FIXME: might cause infinite recursion when calling Java methods because of the error handler
-            // FIXME: is it ok to call other ez_jni functions here?
-            inject_backtrace(exception, backtrace.as_ref(), env);
+            if let Some(backtrace) = panic.rust_backtrace {
+                // FIXME: might cause infinite recursion when calling Java methods because of the error handler
+                // FIXME: is it ok to call other ez_jni functions here?
+                inject_backtrace(exception, backtrace.as_ref(), env);
+            }
             // Finally, rethrow the Exception
             env.throw(exception)
                 .unwrap_or_else(|err| panic!("Failed to rethrow exception: {err}"));
@@ -280,27 +275,8 @@ fn throw_panic(panic: JniRunPanic, env: &mut JNIEnv<'_>) { catch_error(|| {
 
     env.exception_clear().unwrap();
 
-    // Do not try to build Java Class when building documentation for Docs.rs because it does not allow macros to write to the filesystem.
-    ::cfg_if::cfg_if! {
-        if #[cfg(not(docsrs))] {
-            let panic_class = PANIC_CLASS.get_or_init(|| {
-                let class = env.find_class("me/marti/ezjni/RustPanic")
-                    .catch(env)
-                    .or_else(|_| env.define_class("me/marti/ezjni/RustPanic", &JObject::null(), compile_java_class!("./src/", "me/marti/ezjni/RustPanic")))
-                    .expect("Failed loading/finding RustPanic class");
-                env.new_global_ref(class)
-                    .expect("Failed to make JClass into GlobalRef")
-            });
-        } else {
-            let panic_class = JClass::from(JObject::null());
-        }
-    }
-
-    let panic_class = <&JClass>::from(panic_class.as_obj());
-    let exception = new!(env=> panic_class(String(location.file), u32(location.line), u32(location.col), String(panic_msg)));
-    // Inject Backtrace to Exception
-    inject_backtrace(<&JThrowable>::from(&exception), backtrace.as_ref(), env);
-
+    // Convert a plain-text String message panic into an exception.
+    let exception = JavaException::new_rust_panic(panic_msg.to_string(), None, env);
     // Finally, throw the new Exception
-    env.throw(JThrowable::from(exception)).unwrap();
+    env.throw(exception).unwrap();
 }) }

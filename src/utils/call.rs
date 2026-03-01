@@ -6,7 +6,7 @@ use jni::{
     JNIEnv
 };
 use utils::first_char_uppercase;
-use crate::{__throw::JniError, FromJValue, JavaException, error::{ClassNotFoundError, FieldError, FieldNotFoundError, MethodCallError, MethodNotFoundError}, utils::{JniResultExt as _, ResultExt as _}};
+use crate::{__throw::{JniError, is_error}, FromJValue, JavaException, error::{ClassNotFoundError, FieldError, FieldNotFoundError, MethodCallError, MethodNotFoundError}, utils::{JniResultExt as _, ResultExt as _}};
 
 /// A wrapper for a `Class` value that will be used in a **JNI Call**.
 #[derive(Clone, Copy)]
@@ -181,13 +181,10 @@ fn call_helper<'local, T>(
             JniError::Jni(error) => Err(MethodCallError::Unknown { error: JniError::Jni(error) }),
             JniError::Exception(exception) => {
                 if exception.is_instance_of::<MethodNotFoundError>() {
-                    Err(MethodCallError::MethodNotFound(MethodNotFoundError {
-                        target_class,
-                        ..MethodNotFoundError::from_exception(exception)
-                    }))
+                    Err(MethodCallError::MethodNotFound(MethodNotFoundError::from_exception(exception)))
                 } else if exception.is_instance_of::<ClassNotFoundError>() {
                     Err(MethodCallError::ClassNotFound(ClassNotFoundError::from_exception(exception)))
-                } else if is_error(&exception) {
+                } else if is_error(&exception, env) {
                     // Classes that represent a JVM Error should be returned as a JNI MethodCallError.
                     Err(MethodCallError::Unknown { error: JniError::Exception(exception) })
                 } else {
@@ -335,10 +332,7 @@ pub(super) fn field_helper<'local>(
             let field_access_error = match err {
                 JniError::Jni(jni::errors::Error::FieldNotFound { name, sig })
                     => FieldNotFoundError::from_jni(target_class, name, sig),
-                JniError::Exception(exception) => FieldNotFoundError {
-                    target_class,
-                    ..FieldNotFoundError::from_exception(exception)
-                },
+                JniError::Exception(exception) => FieldNotFoundError::from_exception(exception),
                 err => return Err((err, None)),
             };
 
@@ -358,10 +352,7 @@ pub(super) fn field_helper<'local>(
             if exception.is_instance_of::<MethodNotFoundError>()
             && field_error.is_some() => FieldError::MethodNotFound {
                 field_error: field_error.unwrap(),
-                error: MethodNotFoundError {
-                    target_class,
-                    ..MethodNotFoundError::from_exception(exception)
-                },
+                error: MethodNotFoundError::from_exception(exception),
             },
             JniError::Exception(exception)
             if exception.is_instance_of::<ClassNotFoundError>() => {
