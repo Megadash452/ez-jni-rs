@@ -5,6 +5,7 @@ use std::{borrow::{Borrow, BorrowMut, Cow}, fmt::Debug, hash::{Hash, Hasher}, ma
 use crate::utils::get_object_class_name;
 use element::FromObject2 as ArrayFromObject;
 pub use element::ObjectArrayElement;
+use nonempty::NonEmpty;
 
 // No blanket implementation? No custom types? ;-;
 /* impl<'obj, Array, T> ObjectArrayElement<'obj> for Array
@@ -160,7 +161,7 @@ where T: ObjectArrayElement + 'local,
         let expected_array_class = gen_array_class(Array::get_dimensions_count(), base_elem_class);
         if array_class != expected_array_class {
             return Err(FromObjectError::ClassMismatch {
-                target_class: Some(base_elem_class.to_string()),
+                target_classes: NonEmpty::new(base_elem_class.to_string()),
                 obj_class: array_class,
             });
         }

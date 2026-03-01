@@ -1,8 +1,9 @@
 //! These functions are used in [`call!`][ez_jni_macros::call!] and *similar macros*.
-use std::{fmt::{Debug, Display}, sync::OnceLock};
+use std::sync::OnceLock;
 use jni::{objects::GlobalRef};
+use nonempty::NonEmpty;
 use super::*;
-use crate::{JavaException, utils::{JNI_CALL_GHOST_EXCEPTION, JniResultExt as _}};
+use crate::{JavaException, utils::{JNI_CALL_GHOST_EXCEPTION, JniResultExt as _, ResultExt as _}};
 
 /// Panics with a *Java Exception* instead of *Rust String message*.
 #[track_caller]
@@ -48,7 +49,7 @@ pub fn panic_throwable(object: &JThrowable<'_>) -> ! {
                             .unwrap_or_else(|err| panic!("Error reading value returned by java.lang.Class.getName(): {err}"))
                     })
             }).catch(env).unwrap(),
-            target_class: Some("java.lang.Throwable".to_string()),
+            target_classes: NonEmpty::new("java.lang.Throwable".to_string()),
         })
     }
 
@@ -72,70 +73,6 @@ pub(crate) fn __panic_jni_error(error: jni::errors::Error) -> ! {
             panic_throwable(&object)
         },
         error => panic!("{error}")
-    }
-}
-
-/// Encapsulates a [`JNI Error`][jni::errors::Error] in a similar type that stores the `Exception` variant with the [`Exception Object`][crate::JavaException].
-pub enum JniError {
-    Exception(JavaException),
-    Jni(jni::errors::Error),
-}
-impl JniError {
-    pub(crate) fn new(error: jni::errors::Error, env: &mut JNIEnv<'_>) -> Self {
-        match error {
-            jni::errors::Error::JavaException => Self::Exception({
-                let object = catch_throwable(env)
-                    .expect(JNI_CALL_GHOST_EXCEPTION);
-                JavaException::from_throwable(&object, env)
-            }),
-            error => Self::Jni(error)
-        }
-    }
-
-    pub fn into_exception(self) -> Option<JavaException> {
-        match self {
-            JniError::Exception(ex) => Some(ex),
-            JniError::Jni(_) => None,
-        }
-    }
-
-    /// Handles the error returned by any [*JNI Call*](https://docs.rs/jni/0.21.1/jni/struct.JNIEnv.html#implementations) by `panic!king` with the error.
-    /// 
-    /// The error most likely is an `Exception`.
-    /// If that's the case, this will `panic!` with the Exception object and will be *rethrown* to Java.
-    /// Otherwise this panic with the [inner JNI Error][jni::errors::Error]'s message.
-    #[track_caller]
-    pub fn panic(self) -> ! {
-        match self {
-            Self::Exception(ex) => panic_exception(ex),
-            Self::Jni(err) => panic!("{err}"),
-        }
-    }
-}
-impl std::error::Error for JniError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(match self {
-            Self::Exception(ex) => ex,
-            Self::Jni(error) => error,
-        })
-    }
-}
-impl Display for JniError {
-    #[inline(always)]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Exception(ex) => <JavaException as Display>::fmt(ex, f),
-            Self::Jni(err) => <jni::errors::Error as Display>::fmt(err, f),
-        }
-    }
-}
-impl Debug for JniError {
-    #[inline(always)]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Exception(ex) => <JavaException as Debug>::fmt(ex, f),
-            Self::Jni(err) => <jni::errors::Error as Debug>::fmt(err, f),
-        }
     }
 }
 

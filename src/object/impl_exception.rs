@@ -1,7 +1,8 @@
 use jni::objects::{GlobalRef, JClass};
-use std::{fmt::{Debug, Display}, io, ops::Deref, panic::Location as StdLocation, sync::OnceLock};
+use nonempty::NonEmpty;
+use std::{fmt::{Debug, Display}, io, ops::Deref, sync::OnceLock};
 use ez_jni_macros::new;
-use crate::{__throw::backtrace::{Backtrace, inject_backtrace}, utils::{JniResultExt as _, get_object_class_name}};
+use crate::{__throw::{Location, backtrace::{Backtrace, inject_backtrace}}, utils::{JniResultExt as _, ResultExt as _, get_object_class_name}};
 
 use super::*;
 
@@ -150,10 +151,10 @@ impl FromObject<'_> for JavaException {
         let class = get_object_class_name(object, env);
 
         // Check that Object is an Exception
-        if !env.is_instance_of(object, <Self as Class>::class()).unwrap_jni() {
+        if !env.is_instance_of(object, <Self as Class>::class()).catch(env)? {
             return Err(FromObjectError::ClassMismatch {
                 obj_class: class,
-                target_class: Some(<Self as Class>::class().to_string()),
+                target_classes: NonEmpty::new(<Self as Class>::class().to_string()),
             });
         }
 
@@ -216,7 +217,7 @@ impl FromObject<'_> for std::io::Error {
         if !env.is_instance_of(object, IO_ERROR_BASE_PATH).catch(env)? {
             return Err(FromObjectError::ClassMismatch {
                 obj_class: class,
-                target_class: Some(IO_ERROR_BASE_PATH.to_string()),
+                target_classes: NonEmpty::new(IO_ERROR_BASE_PATH.to_string()),
             });
         }
 

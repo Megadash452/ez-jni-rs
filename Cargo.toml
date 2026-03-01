@@ -21,6 +21,7 @@ quote = "1.0.37"
 syn = { version = "2.0.72" }
 utils = { path = "./utils", package = "ez_jni_general_utils", version = "0.1.0" }
 itertools = "0.13.0"
+nonempty = "0.12.0"
 
 [dependencies]
 cfg-if = "1.0.0"
@@ -30,6 +31,7 @@ ez_jni_macros = { path = "./jni_macros", version = "0.7.1" }
 thiserror = "1.0.63"
 utils = { workspace = true }
 itertools = { workspace = true }
+nonempty = { workspace = true }
 
 [dev-dependencies]
 jni = { workspace = true }

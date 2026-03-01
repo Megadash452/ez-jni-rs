@@ -3,6 +3,7 @@ use std::borrow::Cow;
 use jni::{
     JNIEnv, objects::{GlobalRef, JClass, JObject, JString, JThrowable, JValue, JValueGen, JValueOwned}
 };
+use nonempty::NonEmpty;
 use crate::{Class, FromJValue, FromObject, JValueType, call, error::{FromJValueError, FromObjectError}, utils::JniResultExt as _};
 use super::{field_helper, getter_name_and_sig};
 
@@ -202,7 +203,7 @@ pub fn check_object_class(object: &JObject, target_class: &str, env: &mut JNIEnv
     if !env.is_instance_of(object, target_class_obj).catch(env)? {
         return Err(FromObjectError::ClassMismatch {
             obj_class: call!(env=> class.getName() -> String),
-            target_class: Some(target_class.to_string())
+            target_classes: NonEmpty::new(target_class.to_string()),
         })
     }
 

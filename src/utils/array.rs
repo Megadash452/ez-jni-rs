@@ -2,6 +2,7 @@
 use std::mem::MaybeUninit;
 
 use jni::{objects::{AutoLocal, JObject, JObjectArray, JPrimitiveArray}, sys::jsize, JNIEnv};
+use nonempty::NonEmpty;
 use crate::{FromObject, Primitive, error::FromObjectError, utils::{JniResultExt as _, get_object_class_name}};
 
 /// Create a Java **Array** from a Rust [slice](https://doc.rust-lang.org/std/primitive.slice.html),
@@ -78,7 +79,7 @@ where T: Primitive + for<'local> FromObject<'local> {
     } else {
         Err(FromObjectError::ClassMismatch {
             obj_class: array_class,
-            target_class: Some(format!("[{}", T::JSIG))
+            target_classes: NonEmpty::new(format!("[{}", T::JSIG)),
         })
     }
 }

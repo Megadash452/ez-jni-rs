@@ -349,14 +349,14 @@ pub(super) fn field_helper<'local>(
         .map_err(|(error, field_error)| match error {
             JniError::Jni(jni::errors::Error::MethodNotFound { name, sig })
             if field_error.is_some() => FieldError::MethodNotFound {
-                field_error: field_error.unwrap(),
+                cause: field_error,
                 error: MethodNotFoundError::from_jni(target_class, name, &sig),
             },
             JniError::Exception(exception)
             if exception.is_instance_of(MethodNotFoundError::ERROR_CLASS)
             || exception.is_instance_of(MethodNotFoundError::EXCEPTION_CLASS)
             && field_error.is_some() => FieldError::MethodNotFound {
-                field_error: field_error.unwrap(),
+                cause: field_error,
                 error: MethodNotFoundError::from_exception(exception),
             },
             JniError::Exception(exception)
