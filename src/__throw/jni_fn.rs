@@ -276,7 +276,7 @@ fn throw_panic(panic: JniRunPanic, env: &mut JNIEnv<'_>) { catch_error(|| {
     env.exception_clear().unwrap();
 
     // Convert a plain-text String message panic into an exception.
-    let exception = JavaException::new_rust_panic(panic_msg.to_string(), None, env);
+    let exception = JavaException::new_rust_panic(panic.location, panic_msg.to_string(), None, env);
     // Finally, throw the new Exception
-    env.throw(exception).unwrap();
+    env.throw(JThrowable::from(exception.to_object())).unwrap();
 }) }

@@ -96,6 +96,25 @@ impl JValueType {
         }
     }
 }
+impl From<crate::hints::Type> for JValueType {
+    fn from(value: crate::hints::Type) -> Self {
+        if value.as_ref().starts_with('L') {
+            return Self::Object;
+        }
+        match value.as_ref() {
+            "void" => Self::Void,
+            <bool as Primitive>::JNAME => Self::Bool,
+            <char as Primitive>::JNAME => Self::Char,
+            <i8 as Primitive>::JNAME => Self::Byte,
+            <i16 as Primitive>::JNAME => Self::Short,
+            <i32 as Primitive>::JNAME => Self::Int,
+            <i64 as Primitive>::JNAME => Self::Long,
+            <f32 as Primitive>::JNAME => Self::Float,
+            <f64 as Primitive>::JNAME => Self::Double,
+            _ => unreachable!("Type already checks the validity of the string"),
+        }
+    }
+}
 impl From<JValue<'_, '_>> for JValueType {
     fn from(val: JValue<'_, '_>) -> Self {
         Self::from_jvalue(val)

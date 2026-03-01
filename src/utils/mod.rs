@@ -2,16 +2,15 @@ mod call;
 #[doc(hidden)]
 mod object;
 mod array;
-use std::fmt::{Debug, Display};
+use std::fmt::Display;
 
 pub use call::*;
 #[doc(hidden)]
 pub use object::*;
 pub use array::*;
-pub use crate::__throw::JniError;
 
 use jni::{JNIEnv, objects::JObject};
-use crate::{LOCAL_JNIENV_STACK, call, private::Sealed};
+use crate::{LOCAL_JNIENV_STACK, call, error::{JniError, PanicError}, private::Sealed};
 
 #[doc(hidden)]
 pub use cfg_if;
@@ -73,36 +72,44 @@ pub fn get_env<'a, 'local>() -> &'a mut JNIEnv<'local> {
 /// `panic!`s if there is an error.
 pub fn get_object_class_name(object: &JObject<'_>, env: &mut JNIEnv<'_>) -> String {
     let class = env.get_object_class(object)
+        .catch(env)
         .unwrap_jni();
     call!(env=> class.getName() -> String)
 }
 
 impl <T, E> Sealed for Result<T, E> { }
 
-pub trait ResultExt<T>: Sealed {
+pub trait ResultExt<T, E>: Sealed {
     /// The same as [`Result::unwrap()`], but prints the error with [`Display`] instead of [`Debug`].
-    fn unwrap_display(self) -> T;
+    fn unwrap_display(self) -> T where E: Display;
+    /// The same as [`Result::unwrap()`], but gets the full **error** message from the [`JniError`].
+    /// If the error is an `Exception`, the Object will be the panic payload and can be *thrown* to the JVM when unwinding the Rust stack.
+    /// 
+    /// > Must call [`catch`][JniResultExt::catch()] directly after all *JNI calls*, and before calling this method.
+    fn unwrap_jni(self) -> T where E: PanicError;
 }
-impl<T, E> ResultExt<T> for Result<T, E>
-where E: Debug + Display {
+impl<T, E> ResultExt<T, E> for Result<T, E> {
     #[inline(always)]
     #[track_caller]
-    fn unwrap_display(self) -> T {
+    fn unwrap_display(self) -> T
+    where E: Display {
         match self {
             Ok(t) => t,
             Err(e) => std::panic::panic_any(e.to_string()),
         }
-    }   
+    }
+    #[inline(always)]
+    #[track_caller]
+    fn unwrap_jni(self) -> T
+    where E: PanicError {
+        match self {
+            Ok(t) => t,
+            Err(err) => err.panic(),
+        }
+    }
 }
 
 pub trait JniResultExt<T>: Sealed {
-    /// The same as [`Result::unwrap()`], but gets the full **error** message from the [`JniError`].
-    /// 
-    /// This can catch *exceptions* and print out the class and message,
-    /// so the [`JNIEnv`] is required for this method.
-    /// 
-    /// > Either [`catch`][JniResultExt::catch] or `this` function must be called directly after all *JNI calls*.
-    fn unwrap_jni(self) -> T;
     /// Encapsulates an [`Error`][jni::errors::Error] from a [*JNI Call*](https://docs.rs/jni/0.21.1/jni/struct.JNIEnv.html#implementations)
     /// in a similar type that stores the `Exception` variant with the [`Exception Object`][crate::JavaException].
     /// 
@@ -112,21 +119,13 @@ pub trait JniResultExt<T>: Sealed {
     /// While in this state, most *JNI calls* will fail and the error will be mixed up with the thrown object.
     /// This function **catches** the [`Exception`][jni::objects::JThrowable] so that the program can handle the error properly.
     /// 
-    /// > Either [`unwrap_jni`][JniResultExt::unwrap_jni] or `this` function must be called directly after all *JNI calls*.
+    /// > This method *MUST* be called directly after all *JNI calls* (i.e. methods of [`JNIEnv`]).
     fn catch(self, env: &mut JNIEnv<'_>) -> Result<T, JniError>;
 }
 impl<T> JniResultExt<T> for Result<T, jni::errors::Error> {
     #[inline(always)]
-    #[track_caller]
-    fn unwrap_jni(self) -> T {
-        match self {
-            Ok(t) => t,
-            Err(error) => ez_jni::__throw::__panic_jni_error(error),
-        }
-    }
-    #[inline(always)]
     fn catch(self, env: &mut JNIEnv<'_>) -> Result<T, JniError> {
-        self.map_err(|error| JniError::new(error, env))
+        self.map_err(|error| JniError::from_jni(error, env))
     }
 }
 

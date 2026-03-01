@@ -17,12 +17,12 @@ thread_local! {
 /// A lot like [std::panic::Location], but uses a [String] instead of `&str`.
 #[derive(Debug, Clone)]
 pub struct Location {
-    file: String,
-    line: u32,
-    col: u32,
+    pub file: String,
+    pub line: u32,
+    pub col: u32,
 }
-impl<'a> From<&std::panic::Location<'a>> for Location {
-    fn from(value: &std::panic::Location<'a>) -> Self {
+impl From<&std::panic::Location<'_>> for Location {
+    fn from(value: &std::panic::Location<'_>) -> Self {
         Self {
             file: value.file().to_string(),
             line: value.line(),

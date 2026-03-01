@@ -184,9 +184,15 @@ pub(crate) fn is_error<'local>(object: &JThrowable<'_>, env: &mut JNIEnv<'local>
     static ERROR_CLASS: OnceLock<GlobalRef> = OnceLock::new();
 
     let error_class = ERROR_CLASS.get_or_init(|| {
-        let class = env.find_class("java/lang/Error").unwrap_jni();
-        env.new_global_ref(class).unwrap_jni()
+        let class = env.find_class("java/lang/Error")
+            .catch(env)
+            .unwrap_jni();
+        env.new_global_ref(class)
+            .catch(env)
+            .unwrap_jni()
     });
 
-    env.is_instance_of(object, error_class).unwrap_jni()
+    env.is_instance_of(object, error_class)
+        .catch(env)
+        .unwrap_jni()
 }

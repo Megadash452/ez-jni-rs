@@ -381,6 +381,11 @@ impl PartialEq<str> for Type {
         self.0 == other.as_ref()
     }
 }
+impl AsRef<str> for Type {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
 impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
@@ -392,10 +397,15 @@ impl Display for Type {
 /// `panic!`s if the JNI function returns an error.
 fn get_superclasses<'local>(class: &JClass<'_>, env: &mut JNIEnv<'local>) -> Box<[JClass<'local>]> {
     // new_local_ref() is ok here because it is only used once with no recursion or anything else fancy
-    let first = env.new_local_ref(class).unwrap_jni();
+    let first = env.new_local_ref(class)
+        .catch(env)
+        .unwrap_jni();
 
     let mut classes = vec![JClass::from(first)];
-    while let Some(class) = env.get_superclass(classes.last().unwrap()).unwrap_jni() {
+    while let Some(class) = env.get_superclass(classes.last().unwrap())
+        .catch(env)
+        .unwrap_jni()
+    {
         classes.push(class);
     }
 

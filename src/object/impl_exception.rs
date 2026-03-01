@@ -18,6 +18,8 @@ pub struct JavaException {
     message: Option<String>,
 }
 impl JavaException {
+    pub const RUST_PANIC_CLASS: &str = "me/ezjni/RustPanic";
+
     /// The Exception object.
     pub fn object(&self) -> &GlobalRef { &self.exception }
     /// The **Class Path** of the Exception Object.
@@ -43,17 +45,19 @@ impl JavaException {
         Self {
             class: get_object_class_name(object, env),
             message: call!(env=> object.getMessage() -> Option<String>),
-            exception: env.new_global_ref(&object).unwrap_jni(),
+            exception: env.new_global_ref(&object)
+                .catch(env)
+                .unwrap_jni(),
         }
     }
 
     // TODO: doc: make sure to call Std::Location::caller() from a function that tracks caller.
-    pub(crate) fn new_rust_panic<'local>(location: &StdLocation, message: String, cause: Option<Self>, env: &mut JNIEnv<'local>) -> Self {
-        let (file, line, col) = (location.file(), location.line(), location.line());
+    pub(crate) fn new_rust_panic<'local>(location: impl Into<Location>, message: String, cause: Option<Self>, env: &mut JNIEnv<'local>) -> Self {
+        let location = location.into();
+        let (file, line, col) = (location.file, location.line, location.col);
 
         /// In-memory cache of custom `Exception` Class Object `me.ezjni.RustPanic`
         static PANIC_CLASS: OnceLock<GlobalRef> = OnceLock::new();
-        static PANIC_CLASS_NAME: &str = "me/ezjni/RustPanic";
         // Do not try to build Java Class when building documentation for Docs.rs because it does not allow macros to write to the filesystem.
         cfg_if::cfg_if! {
             if #[cfg(not(docsrs))] {
@@ -63,31 +67,38 @@ impl JavaException {
             }
         }
         let panic_class = PANIC_CLASS.get_or_init(|| {
-            let class = env.find_class("me/ezjni/RustPanic")
+            let class = env.find_class(Self::RUST_PANIC_CLASS)
                 .catch(env)
-                .or_else(|_| env.define_class("me/ezjni/RustPanic", &JObject::null(),  class_binary))
+                .or_else(|_| env.define_class(Self::RUST_PANIC_CLASS, &JObject::null(),  class_binary))
                 .expect("Failed loading/finding RustPanic class");
             env.new_global_ref(class)
                 .expect("Failed to make JClass into GlobalRef")
         });
         let panic_class = <&JClass>::from(panic_class.as_obj());
 
-        let exception = JThrowable::from(new!(env=> panic_class(String(location.file), u32(location.line), u32(location.col), String(panic_msg))));
+        let exception = JThrowable::from(match cause {
+            Some(cause) => new!(env=> panic_class(String(file), u32(line), u32(col), String(message), java.lang.Throwable(cause))),
+            None => new!(env=> panic_class(String(file), u32(line), u32(col), String(message))),
+        });
         // Inject Backtrace to Exception
         inject_backtrace(&exception, Backtrace::force_capture().as_ref(), env);
 
         Self {
-            class: "me/ezjni/RustPanic".to_string(),
+            class: Self::RUST_PANIC_CLASS.to_string(),
             message: Some(message),
-            exception: env.new_global_ref(&exception).unwrap_jni(),
+            exception: env.new_global_ref(&exception)
+                .catch(env)
+                .unwrap_jni(),
         }
     }
 
-    /// Tells whether the [`Exception`][JavaException] Object's class extends to `T`'s Class,
-    /// and therefore the `Exception` can be converted to a `T`.
-    pub fn is_instance_of<T: Class>(&self) -> bool {
+    /// Like [`is_instance_of_type`][JavaException::is_instance_of_type()],
+    /// but takes a string that can be any class.
+    pub fn is_instance_of(&self, class: impl AsRef<str>) -> bool {
         let env = crate::utils::get_env();
-        env.is_instance_of(self, T::class()).unwrap_jni()
+        env.is_instance_of(self, class.as_ref())
+            .catch(env)
+            .unwrap_jni()
     }
 }
 impl AsRef<JObject<'static>> for JavaException {
@@ -156,7 +167,7 @@ impl FromObject<'_> for JavaException {
 }
 impl ToObject for JavaException {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        env.new_local_ref(&self.exception).unwrap_jni()
+        env.new_local_ref(&self.exception).catch(env).unwrap_jni()
     }
 }
 
@@ -253,7 +264,8 @@ impl ToObject for std::io::Error {
             .map(|(_, class)| *class)
             .unwrap_or(IO_ERROR_BASE_PATH);
         let class = env.find_class(class)
-            .catch(env)?;
+            .catch(env).unwrap_jni();
+        // TODO: return ToObjectError
 
         new!(env=> class(String(self.to_string())))
     }
