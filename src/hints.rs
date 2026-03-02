@@ -3,7 +3,7 @@
 use jni::{JNIEnv, objects::{JClass, JObject, JThrowable}};
 use std::{fmt::Display, panic::{AssertUnwindSafe, UnwindSafe}};
 use itertools::Itertools;
-use crate::{__throw::PanicType, Class, FromObject, JavaException, call, error::{FromObjectError, PanicError as _}, utils::{JniResultExt as _, ResultExt as _, check_object_class}};
+use crate::{__throw::PanicType, Class, FromObject, JavaException, call, error::FromObjectError, utils::{JniResultExt as _, ResultExt as _, check_object_class}};
 
 fn print_report<T: Display>(generate_report: impl FnOnce(&mut JNIEnv<'_>) -> T + UnwindSafe, error_prefix: &'static str, env: &mut JNIEnv<'_>) {
     match std::panic::catch_unwind(AssertUnwindSafe(|| generate_report(env))) {
@@ -11,10 +11,7 @@ fn print_report<T: Display>(generate_report: impl FnOnce(&mut JNIEnv<'_>) -> T +
         Err(payload) => println!("{error_prefix}: {}",
             match PanicType::from(payload) {
                 PanicType::Message(msg) => msg.to_string(),
-                PanicType::Object(obj) => {
-                    JavaException::from_throwable(<&JThrowable>::from(obj.as_obj()), env)
-                        .to_string()
-                },
+                PanicType::Object(object) => JavaException::from_throwable(<&JThrowable>::from(object.as_obj()), env).to_string(),
                 PanicType::Unknown => PanicType::UNKNOWN_PAYLOAD_TYPE_MSG.to_string(),
             },
         )
@@ -474,8 +471,7 @@ impl MethodHintReport {
 
         for class in classes {
             for obj in call!(env=> class.getDeclaredMethods() -> [java.lang.reflect.Method]) {
-                let method = Method::from_object_env(&obj, env)
-                    .unwrap_or_else(|err| err.panic());
+                let method = Method::from_object_env(&obj, env).unwrap_jni();
 
                 if method.name == method_name
                 && method.jni_signature() == user_method.jni_signature() {
@@ -610,8 +606,7 @@ impl FieldHintReport {
             let methods = call!(env=> class.getDeclaredMethods() -> [java.lang.reflect.Method]);
 
             for obj in fields {
-                let field = Field::from_object_env(&obj, env)
-                    .unwrap_or_else(|err| err.panic());
+                let field = Field::from_object_env(&obj, env).unwrap_jni();
 
                 if field.name == user_field.name
                 && field.ty == user_field.ty {
@@ -624,8 +619,7 @@ impl FieldHintReport {
             }
 
             for obj in methods {
-                let method = Method::from_object_env(&obj, env)
-                    .unwrap_or_else(|err| err.panic());
+                let method = Method::from_object_env(&obj, env).unwrap_jni();
                 // Checks similarities in name by making it all lowercase and removing possible underscores (_).
                 let similar_name = method.name
                     .to_lowercase()

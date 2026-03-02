@@ -1,4 +1,4 @@
-use std::{backtrace::BacktraceStatus, borrow::Borrow, error::Error, fmt::Display, str::FromStr};
+use std::{backtrace::{Backtrace as StdBacktrace, BacktraceStatus}, borrow::Borrow, error::Error, fmt::Display, str::FromStr};
 use jni::{JNIEnv, objects::JThrowable};
 use thiserror::Error;
 use crate::{call, new};
@@ -7,6 +7,26 @@ use super::Location;
 #[derive(Debug)]
 pub struct Backtrace(Vec<BacktraceElement>);
 impl Backtrace {
+    /// Create a [`Backtrace`] from information captured by the *panic hook*.
+    pub fn new_from_captured(backtrace: StdBacktrace) -> Option<Self> {
+        if backtrace.status() == BacktraceStatus::Captured {
+            Self::parse(backtrace).ok()
+        } else {
+            None
+        }
+    }
+    /// Same as [new_from_captured][Backtrace::new_from_captured()], but always returns a [`Backtrace`].
+    /// 
+    /// This should only be used when running in an *integration test*.
+    /// To display as much detail as possible, the Backtrace is forcibly captured,
+    /// and even if that failed, this will inject fake Backtrace frames with the current known panic location.
+    #[doc(hidden)]
+    #[inline(always)]
+    pub fn new_from_captured_integration_test(backtrace: StdBacktrace, location: Location) -> Self {
+        Self::new_from_captured(backtrace)
+            .unwrap_or_else(|| Backtrace::new_unknown(location))
+    }
+
     /// Forcibly captures the [Backtrace][std::backtrace::Backtrace] and parses it to crate a [*structured* `Backtrace`][Backtrace].
     /// 
     /// If for some reason the [Backtrace][std::backtrace::Backtrace] could not be captured,
@@ -29,7 +49,7 @@ impl Backtrace {
     /// Creates a [`Backtrace`] from a `panic!` [`Location`] alone.
     /// 
     /// This is used when the [`Backtrace`][std::backtrace::Backtrace] could not be [`Captured`][std::backtrace::BacktraceStatus::Captured].
-    pub(super) fn new_unknown(location: Location) -> Self {
+    fn new_unknown(location: Location) -> Self {
         Self(vec![BacktraceElement {
             symbol: "<unknown_fn>".to_string(),
             location,
@@ -37,7 +57,7 @@ impl Backtrace {
     }
 
     /// Inject the *Java Stacktrace* by taking it from an [`Exsception`][JThrowable] and putting it before the Rust *Backtrace Frames*.
-    fn append_stacktrace(&mut self, exception: &JThrowable<'_>, env: &mut JNIEnv<'_>) {
+    pub(super) fn append_stacktrace(&mut self, exception: &JThrowable<'_>, env: &mut JNIEnv<'_>) {
         let backtrace = std::mem::take(&mut self.0);
         let mut stacktrace = get_java_stacktrace(exception, env).into_vec();
         // Prepend the Java Stacktrace to the beginning of the array, because first element is highest (therefore last) on the stack.
@@ -49,7 +69,7 @@ impl Backtrace {
     pub fn frames(&self) -> &[BacktraceElement] { &self.0 }
     
     #[inline(always)]
-    pub(super) fn parse(backtrace: std::backtrace::Backtrace) -> Result<Self, ParseBacktraceError> {
+    fn parse(backtrace: StdBacktrace) -> Result<Self, ParseBacktraceError> {
         parse_rust_backtrace(&backtrace.to_string())
     }
 }

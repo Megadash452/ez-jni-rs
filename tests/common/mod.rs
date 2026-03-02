@@ -4,7 +4,7 @@ pub mod compile_fail;
 
 use std::panic::{UnwindSafe, catch_unwind};
 use jni::{JNIEnv, objects::JThrowable};
-use ez_jni::{__throw::PanicType, JavaException};
+use ez_jni::{__throw::PanicType, FromObject, JavaException, utils::ResultExt as _};
 use utils::TEST_JVM;
 
 /// Gets a [`JNIEnv`] from the global [`JVM`][JavaVM].
@@ -32,15 +32,11 @@ pub fn run_with_jnienv(f: impl FnOnce() + UnwindSafe) {
         let msg = match &panic.panic {
             PanicType::Message(msg) => msg.to_string(),
             PanicType::Unknown => PanicType::UNKNOWN_PAYLOAD_TYPE_MSG.to_string(),
-            PanicType::Object(exception) => {
-                let exception = JavaException::from_throwable(<&JThrowable>::from(exception.as_obj()), env);
-                // Inject Java StackTrace to Rust Backtrace
-                if let Some(backtrace) = &mut backtrace {
-                    backtrace.append_stacktrace(exception.as_ref(), env);
-                }
-                
-                exception.to_string()
-            }
+            PanicType::Object(object) => {
+                JavaException::from_object(object.as_obj())
+                    .unwrap_display()
+                    .to_string()
+            },
         };
 
         let backtrace = match backtrace {
@@ -71,8 +67,9 @@ pub fn fail_with(f: impl FnOnce() + UnwindSafe, expected_error: &str) {
     let msg = catch_unwind(f)
         .map_err(|payload| match PanicType::from(payload) {
             PanicType::Message(msg) => msg.into_owned(),
-            PanicType::Object(exception) => {
-                JavaException::from_throwable(<&JThrowable>::from(exception.as_obj()), ez_jni::utils::get_env())
+            PanicType::Object(object) => {
+                JavaException::from_object(object.as_obj())
+                    .unwrap_display()
                     .to_string()
             },
             PanicType::Unknown => panic!("{}", PanicType::UNKNOWN_PAYLOAD_TYPE_MSG),

@@ -1,6 +1,6 @@
 use super::*;
-use std::{backtrace::{Backtrace as StdBacktrace, BacktraceStatus}, marker::PhantomData, panic::{AssertUnwindSafe, UnwindSafe}, sync::{Mutex, MutexGuard}};
-use crate::{JavaException, LOCAL_JNIENV_STACK, utils::get_env};
+use std::{backtrace::Backtrace as StdBacktrace, marker::PhantomData, panic::{AssertUnwindSafe, UnwindSafe}, sync::{Mutex, MutexGuard}};
+use crate::{JavaException, LOCAL_JNIENV_STACK, ToObject, utils::{JniResultExt as _, get_env}};
 
 /// Runs a Rust function and returns its value, catching any `panics!` and throwing them as *Java Exceptions*.
 /// Specifically, this will throw a `me.marti.ezjni.RustPanic` exception.
@@ -29,8 +29,8 @@ pub unsafe fn run_with_jnienv<'local, R: Sized>(mut env: JNIEnv<'local>, f: impl
 
     match result.0 {
         Ok(r) => r,
-        Err(payload) => {
-            catch_error(|| throw_panic(payload, &mut env));
+        Err(panic) => {
+            throw_panic(panic, env);
             unsafe { std::mem::zeroed() }
         }
     }
@@ -98,49 +98,55 @@ pub unsafe fn run_with_jnienv_helper<'local, R: Sized>(
             StdBacktrace::force_capture()
         }));
     }));
-    // Assign the JNIEnv used for this jni call
-    let stack_env = StackEnv::push(env); 
-
-    // Run the function
-    // Pass a reference of the JNIEnv that was just pushed; for conversions
-    let result = std::panic::catch_unwind(AssertUnwindSafe(|| f(get_env::<'_, 'local>())));
-    // Reset panic hook so that Rust behaves normally after this
-    hooks.pop();
-    // Remove the JNIEnv when the function finishes running
-    env = stack_env.pop();
 
     // Put in separate function to reduce Generic code duplication.
-    fn convert_panic(payload: Box<dyn Any + Send>, integration_test: bool) -> JniRunPanic {
+    fn convert_panic(payload: Box<dyn Any + Send>, integration_test: bool, env: &mut JNIEnv<'_>) -> JniRunPanic {
         catch_error(|| {
             let location = PANIC_LOCATION.take()
                 .expect("Panic Hook did not set the value for PANIC_LOCATION");
             let backtrace = PANIC_BACKTRACE.take()
                 .expect("Panic Hook did not set the value for PANIC_BACKTRACE");
 
-            let rust_backtrace = match backtrace.status() {
-                BacktraceStatus::Captured => Backtrace::parse(backtrace)
-                    .ok()
-                    .or_else(|| if integration_test {
-                        // Panic will be converted to Java Exception, which we always inject with a rust backtrace.
-                        // If Backtrace couldn't be obtained, make it the current known Panic Location.
-                        Some(Backtrace::new_unknown(location.clone()))
-                    } else {
-                        None
-                    }),
-                // If Backtrace couldn't be obtained, make it the current known Panic Location.
-                BacktraceStatus::Unsupported
-                | BacktraceStatus::Disabled if integration_test => Some(Backtrace::new_unknown(location.clone())),
-                // No Bakctrace
-                _ => None
+            let mut rust_backtrace = if integration_test {
+                Backtrace::new_from_captured(backtrace)
+            } else {
+                Some(Backtrace::new_from_captured_integration_test(backtrace, location.clone()))
             };
+            let panic = PanicType::from(payload);
 
-            // TODO: if payload is Exception object, inject Java StackTrace to the Backtrace
+            // If payload is Exception object, inject Java StackTrace to the Backtrace.
+            if let Some(backtrace) = &mut rust_backtrace
+            && let PanicType::Object(object) = &panic {
+                env.with_local_frame(0, |env| Ok({
+                    // Object in the panic is always java.lang.Throwable.
+                    backtrace.append_stacktrace(<&JThrowable>::from(object.as_obj()), env);
+                })).catch(env).unwrap()
+            }
             
-            JniRunPanic { location, rust_backtrace, panic: PanicType::from(payload) }
+            JniRunPanic { location, rust_backtrace, panic }
         })
     }
 
-    (result.map_err(|payload| convert_panic(payload, integration_test)), env)
+    // Assign the JNIEnv used for this jni call
+    let stack_env = StackEnv::push(env); 
+
+    // Run the function.
+    // Get a reference of the JNIEnv that was just pushed.
+    let result = {
+        let env = get_env::<'_, 'local>();
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| f(env)));
+
+        // Reset panic hook so that Rust behaves normally after this.
+        hooks.pop();
+
+        // Run the panic conversion code BEFORE the JNIEnv stack is popped.
+        result.map_err(|payload| convert_panic(payload, integration_test, env))
+    };
+    
+    // Remove the JNIEnv when the function finishes running.
+    env = stack_env.pop();
+
+    (result, env)
 }
 
 /// Helper to *catch unwinding* `panic!s` of regular rust functions that interface between the Rust and Java **language boundaries**,
@@ -251,32 +257,43 @@ impl<'local> StackEnv<'local> {
 }
 
 /// This function's body is wrapped in [`catch_error`] to prevent a `panic!` to go through language boundaries.
-/// 
-/// However, it should not call any other ez_jni functions.
-fn throw_panic(panic: JniRunPanic, env: &mut JNIEnv<'_>) { catch_error(|| {
-    let panic_msg = match panic.panic {
-        PanicType::Message(msg) => msg,
-        PanicType::Unknown => Cow::Borrowed(PanicType::UNKNOWN_PAYLOAD_TYPE_MSG),
-        // Panicked with an Exception (should be rethrown)
-        PanicType::Object(exception) => {
-            let exception = <&JThrowable>::from(exception.as_obj());
-            // Inject Backtrace to Exception
-            if let Some(backtrace) = panic.rust_backtrace {
-                // FIXME: might cause infinite recursion when calling Java methods because of the error handler
-                // FIXME: is it ok to call other ez_jni functions here?
-                inject_backtrace(exception, backtrace.as_ref(), env);
+fn throw_panic(panic: JniRunPanic, env: JNIEnv<'_>) {
+    // Temporarily push the JNIEnv to the thread-local stack to run the code that constructs the Exception and throws it.
+    let stack_env = StackEnv::push(env);
+    
+    catch_error(|| {
+        let env = get_env();
+
+        let panic_msg = match panic.panic {
+            PanicType::Message(msg) => msg,
+            PanicType::Unknown => Cow::Borrowed(PanicType::UNKNOWN_PAYLOAD_TYPE_MSG),
+            // Panicked with an Exception (should be rethrown)
+            PanicType::Object(object) => {
+                let object = JThrowable::from(
+                    env.new_local_ref(object)
+                        .catch(env)
+                        .unwrap()
+                );
+                // Inject Backtrace to Exception
+                if let Some(backtrace) = panic.rust_backtrace {
+                    inject_backtrace(&object, backtrace.as_ref(), env);
+                }
+                // Finally, rethrow the Exception.
+                env.throw(object)
+                    .unwrap_or_else(|err| panic!("Failed to rethrow exception: {err}"));
+
+                return;
             }
-            // Finally, rethrow the Exception
-            env.throw(exception)
-                .unwrap_or_else(|err| panic!("Failed to rethrow exception: {err}"));
-            return;
-        }
-    };
+        };
 
-    env.exception_clear().unwrap();
+        env.exception_clear().unwrap();
 
-    // Convert a plain-text String message panic into an exception.
-    let exception = JavaException::new_rust_panic(panic.location, panic_msg.to_string(), None, env);
-    // Finally, throw the new Exception
-    env.throw(JThrowable::from(exception.to_object())).unwrap();
-}) }
+        // Convert a plain-text String message panic into an exception.
+        let exception = JavaException::new_rust_panic(panic.location, panic_msg.to_string(), None, env);
+        let object = JThrowable::from(exception.to_object_env(env));
+        // Finally, throw the new Exception.
+        env.throw(object).unwrap();
+    });
+
+    stack_env.pop();
+}

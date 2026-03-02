@@ -53,16 +53,27 @@ impl PanicType {
 impl From<PanicPayload> for PanicType {
     /// Tries to guess the *concrete type* of a panic payload and casts it to that type.
     fn from(payload: PanicPayload) -> Self {
-        match payload.downcast::<&'static str>() {
-            Ok(msg) => Self::Message(Cow::Borrowed(&msg)),
-            Err(payload) => match payload.downcast::<String>() {
-                Ok(msg) => Self::Message(Cow::Owned(*msg)),
-                Err(payload) => match payload.downcast::<GlobalRef>() {
-                    Ok(exception) => Self::Object(*exception),
-                    // Unexpected panic type
-                    Err(_) => Self::Unknown,
-                },
-            },
-        }
+        payload.downcast::<&'static str>()
+            .map(|msg| Self::Message(Cow::Borrowed(&msg)))
+            .or_else(|payload| {
+                payload.downcast::<String>()
+                    .map(|msg| Self::Message(Cow::Owned(*msg)))
+            })
+            .or_else(|payload| {
+                payload.downcast::<GlobalRef>()
+                    .map(|object| Self::Object(*object))
+            })
+            // .or_else(|payload| {
+            //     payload.downcast::<JavaException>()
+            //         .map(|exception| Self::Exception(*exception))
+            // })
+            // .or_else(|payload| {
+            //     payload.downcast::<GlobalRef>()
+            //         // Convert the Object reference to a JavaException
+            //         .map(|object| Self::Exception({
+            //             todo!()
+            //         }))
+            // })
+            .unwrap_or(Self::Unknown)
     }
 }

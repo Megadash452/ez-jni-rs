@@ -665,12 +665,17 @@ fn __panic_impl(get_payload: impl FnOnce(&'static StdLocation<'static>, &mut JNI
     }
 }
 
-/// This is the actual traits that implementors of [`PanicError`] must implement.
-trait __PanicErrorImpl: std::error::Error + Sized {
-    /// Implementors of this method should not `panic!`
-    // NOTE: does not need to track caller
-    fn into_payload(self, location: &'static StdLocation<'static>, env: &mut JNIEnv<'_>) -> Either<String, JavaException>;
+mod private {
+    use super::{Either, JavaException, JNIEnv, StdLocation};
+
+    /// This is the actual traits that implementors of [`PanicError`] must implement.
+    pub trait __PanicErrorImpl: std::error::Error + Sized {
+        /// Implementors of this method should not `panic!`
+        // NOTE: does not need to track caller
+        fn into_payload(self, location: &'static StdLocation<'static>, env: &mut JNIEnv<'_>) -> Either<String, JavaException>;
+    }
 }
+use private::*;
 
 /// Print a **list of items** to a string, where each item is separated by a *comma*.
 #[allow(unstable_name_collisions)]
@@ -691,8 +696,6 @@ fn exception_cause(exception: Option<&JavaException>) -> String {
 // TODO: Test that MethodNotFound and FieldNotFound can actually parse their respective exceptions
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn method_not_found() {
         todo!()

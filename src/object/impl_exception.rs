@@ -52,7 +52,15 @@ impl JavaException {
         }
     }
 
-    // TODO: doc: make sure to call Std::Location::caller() from a function that tracks caller.
+    /// Creates an instance of a [`JavaException`], where the class is `me.ezjni.RustPanic`.
+    /// This exception class indicates that a *natve call* did not return successfully (`panic!ked`),
+    /// and contains all the information of the panic: **message**, **location**, and **backtrace**.
+    /// 
+    /// Optionally, the caller can pass a **cause** Exception to the `Throwable` to allow chaining Exceptions.
+    /// 
+    /// > NOTE: The **location** that is passed in here should be obtained with [`std::panic::Location::caller()`],
+    /// > and that should be called from a function with the `#[track_caller]` attribute.
+    /// > This is to accurately capture the location where the `panic!` was triggered.
     pub(crate) fn new_rust_panic<'local>(location: impl Into<Location>, message: String, cause: Option<Self>, env: &mut JNIEnv<'local>) -> Self {
         let location = location.into();
         let (file, line, col) = (location.file, location.line, location.col);
@@ -168,7 +176,9 @@ impl FromObject<'_> for JavaException {
 }
 impl ToObject for JavaException {
     fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        env.new_local_ref(&self.exception).catch(env).unwrap_jni()
+        env.new_local_ref(&self.exception)
+            .catch(env)
+            .unwrap_jni()
     }
 }
 

@@ -169,8 +169,8 @@ fn call_helper<'local, T>(
         _ => { },
     }
 
-    let callee_class = callee.get_class(env)?.as_ref();
-    let target_class = call!(env=> callee_class.getName() -> String);
+    let callee_class = callee.get_class(env)?;
+    let target_class = call!(env=> callee_class.as_ref().getName() -> String);
 
     let result = call(env)
         .catch(env)
@@ -200,10 +200,11 @@ fn call_helper<'local, T>(
     //
     // This only happens in DEBUG builds.
     #[cfg(debug_assertions)] {
-        (&result).inspect_err(|error| match error {
-            MethodCallError::MethodNotFound { .. } => crate::hints::print_method_existence_report(callee_class, method_name, method_sig, callee.is_static(), env),
-            _ => { },
-        })
+        if let Err(error) = &result {
+            if let MethodCallError::MethodNotFound { .. } = error {
+                crate::hints::print_method_existence_report(&callee_class, method_name, method_sig, callee.is_static(), env)
+            }
+        }
     };
 
     result
@@ -323,8 +324,8 @@ pub(super) fn field_helper<'local>(
         _ => { },
     }
 
-    let callee_class = callee.get_class(env)?.as_ref();
-    let target_class = call!(env=> callee_class.getName() -> String);
+    let callee_class = callee.get_class(env)?;
+    let target_class = call!(env=> callee_class.as_ref().getName() -> String);
 
     let result = field_op(env)
         .catch(env)
@@ -332,7 +333,7 @@ pub(super) fn field_helper<'local>(
             // Only call method_op() if the error was FieldNotFound
             let field_access_error = match err {
                 JniError::Jni(jni::errors::Error::FieldNotFound { name, sig })
-                    => FieldNotFoundError::from_jni(target_class, name, &sig),
+                    => FieldNotFoundError::from_jni(target_class.clone(), name, &sig),
                 JniError::Exception(exception)
                 if exception.is_instance_of(FieldNotFoundError::ERROR_CLASS)
                 || exception.is_instance_of(FieldNotFoundError::EXCEPTION_CLASS)
@@ -372,11 +373,12 @@ pub(super) fn field_helper<'local>(
     //
     // This only happens in DEBUG builds.
     #[cfg(debug_assertions)] {
-        (&result).inspect_err(|error| match error {
-            FieldError::FieldNotFound(_)
-            | FieldError::MethodNotFound { .. } => crate::hints::print_field_existence_report(callee_class, name, ty, callee.is_static(), env),
-            _ => { },
-        })
+        if let Err(error) = &result {
+            if let FieldError::FieldNotFound(_)
+            | FieldError::MethodNotFound { .. } = error {
+                crate::hints::print_field_existence_report(&callee_class, name, ty, callee.is_static(), env)
+            }
+        }
     };
 
     result
