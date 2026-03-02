@@ -2,7 +2,7 @@ use jni::objects::{GlobalRef, JClass};
 use nonempty::NonEmpty;
 use std::{fmt::{Debug, Display}, io, ops::Deref, sync::OnceLock};
 use ez_jni_macros::new;
-use crate::{__throw::{Location, backtrace::{Backtrace, inject_backtrace}}, utils::{JniResultExt as _, ResultExt as _, get_object_class_name}};
+use crate::{__throw::{Location, backtrace::{Backtrace, inject_backtrace}}, error::PanicError, utils::{JniResultExt as _, ResultExt as _, get_object_class_name}};
 
 use super::*;
 
@@ -130,6 +130,12 @@ impl Deref for JavaException {
 impl Into<GlobalRef> for JavaException {
     fn into(self) -> GlobalRef {
         self.exception
+    }
+}
+impl PanicError for JavaException {
+    #[inline(always)]
+    fn panic(self) -> ! {
+        crate::__throw::panic_exception(self)
     }
 }
 impl std::error::Error for JavaException {}

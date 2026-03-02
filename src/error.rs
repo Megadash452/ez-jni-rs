@@ -215,14 +215,7 @@ impl JniError {
         }
     }
 }
-impl std::error::Error for JniError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(match self {
-            Self::Exception(ex) => ex,
-            Self::Jni(error) => error,
-        })
-    }
-}
+impl PanicError for JniError { }
 impl __PanicErrorImpl for JniError {
     fn into_payload(self, _: &'static StdLocation<'static>, _: &mut JNIEnv<'_>) -> Either<String, JavaException> {
         match self {
@@ -230,6 +223,14 @@ impl __PanicErrorImpl for JniError {
             Self::Exception(ex) => Either::Right(ex),
             Self::Jni(err) => Either::Left(err.to_string())
         }
+    }
+}
+impl std::error::Error for JniError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(match self {
+            Self::Exception(ex) => ex,
+            Self::Jni(error) => error,
+        })
     }
 }
 impl Display for JniError {
@@ -312,6 +313,7 @@ impl FromObjectError {
         }
     }
 }
+impl PanicError for FromObjectError { }
 impl __PanicErrorImpl for FromObjectError {
     fn into_payload(self, location: &'static StdLocation<'static>, env: &mut JNIEnv<'_>) -> Either<String, JavaException> {
         fn into_payload(error: FromObjectError, full_message: String, location: &'static StdLocation<'static>, env: &mut JNIEnv<'_>) -> Either<String, JavaException> {
@@ -325,10 +327,7 @@ impl __PanicErrorImpl for FromObjectError {
                 FromObjectError::FieldNotFound(error) => Either::Right(JavaException::new_rust_panic(location, full_message, error.error, env)),
                 FromObjectError::MethodNotFound(error) => Either::Right(JavaException::new_rust_panic(location, full_message, error.error, env)),
                 FromObjectError::ClassNotFound(error) => Either::Right(JavaException::new_rust_panic(location, full_message, Some(error.exception), env)),
-                FromObjectError::Unknown { error } => match error {
-                    JniError::Exception(ex) => Either::Right(ex),
-                    JniError::Jni(_) => Either::Left(full_message),
-                },
+                FromObjectError::Unknown { error } => error.into_payload(location, env),
             }
         }
         
@@ -444,6 +443,7 @@ pub enum FromJValueError {
     #[error("{0}")]
     Object(#[from] FromObjectError)
 }
+impl PanicError for FromJValueError { }
 impl __PanicErrorImpl for FromJValueError {
     fn into_payload(self, location: &'static StdLocation<'static>, env: &mut JNIEnv<'_>) -> Either<String, JavaException> {
         match self {
@@ -488,6 +488,7 @@ pub enum MethodCallError {
     #[error("{error}")]
     Unknown { #[source] error: JniError }
 }
+impl PanicError for MethodCallError { }
 impl __PanicErrorImpl for MethodCallError {
     fn into_payload(self, location: &'static StdLocation<'static>, env: &mut JNIEnv<'_>) -> Either<String, JavaException> {
         match self {
@@ -554,6 +555,7 @@ pub enum FieldError {
     #[error("{error}")]
     Unknown { #[source] error: JniError }
 }
+impl PanicError for FieldError { }
 impl __PanicErrorImpl for FieldError {
     fn into_payload(self, location: &'static StdLocation<'static>, env: &mut JNIEnv<'_>) -> Either<String, JavaException> {
         match self {
@@ -623,7 +625,7 @@ impl From<JavaException> for FieldError {
 /// allowing the panic *payload* to be either a [`String`] or [`JavaException`],
 /// depending on what data the error type contains.
 //
-// NOTE: do not implement thsi trait directly, implement __PanicErrorImpl instead.
+// NOTE: do not implement [`PanicError::panic()`] directly; leave the default implementation and implement __PanicErrorImpl instead.
 pub trait PanicError: __PanicErrorImpl {
     /// Trigger a `panic!` from the *location* this function was called.
     /// The panic *payload* may be a [`String`] message, or a [`JavaException`] if the error contains one.
@@ -639,8 +641,6 @@ pub trait PanicError: __PanicErrorImpl {
         __panic_impl(|location, env| self.into_payload(location, env))
     }
 }
-impl<T> PanicError for T
-where T: __PanicErrorImpl { }
 /// Implementation of the [`PanicError::panic()`] caller method.
 /// This sets up the arguments for the call of __into_payload()
 #[doc(hidden)]
@@ -673,6 +673,15 @@ mod private {
         /// Implementors of this method should not `panic!`
         // NOTE: does not need to track caller
         fn into_payload(self, location: &'static StdLocation<'static>, env: &mut JNIEnv<'_>) -> Either<String, JavaException>;
+    }
+
+    /// NOTE: [`JavaException`] has its own distinct implementation of [`PanicError::panic()`] becsause it does not need to use the [`JNIEnv`],
+    /// but still has to implement this trait and method for compatibility.
+    impl __PanicErrorImpl for JavaException {
+        #[inline(always)]
+        fn into_payload(self, _: &'static StdLocation<'static>, _: &mut JNIEnv<'_>) -> Either<String, JavaException> {
+            Either::Right(self)
+        }
     }
 }
 use private::*;
