@@ -705,8 +705,67 @@ fn exception_cause(exception: Option<&JavaException>) -> String {
 // TODO: Test that MethodNotFound and FieldNotFound can actually parse their respective exceptions
 #[cfg(test)]
 mod tests {
+    use jni::objects::JValue;
+
+    use super::{JniError, MethodNotFoundError, FieldNotFoundError};
+    use crate::{FromObject, ToObject, utils::{JniResultExt as _, ResultExt as _}};
+
+    macro_rules! setup_env {
+        ($var:ident) => {
+            let mut $var = ::utils::TEST_JVM.attach_current_thread_permanently()
+                .unwrap_or_else(|err| panic!("Error attaching current thread to JavaVM: {err}"));
+            let $var = &mut $var;
+        };
+    }
+
     #[test]
     fn method_not_found() {
-        todo!()
+        setup_env!(env);
+        let s = "a".to_object_env(env);
+        let error = env.call_static_method("java/lang/String", "myFakeMethod",
+            "(IILjava/lang/String;)Ljava/lang/String;",
+            &[ JValue::Int(0), JValue::Int(0), JValue::Object(&s) ],
+        )
+            .catch(env)
+            .unwrap_err();
+
+        println!("-- Called");
+
+        let error = match error {
+            JniError::Exception(exception) => MethodNotFoundError::from_object_env(&exception, env).unwrap_display(),
+            JniError::Jni(error) => match error {
+                jni::errors::Error::MethodNotFound { name, sig }
+                    => MethodNotFoundError::from_jni("java/lang/String".to_string(), name, &sig),
+                error => panic!("Unexpected error: {error}"),
+            }
+        };
+
+        println!("-- Got Error");
+
+        assert_eq!(error.target_class, "java.lang.String");
+        assert_eq!(error.name, "myFakeMethod");
+        assert_eq!(error.params.as_ref(), &[ "int", "int", "java.lang.String" ]);
+        assert_eq!(error.return_ty, "java.lang.String");
+    }
+
+    #[test]
+    fn field_not_found() {
+        setup_env!(env);
+        let error = env.get_static_field("java/lang/String", "myFakeField", "I")
+            .catch(env)
+            .unwrap_err();
+
+        let error = match error {
+            JniError::Exception(exception) => FieldNotFoundError::from_object_env(&exception, env).unwrap_display(),
+            JniError::Jni(error) => match error {
+                jni::errors::Error::FieldNotFound { name, sig }
+                    => FieldNotFoundError::from_jni("java/lang/String".to_string(), name, &sig),
+                error => panic!("Unexpected error: {error}"),
+            }
+        };
+
+        assert_eq!(error.target_class, "java.lang.String");
+        assert_eq!(error.name, "myFakeField");
+        assert_eq!(error.ty, "int");
     }
 }
