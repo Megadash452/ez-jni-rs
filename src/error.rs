@@ -2,7 +2,7 @@ use std::{borrow::Cow, cmp::Ordering, fmt::{Debug, Display}, panic::Location as 
 use either::Either;
 use itertools::Itertools;
 use jni::{JNIEnv, objects::JObject};
-use nonempty::NonEmpty;
+use nonempty::{NonEmpty, nonempty};
 use thiserror::Error;
 use crate::{__throw::{catch_throwable, panic_exception}, Class, FromObject, JValueType, JavaException, utils::{JNI_CALL_GHOST_EXCEPTION, JniResultExt as _, ResultExt as _, check_object_class, get_object_class_name}};
 
@@ -96,10 +96,10 @@ impl FromObject<'_> for MethodNotFoundError {
         && !env.is_instance_of(object, Self::EXCEPTION_CLASS).catch(env)? {
             return Err(FromObjectError::ClassMismatch {
                 obj_class: get_object_class_name(object, env),
-                target_classes: NonEmpty::from_vec([
+                target_classes: nonempty![
                     Self::ERROR_CLASS.to_string(),
                     Self::EXCEPTION_CLASS.to_string()
-                ].into()).unwrap(),
+                ],
             });
         }
 
@@ -152,10 +152,10 @@ impl FromObject<'_> for FieldNotFoundError {
         && !env.is_instance_of(object, Self::EXCEPTION_CLASS).catch(env)? {
             return Err(FromObjectError::ClassMismatch {
                 obj_class: get_object_class_name(object, env),
-                target_classes: NonEmpty::from_vec([
+                target_classes: nonempty![
                     Self::ERROR_CLASS.to_string(),
                     Self::EXCEPTION_CLASS.to_string(),
-                ].into()).unwrap(),
+                ],
             });
         }
 

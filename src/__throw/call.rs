@@ -1,7 +1,7 @@
 //! These functions are used in [`call!`][ez_jni_macros::call!] and *similar macros*.
 use std::sync::OnceLock;
 use jni::{objects::GlobalRef};
-use nonempty::NonEmpty;
+use nonempty::nonempty;
 use super::*;
 use crate::{JavaException, utils::{JNI_CALL_GHOST_EXCEPTION, JniResultExt as _, ResultExt as _}};
 
@@ -49,7 +49,7 @@ pub fn panic_throwable(object: &JThrowable<'_>) -> ! {
                             .unwrap_or_else(|err| panic!("Error reading value returned by java.lang.Class.getName(): {err}"))
                     })
             }).catch(env).unwrap(),
-            target_classes: NonEmpty::new("java.lang.Throwable".to_string()),
+            target_classes: nonempty!["java.lang.Throwable".to_string()],
         })
     }
 

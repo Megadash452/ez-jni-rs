@@ -12,6 +12,7 @@ pub use array::*;
 use jni::{JNIEnv, objects::JObject};
 use crate::{LOCAL_JNIENV_STACK, call, error::{JniError, PanicError}, private::Sealed};
 
+pub use nonempty::NonEmpty;
 #[doc(hidden)]
 pub use cfg_if;
 

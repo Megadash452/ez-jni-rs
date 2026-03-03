@@ -1,5 +1,5 @@
 use jni::objects::{GlobalRef, JClass};
-use nonempty::NonEmpty;
+use nonempty::nonempty;
 use std::{fmt::{Debug, Display}, io, ops::Deref, sync::OnceLock};
 use ez_jni_macros::new;
 use crate::{__throw::{Location, backtrace::{Backtrace, inject_backtrace}}, error::PanicError, utils::{JniResultExt as _, ResultExt as _, get_object_class_name}};
@@ -168,7 +168,7 @@ impl FromObject<'_> for JavaException {
         if !env.is_instance_of(object, <Self as Class>::class()).catch(env)? {
             return Err(FromObjectError::ClassMismatch {
                 obj_class: class,
-                target_classes: NonEmpty::new(<Self as Class>::class().to_string()),
+                target_classes: nonempty![<Self as Class>::class().to_string()],
             });
         }
 
@@ -233,7 +233,7 @@ impl FromObject<'_> for std::io::Error {
         if !env.is_instance_of(object, IO_ERROR_BASE_PATH).catch(env)? {
             return Err(FromObjectError::ClassMismatch {
                 obj_class: class,
-                target_classes: NonEmpty::new(IO_ERROR_BASE_PATH.to_string()),
+                target_classes: nonempty![IO_ERROR_BASE_PATH.to_string()],
             });
         }
 
