@@ -5,7 +5,6 @@ use jni::{
 };
 use nonempty::nonempty;
 use crate::{Class, FromJValue, FromObject, JValueType, call, error::{FromJValueError, FromObjectError}, utils::JniResultExt as _};
-use super::{field_helper, getter_name_and_sig};
 
 /// Trait for [`FromObject derive`][FromObject] to use to convert [`JValue`]s to **Rust Values**.
 pub trait FieldFromJValue<'obj, 'local>: Class + Sized {
@@ -177,19 +176,13 @@ pub fn jvalue_to_jobject<'obj>(val: JValueOwned<'obj>) -> Result<JObject<'obj>, 
 /// but returns [`FieldNotFound`][FromObjectError::FieldNotFound] if the **field** or **getter** method were not found.
 /// 
 /// This is used by [`FromObject` derive][crate::FromObject].
-pub fn from_object_get_field<'local>(object: &JObject<'_>, name: &'static str, ty: &str, env: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, FromObjectError> {
-    field_helper(super::Callee::Object(object), name, ty,
-        |env| env.get_field(object, name, ty),
-        |env| {
-            let (name, sig) = getter_name_and_sig(name, ty);
-            env.call_method(object, name, sig, &[])
-        },
-    env)
+pub fn from_object_get_field<'local>(object: &JObject<'_>, name: &str, ty: &str, env: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, FromObjectError> {
+    super::get_obj_field(object, name, ty, env)
         .map_err(FromObjectError::from)
 }
 
 /// Helper function for the [`FromObject`][ez_jni::FromObject] [derive macro][ez_jni_macros::FromObject] to check whether the *object*'s Class matches the struct's *target Class*.
-pub fn check_object_class(object: &JObject, target_class: &str, env: &mut JNIEnv<'_>) -> Result<(), FromObjectError> {
+pub fn check_object_class(object: &JObject<'_>, target_class: &str, env: &mut JNIEnv<'_>) -> Result<(), FromObjectError> {
     if object.is_null() {
         return Err(FromObjectError::Null);
     }

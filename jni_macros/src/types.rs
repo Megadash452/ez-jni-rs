@@ -92,15 +92,15 @@ impl Type {
                 let ty = self.type_tokens(false, false, None);
                 return quote_spanned! {value.span()=>
                     <#ty as ::ez_jni::FromObjectOwned>::from_object_owned_env(
-                        ::ez_jni::utils::jvalue_to_jobject(#value).unwrap_display(),
+                        ::ez_jni::utils::jvalue_to_jobject(#value).unwrap_jni(),
                         env,
-                    ).unwrap_display() }
+                    ).unwrap_jni() }
             },
             _ => self.type_tokens(false, false, None),
         };
         // use the FromJValue implementation
         // NOTE that using FromJValue is much simpler than using ToJValue in these macros.
-        quote_spanned! {value.span()=> <#ty as ::ez_jni::FromJValue>::from_jvalue_env((#value).borrow(), env).unwrap_display() }
+        quote_spanned! {value.span()=> <#ty as ::ez_jni::FromJValue>::from_jvalue_env((#value).borrow(), env).unwrap_jni() }
     }
 
     /// General function to convert a **Rust value** to a [`JValue`][jni::objects::JValue].
@@ -142,7 +142,7 @@ impl Type {
     /// 
     /// Even though `void` and `()` are the same, it must still be *unwrapped* from the [`JValue`][::jni::objects::JValueGen].
     pub fn convert_void_to_unit(value: &TokenStream) -> TokenStream {
-        quote_spanned! {value.span()=> <() as ::ez_jni::FromJValue>::from_jvalue_env((#value).borrow(), env).unwrap_display() }
+        quote_spanned! {value.span()=> <() as ::ez_jni::FromJValue>::from_jvalue_env((#value).borrow(), env).unwrap_jni() }
     }
 }
 impl Spanned for Type {
@@ -175,7 +175,7 @@ impl Conversion for Type {
                     InnerType::Object(class) if class.is_object_ref() =>
                         quote_spanned! {value.span()=> <#ty_tokens as ::ez_jni::FromObjectOwned>::from_object_owned_env(#value, env) },
                     // Use regular FromObject implementation
-                    _ => quote_spanned! {value.span()=> <#ty_tokens as ::ez_jni::FromObject>::from_object_env(&(#value), env).unwrap_display() }
+                    _ => quote_spanned! {value.span()=> <#ty_tokens as ::ez_jni::FromObject>::from_object_env(&(#value), env).unwrap_jni() }
                 }
             }),
         }
@@ -477,7 +477,7 @@ impl ArrayType {
     fn convert_java_to_rust(&self, value: &TokenStream) -> TokenStream {
         let array_ty = self.type_tokens(false, false, None);
         quote_spanned! {value.span()=>
-            <#array_ty as ::ez_jni::FromObject>::from_object_env(&(#value), env).unwrap_display()
+            <#array_ty as ::ez_jni::FromObject>::from_object_env(&(#value), env).unwrap_jni()
         }
     }
     /// Returns code that converts a *Rust slice* to a *Java Array*.
@@ -878,13 +878,13 @@ impl Conversion for Class {
 
         Some(match self.rust_type() {
             ClassRustType::Primitive(_) => quote_spanned! {value.span()=>
-                <#ty as ::ez_jni::FromObject>::from_object_env(&(#value), env).unwrap_display()
+                <#ty as ::ez_jni::FromObject>::from_object_env(&(#value), env).unwrap_jni()
             },
             _ if self.is_object_ref()  => quote_spanned! {value.span()=>
-                <#ty as ::ez_jni::FromObjectOwned>::from_object_owned_env(#value, env).unwrap_display()
+                <#ty as ::ez_jni::FromObjectOwned>::from_object_owned_env(#value, env).unwrap_jni()
             },
             _ => quote_spanned! {value.span()=>
-                <#ty as ::ez_jni::FromObject>::from_object_env(&(#value), env).unwrap_display()
+                <#ty as ::ez_jni::FromObject>::from_object_env(&(#value), env).unwrap_jni()
             }
         })
     }

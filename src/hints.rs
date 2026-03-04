@@ -18,13 +18,13 @@ fn print_report<T: Display>(generate_report: impl FnOnce(&mut JNIEnv<'_>) -> T +
     }
 }
 
-pub fn print_method_existence_report(class: &JClass<'_>, method_name: &'static str, method_sig: &str, is_static: bool, env: &mut JNIEnv<'_>) {
+pub fn print_method_existence_report(class: &JClass<'_>, method_name: &str, method_sig: &str, is_static: bool, env: &mut JNIEnv<'_>) {
     print_report(
         |env| MethodHintReport::check_method_existence(class, method_name, method_sig, is_static, env),
         "Failed to check why JNI method call failed",
     env)
 }
-pub fn print_field_existence_report(class: &JClass<'_>, field_name: &'static str, field_ty: &str, is_static: bool, env: &mut JNIEnv<'_>) {
+pub fn print_field_existence_report(class: &JClass<'_>, field_name: &str, field_ty: &str, is_static: bool, env: &mut JNIEnv<'_>) {
     print_report(
         |env| FieldHintReport::check_field_existence(class, field_name, field_ty, is_static, env),
         "Failed to check why JNI field access failed",
@@ -462,7 +462,7 @@ impl MethodHintReport {
     /// 
     /// This function makes *A LOT* Java calls, so it can be quite slow,
     /// so it only exists in DEBUG builds.
-    pub fn check_method_existence(class: &JClass<'_>, method_name: &'static str, method_sig: &str, is_static: bool, env: &mut JNIEnv<'_>) -> Self {
+    pub fn check_method_existence(class: &JClass<'_>, method_name: &str, method_sig: &str, is_static: bool, env: &mut JNIEnv<'_>) -> Self {
         let classes = get_superclasses(class, env);
         let user_method = Method::new(class, method_name, method_sig, is_static, env);
         let mut same_name_sig_methods = Vec::new();
@@ -590,7 +590,7 @@ impl FieldHintReport {
     /// 
     /// This function makes *A LOT* Java calls, so it can be quite slow,
     /// so it only exists in DEBUG builds.
-    pub fn check_field_existence(class: &JClass<'_>, field_name: &'static str, field_ty: &str, is_static: bool, env: &mut JNIEnv<'_>) -> Self {
+    pub fn check_field_existence(class: &JClass<'_>, field_name: &str, field_ty: &str, is_static: bool, env: &mut JNIEnv<'_>) -> Self {
         let classes = get_superclasses(class, env);
         let user_field = Field::new(class, field_name, field_ty, is_static, env);
         let mut same_name_type_fields = Vec::new();

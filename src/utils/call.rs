@@ -75,13 +75,13 @@ impl<'a, T> From<&'a T> for CowObject<'a, T> {
 /// This functions returns the *value returned* by the method, or an [`Exception`][JavaException] if the method *throws*.
 /// If an error other than an [`Exception`][JavaException] occurs (or is [`MethodNotFound`](https://docs.oracle.com/javaee/7/api/javax/el/MethodNotFoundException.html)),
 /// the function will `panic!`.
-pub fn call_obj_method<'local>(object: &JObject<'_>, name: &'static str, sig: &str, args: &[JValue], env: &mut JNIEnv<'local>) -> Result<Result<JValueOwned<'local>, JavaException>, MethodCallError> {
+pub fn call_obj_method<'local>(object: &JObject<'_>, name: &str, sig: &str, args: &[JValue], env: &mut JNIEnv<'local>) -> Result<Result<JValueOwned<'local>, JavaException>, MethodCallError> {
     call_helper(object.into(), name, sig, |env| {
         env.call_method(object, name, sig, args)
     }, env)
 }
 /// Same as [`call_obj_method()`] but for `static` methods.
-pub fn call_static_method<'local>(class: ClassRepr<'_, '_>, name: &'static str, sig: &str, args: &[JValue], env: &mut JNIEnv<'local>) -> Result<Result<JValueOwned<'local>, JavaException>, MethodCallError> {
+pub fn call_static_method<'local>(class: ClassRepr<'_, '_>, name: &str, sig: &str, args: &[JValue], env: &mut JNIEnv<'local>) -> Result<Result<JValueOwned<'local>, JavaException>, MethodCallError> {
     call_helper(class.into(), name, sig, |env| {
         match class {
             ClassRepr::String(class_path) => {
@@ -158,7 +158,7 @@ impl<'a, 'local> From<&'a JObject<'local>> for Callee<'a, 'local> {
 #[track_caller]
 fn call_helper<'local, T>(
     callee: Callee<'_, '_>,
-    method_name: &'static str,
+    method_name: &str,
     method_sig: &str,
     call: impl FnOnce(&mut JNIEnv<'local>) -> jni::errors::Result<T>,
     env: &mut JNIEnv<'local>
@@ -211,12 +211,12 @@ fn call_helper<'local, T>(
 }
 
 /// Generates the **name** and **signature** of the *Getter Method* that is called if a Field was not found.
-pub(super) fn getter_name_and_sig(field_name: &'static str, ty: &str) -> (String, String) { (
+pub(super) fn getter_name_and_sig(field_name: &str, ty: &str) -> (String, String) { (
     format!("get{}", first_char_uppercase(field_name)),
     format!("(){ty}")
 ) }
 /// Generates the **name** and **signature** of the *Setter Method* that is called if a Field was not found.
-fn setter_name_and_sig(field_name: &'static str, ty: &str) -> (String, String) { (
+fn setter_name_and_sig(field_name: &str, ty: &str) -> (String, String) { (
     format!("set{}", first_char_uppercase(field_name)),
     format!("({ty})V")
 ) }
@@ -230,7 +230,7 @@ fn setter_name_and_sig(field_name: &'static str, ty: &str) -> (String, String) {
 /// then `java.lang.String getMessage()` will be called.
 /// 
 /// This function already handles any errors returned by the *JNI Call* with a `panic!`.
-pub fn get_obj_field<'local>(object: &JObject<'_>, name: &'static str, ty: &'static str, env: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, FieldError> {
+pub fn get_obj_field<'local>(object: &JObject<'_>, name: &str, ty: &str, env: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, FieldError> {
     field_helper(Callee::Object(object), name, ty,
         |env| env.get_field(object, name, ty),
         |env| {
@@ -240,7 +240,7 @@ pub fn get_obj_field<'local>(object: &JObject<'_>, name: &'static str, ty: &'sta
     env)
 }
 /// Like [`get_obj_field()`], but gets the value of a `static` field of a **Class**.
-pub fn get_static_field<'local>(class: ClassRepr<'_, '_>, name: &'static str, ty: &'static str, env: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, FieldError> {
+pub fn get_static_field<'local>(class: ClassRepr<'_, '_>, name: &str, ty: &str, env: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, FieldError> {
     field_helper(Callee::from(class), name, ty,
         |env| match class {
             ClassRepr::String(class) => env.get_static_field(class, name, ty),
@@ -265,7 +265,7 @@ pub fn get_static_field<'local>(class: ClassRepr<'_, '_>, name: &'static str, ty
 /// then `java.lang.String setMessage(val)` will be called.
 /// 
 /// This function already handles any errors returned by the *JNI Call* with a `panic!`.
-pub fn set_obj_field(object: &JObject<'_>, name: &'static str, ty: &'static str, val: JValue<'_, '_>, env: &mut JNIEnv<'_>) -> Result<(), FieldError> {
+pub fn set_obj_field(object: &JObject<'_>, name: &str, ty: &str, val: JValue<'_, '_>, env: &mut JNIEnv<'_>) -> Result<(), FieldError> {
     field_helper(Callee::Object(object), name, ty,
         |env| {
             env.set_field(object, name, ty, val)?;
@@ -279,7 +279,7 @@ pub fn set_obj_field(object: &JObject<'_>, name: &'static str, ty: &'static str,
         .map(|val| <() as FromJValue>::from_jvalue(val.borrow()).unwrap_display())
 }
 /// Like [`set_obj_field()`], but sets the value of a `static` field of a **Class**.
-pub fn set_static_field<'local>(class: ClassRepr<'_, '_>, name: &'static str, ty: &'static str, val: JValue<'_, '_>, env: &mut JNIEnv<'local>) -> Result<(), FieldError> {
+pub fn set_static_field<'local>(class: ClassRepr<'_, '_>, name: &str, ty: &str, val: JValue<'_, '_>, env: &mut JNIEnv<'local>) -> Result<(), FieldError> {
     field_helper(Callee::from(class), name, ty,
         |env| {
             match class {
@@ -311,7 +311,7 @@ pub fn set_static_field<'local>(class: ClassRepr<'_, '_>, name: &'static str, ty
 /// However, this only happens when building in DEBUG mode because this involves *A LOT* of Java calls.
 pub(super) fn field_helper<'local>(
     callee: Callee<'_, '_>,
-    name: &'static str,
+    name: &str,
     ty: &str,
     field_op: impl FnOnce(&mut JNIEnv<'local>) -> jni::errors::Result<JValueOwned<'local>>,
     // TODO: make optional?

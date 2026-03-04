@@ -2,7 +2,7 @@ use either::Either;
 use convert_case::{Case, Casing};
 use proc_macro2::{Span, TokenStream, TokenTree};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
-use syn::{AngleBracketedGenericArguments, Field, Fields, GenericArgument, Generics, Ident, ItemEnum, ItemStruct, Lifetime, LitStr, Token, TypePath, Variant, bracketed, parse::{Parse, ParseStream, Parser}, token::Bracket};
+use syn::{AngleBracketedGenericArguments, Field, Fields, GenericArgument, Generics, Ident, ItemStruct, Lifetime, LitStr, Token, TypePath, bracketed, parse::{Parse, ParseStream, Parser}, punctuated::Punctuated, token::Bracket};
 use itertools::Itertools as _;
 use std::{cell::RefCell, collections::{HashMap, HashSet}};
 use crate::{
@@ -26,13 +26,14 @@ pub fn derive_struct(mut st: ItemStruct) -> syn::Result<TokenStream> {
             ::ez_jni::impl_from_jvalue_env!(<#env_lt>);
         }
         impl #st_generics ::ez_jni::FromObject<#env_lt> for #st_ident #st_generics {
-            fn from_object_env(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<#env_lt>) -> ::std::result::Result<Self, ::ez_jni::FromObjectError> {
+            fn from_object_env(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<#env_lt>) -> ::std::result::Result<Self, ::ez_jni::error::FromObjectError> {
                 #ops_prelude
                 ::ez_jni::utils::check_object_class(object, &<Self as ::ez_jni::Class>::class(), env)?;
                 Ok(Self #st_ctor)
             }
         }
         impl #st_generics ::ez_jni::Class for #st_ident #st_generics {
+            #[inline(always)]
             fn class() -> ::std::borrow::Cow<'static, str> {
                 ::std::borrow::Cow::Borrowed(#class)
             }
@@ -41,34 +42,27 @@ pub fn derive_struct(mut st: ItemStruct) -> syn::Result<TokenStream> {
 }
 
 /// Outputs the trait Implementation of [`FromObject`][https://docs.rs/ez_jni/0.5.2/ez_jni/trait.FromObject.html] for **enums**.
-pub fn derive_enum(mut enm: ItemEnum) -> syn::Result<TokenStream> {
+pub fn derive_enum(enm: syn::ItemEnum) -> syn::Result<TokenStream> {
+    let enm = Enum::try_from(enm)?;
     let mut errors = Vec::new();
 
     if enm.variants.is_empty() {
         errors.push(syn::Error::new(Span::call_site(), "Enum must have at least 1 variant"));
     }
 
-    let base_class = take_class_attribute(&mut enm.attrs)
-        .map_err(|err| errors.push(err))
-        .ok()
-        .and_then(|o| o)
-        .map(|class| class.to_jni_class_path());
-
-    let base_class_check = base_class.as_ref()
+    let base_class_check = enm.class.as_ref()
         .map(|_| quote_spanned! {enm.ident.span()=> {
             let class = <Self as ::ez_jni::Class>::class();
-            if !env.is_instance_of(object, &class).unwrap_jni(env) {
-                return Err(::ez_jni::FromObjectError::ClassMismatch {
+            if !env.is_instance_of(object, &class).catch(env).unwrap_jni() {
+                return Err(::ez_jni::error::FromObjectError::ClassMismatch {
                     obj_class: __class,
-                    target_class: Some(::std::borrow::Cow::into_owned(class))
+                    target_classes: ::ez_jni::utils::NonEmpty::new(::std::borrow::Cow::into_owned(class)),
                 })
             }
         } })
         .unwrap_or(TokenStream::new());
 
-    let class_checks = construct_variants(enm.variants.iter_mut())
-        .filter_map(|res| res.map_err(|err| errors.push(err)).ok())
-        .collect::<Box<[_]>>();
+    let constructors = enm.construct_variants()?;
 
     merge_errors(errors)?;
 
@@ -79,9 +73,11 @@ pub fn derive_enum(mut enm: ItemEnum) -> syn::Result<TokenStream> {
 
     // Types that implement FromObject are also given a Class implementation.
     // However, for enums this is optional because only the variants need to specify a class.
-    let base_class_impl = base_class.as_ref()
+    let base_class_impl = enm.class.as_ref()
+        .map(Class::to_string)
         .map(|class| quote! {
             impl #enm_generics ::ez_jni::Class for #enm_ident #enm_generics {
+                #[inline(always)]
                 fn class() -> ::std::borrow::Cow<'static, str> {
                     ::std::borrow::Cow::Borrowed(#class)
                 }
@@ -94,23 +90,18 @@ pub fn derive_enum(mut enm: ItemEnum) -> syn::Result<TokenStream> {
             ::ez_jni::impl_from_jvalue_env!(<#env_lt>);
         }
         impl #enm_generics ::ez_jni::FromObject<#env_lt> for #enm_ident #enm_generics {
-            fn from_object_env(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<#env_lt>) -> ::std::result::Result<Self, ::ez_jni::FromObjectError> {
+            fn from_object_env(object: &::jni::objects::JObject<'_>, env: &mut ::jni::JNIEnv<#env_lt>) -> ::std::result::Result<Self, ::ez_jni::error::FromObjectError> {
                 #ops_prelude
 
                 if object.is_null() {
-                    return Err(::ez_jni::FromObjectError::Null);
+                    return Err(::ez_jni::error::FromObjectError::Null);
                 }
 
                 let __class = ::ez_jni::utils::get_object_class_name(object, env);
 
                 #base_class_check
 
-                #(#class_checks)* else {
-                    Err(::ez_jni::FromObjectError::ClassMismatch {
-                        obj_class: __class,
-                        target_class: None
-                    })
-                }
+                #constructors
             }
         }
         #base_class_impl
@@ -263,7 +254,7 @@ impl Parse for AttributeProps {
 /// then that lifetime will be used.
 /// 
 /// Defaults to the ellided lifetime if none could be found.
-fn get_local_lifetime(item: Either<&ItemStruct, &ItemEnum>) -> Lifetime {
+fn get_local_lifetime(item: Either<&ItemStruct, &Enum>) -> Lifetime {
     /// Find the lifetime in the struct/enum's generics.
     /// If only 1 lifetime exists, just grabs that one.
     fn find_local(generics: &Generics) -> Option<Lifetime> {
@@ -479,8 +470,7 @@ fn struct_constructor(fields: &Fields) -> syn::Result<TokenStream> {
                 let sig = quote_spanned! {field_ty.span()=> &format!("(){}", #sig_ty) };
                 
                 convert_field_value(&field_ty, attr.class.as_ref(), &quote_spanned! {method.span()=>
-                    ::ez_jni::utils::call_obj_method(&object, #method, #sig, &[], env)
-                        .unwrap_or_else(|exception| ::ez_jni::__throw::panic_exception(exception))
+                    ::ez_jni::utils::call_obj_method(&object, #method, #sig, &[], env)??
                 })
             } else if let Some(name) = &field.ident {
                 // Get name from Rust field convert it to camelCase for the Java field
@@ -489,7 +479,10 @@ fn struct_constructor(fields: &Fields) -> syn::Result<TokenStream> {
                 return Err(syn::Error::new(field.span(), "Field must have \"name\" or \"call\" properties if it is unnamed. See the 'field' attribute."));
             })
         })
-        .filter_map(|res| res.map_err(|err| errors.push(err)).ok())
+        .filter_map(|result| result
+            .map_err(|err| errors.push(err))
+            .ok()
+        )
         .collect::<Box<[_]>>();
     
     merge_errors(errors)?;
@@ -508,32 +501,156 @@ fn struct_constructor(fields: &Fields) -> syn::Result<TokenStream> {
     })
 }
 
-/// Creates constructor literals for each of the *enum's variants*,
-/// checking that the object is the right class.
-/// 
-/// The returned results can be [`filter_maped`][`Iterator::filter_map()`],
-/// stripping out the error by pushing them to an *error [`Vec`]*.
-/// ```ignore
-/// .filter_map(|res| res.map_err(|err| errors.push(err)).ok())
-/// ```
-/// 
-/// The constructor literal is built by [`struct_constructor()`].
-fn construct_variants<'a>(variants: impl Iterator<Item = &'a mut Variant> + 'a) -> impl Iterator<Item = syn::Result<TokenStream>> + 'a {
-    variants.enumerate()
-        .map(|(i, variant)| {
-            // Get class name for this variant
-            let class = take_class_attribute_required(&mut variant.attrs, variant.ident.span())?
-                .to_jni_class_path();
+/// Same as [`syn::ItemEnum`], but uses [`EnumVariant`] instead of [`syn::Variant`].
+#[allow(unused)]
+pub struct Enum {
+    pub class: Option<Class>,
+    pub attrs: Vec<syn::Attribute>,
+    pub vis: syn::Visibility,
+    pub enum_token: Token![enum],
+    pub ident: Ident,
+    pub generics: syn::Generics,
+    pub brace: syn::token::Brace,
+    pub variants: Punctuated<EnumVariant, Token![,]>,
+}
+impl Enum {
+    /// Cenerates code that checks the *Object's class* against each *[`Variant`]'s class*,
+    /// then attempts to construct the variant form the Object if it matched the class.
+    /// 
+    /// A final branch is also generated in the case that none of the Variant's classes matched the Object's class.
+    /// 
+    /// Returns [`Err`] if any variants' fields have incorrect attributes.
+    fn construct_variants(&self) -> syn::Result<TokenStream> {
+        let count = self.variants.iter().count();
+        if count == 0 {
+            return Ok(TokenStream::new());
+        }
 
-            let ident = &variant.ident;
-            // Get a constructor for this variant
-            let ctor = struct_constructor(&variant.fields)?;
-            let _if = if i == 0 { quote!(if) } else { quote!(else if) };
-            // Check if Exception is the class that this Variant uses, and construct the variant
-            Ok(quote_spanned! {variant.span()=>
-                #_if env.is_instance_of(object, #class).unwrap_jni(env) {
-                    Ok(Self::#ident #ctor)
-                }
+        let mut errors = Vec::new();
+        let constructors = self.variants.iter()
+            .enumerate()
+            .map(|(i, variant)| {
+                let class = variant.class.to_jni_class_path();
+                let ident = &variant.ident;
+                // Get a constructor for this variant
+                let ctor = struct_constructor(&variant.fields)?;
+                let _if = if i == 0 { quote!(if) } else { quote!(else if) };
+                
+                Ok(quote_spanned! {variant.span()=>
+                    #_if env.is_instance_of(object, #class).catch(env).unwrap_jni() {
+                        Ok(Self::#ident #ctor)
+                    }
+                })
             })
+            .filter_map(|result| result
+                .map_err(|error| errors.push(error))
+                .ok()
+            )
+            .collect::<Box<[_]>>();
+
+        merge_errors(errors)?;
+
+        let variant_classes = self.variants.iter()
+            .map(|variant| variant.class.to_string());
+
+        Ok(quote! {
+            #(#constructors)*
+            else {
+                Err(::ez_jni::error::FromObjectError::ClassMismatch {
+                    obj_class: __class,
+                    target_classes: ::ez_jni::utils::nonempty![ #(#variant_classes),* ]
+                        .map(|class| class.to_string()),
+                })
+            }
         })
+    }
+}
+impl Parse for Enum {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut attrs = input.call(syn::Attribute::parse_outer)?;
+        let vis = input.parse()?;
+        let enum_token = input.parse()?;
+        let ident = input.parse::<Ident>()?;
+        let generics = input.parse::<Generics>()?;
+
+        let inner;
+        let brace = syn::braced!(inner in input);
+        let variants = inner.parse_terminated(EnumVariant::parse, Token![,])?;
+        
+        let class = take_class_attribute(&mut attrs)?;
+
+        Ok(Self { class, attrs, vis, enum_token, ident, generics, brace, variants })
+    }
+}
+impl TryFrom<syn::ItemEnum> for Enum {
+    type Error = syn::Error;
+
+    fn try_from(value: syn::ItemEnum) -> Result<Self, Self::Error> {
+        let syn::ItemEnum { mut attrs, vis, enum_token, ident, generics, brace_token: brace, variants } = value;
+        let class = take_class_attribute(&mut attrs)?;
+
+        let mut errors = Vec::new();
+        let variants = variants.into_pairs()
+            .map(|pair| {
+                let (variant, sep) = pair.into_tuple();
+                let variant = EnumVariant::try_from(variant)?;
+                Ok((variant, sep))
+            })
+            .filter_map(|result| result
+                .map_err(|error| errors.push(error))
+                .ok()
+            )
+            .map(|(variant, sep)| syn::punctuated::Pair::new(variant, sep))
+            .collect();
+
+        merge_errors(errors)?;
+
+        Ok(Self { class, attrs, vis, enum_token, ident, generics, brace, variants })
+    }
+}
+
+/// Same as a [`syn::Variant`], takes the *class attribute* out of **attrs** and puts it in a special field.
+pub struct EnumVariant {
+    pub class: Class,
+    pub attrs: Vec<syn::Attribute>,
+    pub ident: Ident,
+    pub fields: syn::Fields,
+    pub discriminant: Option<(Token![=], syn::Expr)>,
+}
+impl Parse for EnumVariant {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let syn::Variant { mut attrs, ident, fields, discriminant } = input.parse::<syn::Variant>()?;
+        let class = take_class_attribute_required(&mut attrs, ident.span())?;
+
+        Ok(Self { class, attrs, ident, fields, discriminant })
+    }
+}
+impl TryFrom<syn::Variant> for EnumVariant {
+    type Error = syn::Error;
+
+    fn try_from(value: syn::Variant) -> Result<Self, Self::Error> {
+        let syn::Variant { mut attrs, ident, fields, discriminant } = value;
+        let class = take_class_attribute_required(&mut attrs, ident.span())?;
+
+        Ok(Self { class, attrs, ident, fields, discriminant })
+    }
+}
+impl Spanned for EnumVariant {
+    fn span(&self) -> Span {
+        let mut buf = Vec::new();
+
+        buf.push(self.class.span());
+        buf.extend(
+            self.attrs.iter()
+                .map(|attr| attr.span())
+        );
+        buf.push(self.ident.span());
+        buf.push(self.fields.span());
+        if let Some(discriminant) = &self.discriminant {
+            buf.push(discriminant.0.span());
+            buf.push(discriminant.1.span());
+        }
+
+        crate::utils::join_spans(buf)
+    }
 }

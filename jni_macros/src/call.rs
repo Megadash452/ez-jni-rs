@@ -26,22 +26,20 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
     let arguments = gen_arguments(call.parameters.iter());
 
     // Convert from the returned Java value to Rust value
+    let return_val_token = |span: Span| quote_spanned! {span=> __val };
     let return_conversion = match &call.return_type {
         // Normal conversion
         Return::Assertive(ReturnableType::Type(ty))
-        | Return::Result { ty: ReturnableType::Type(ty), .. } => ty.convert_jvalue_to_rvalue(&quote_spanned! {ty.span()=> v }),
+        | Return::Result { ty: ReturnableType::Type(ty), .. } => ty.convert_jvalue_to_rvalue(&return_val_token(ty.span())),
         // Void conversion
         Return::Assertive(ReturnableType::Void(ident))
-        | Return::Result { ty: ReturnableType::Void(ident), .. } => Type::convert_void_to_unit(&quote_spanned! {ident.span()=> v })
+        | Return::Result { ty: ReturnableType::Void(ident), .. } => Type::convert_void_to_unit(&return_val_token(ident.span()))
     };
 
-    // Handle call result depending on whether it is expected to throw or not
-    let error_handler = match &call.return_type {
+    // Handle Exception result depending on if the method is expected to throw or not.
+    let exception_handler = match &call.return_type {
         // For return types that are not Result
-        Return::Assertive(_) => quote! {
-            .unwrap_or_else(|exception| ::ez_jni::__throw::panic_exception(exception))
-        },
-        // Move the result of the method call to a Result if the caller expects that the method could throw.
+        Return::Assertive(_) => quote! { .unwrap_jni() },
         Return::Result { err_class, ..} => check_exception_class(err_class),
     };
 
@@ -55,8 +53,9 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
         #ops_prelude
         #[allow(noop_method_call)]
         #jni_method(#callee, #name, #signature, #arguments, env)
-            .map(|v| #return_conversion)
-            #error_handler
+            .unwrap_jni()
+            .map(|__val| #return_conversion)
+            #exception_handler
     } }
 }
 
@@ -73,21 +72,20 @@ pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
     };
     let signature = gen_signature(call.parameters.iter(), &Return::new_void(Span::call_site()));
     let arguments = gen_arguments(call.parameters.iter());
-    // Handle call result depending on whether it is expected to throw or not
-    let error_handler = match call.err_class {
-        // Move the result of the method call to a Result if the caller expects that the method could throw.
+
+    // Handle Exception result depending on if the method is expected to throw or not.
+    let exception_handler = match call.err_class {
         Some(err_class) => check_exception_class(&err_class),
         // For return types that are not Result
-        None => quote! {
-            .unwrap_or_else(|exception| ::ez_jni::__throw::panic_exception(exception))
-        },
+        None => quote! { .unwrap_jni() },
     };
 
     quote! { {
         #ops_prelude
         #[allow(noop_method_call)]
         ::ez_jni::utils::create_object(#callee, #signature, #arguments, env)
-            #error_handler
+            .unwrap_jni()
+            #exception_handler
     } }
 }
 
@@ -120,6 +118,7 @@ pub fn field(call: FieldCall) -> TokenStream {
                 #ops_prelude
                 #[allow(noop_method_call)]
                 #jni_method(#callee, #name, #ty_sig, #val, env)
+                    .unwrap_jni()
             } }
         },
         None => {
@@ -129,7 +128,10 @@ pub fn field(call: FieldCall) -> TokenStream {
                 quote!(::ez_jni::utils::get_obj_field)
             };
             // Convert jvalue returned from call
-            let call = call.ty.convert_jvalue_to_rvalue(&quote! { #jni_method(#callee, #name, #ty_sig, env) });
+            let call = call.ty.convert_jvalue_to_rvalue(&quote! {
+                #jni_method(#callee, #name, #ty_sig, env)
+                    .unwrap_jni()
+            });
             quote! { {
                 #ops_prelude
                 #[allow(noop_method_call)]
@@ -146,7 +148,9 @@ pub fn get_class(env: Env, class: Class) -> TokenStream {
     quote! { {
         #ops_prelude
         #[allow(noop_method_call)]
-        env.find_class(#class).unwrap_jni(env)
+        env.find_class(#class)
+            .catch(env)
+            .unwrap_jni()
     } }
 }
 
