@@ -176,6 +176,7 @@ pub fn jvalue_to_jobject<'obj>(val: JValueOwned<'obj>) -> Result<JObject<'obj>, 
 /// but returns [`FieldNotFound`][FromObjectError::FieldNotFound] if the **field** or **getter** method were not found.
 /// 
 /// This is used by [`FromObject` derive][crate::FromObject].
+#[inline(always)]
 pub fn from_object_get_field<'local>(object: &JObject<'_>, name: &str, ty: &str, env: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, FromObjectError> {
     super::get_obj_field(object, name, ty, env)
         .map_err(FromObjectError::from)

@@ -101,8 +101,7 @@ impl JavaException {
         }
     }
 
-    /// Like [`is_instance_of_type`][JavaException::is_instance_of_type()],
-    /// but takes a string that can be any class.
+    /// Tells whether the [`Exception`][JavaException] Object's class extends the passed in **class**.
     pub fn is_instance_of(&self, class: impl AsRef<str>) -> bool {
         let env = crate::utils::get_env();
         env.is_instance_of(self, class.as_ref())

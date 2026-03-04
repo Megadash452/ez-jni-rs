@@ -6,7 +6,7 @@ use jni::{
     JNIEnv
 };
 use utils::first_char_uppercase;
-use crate::{__throw::is_error, Class, FromJValue, JavaException, error::{ClassNotFoundError, FieldError, FieldNotFoundError, JniError, MethodCallError, MethodNotFoundError}, utils::{JniResultExt as _, ResultExt as _}};
+use crate::{__throw::is_error, FromJValue, JavaException, error::{ClassNotFoundError, FieldError, FieldNotFoundError, JniError, MethodCallError, MethodNotFoundError}, utils::{JniResultExt as _, ResultExt as _}};
 
 /// A wrapper for a `Class` value that will be used in a **JNI Call**.
 #[derive(Clone, Copy)]
@@ -17,6 +17,18 @@ pub enum ClassRepr<'a, 'obj> {
     /// The class is represented by a *Class Object* that has already been looked up
     /// and can be operated on with JNI.
     Object(&'a JClass<'obj>),
+}
+impl<'a> From<&'a str> for ClassRepr<'a, '_> {
+    #[inline(always)]
+    fn from(value: &'a str) -> Self {
+        Self::String(value)
+    }
+}
+impl<'a, 'obj> From<&'a JClass<'obj>> for ClassRepr<'a, 'obj> {
+    #[inline(always)]
+    fn from(value: &'a JClass<'obj>) -> Self {
+        Self::Object(value)
+    }
 }
 
 /// A [`Cow`][std::borrow::Cow] specifically designed for [`JObject`].
@@ -170,30 +182,40 @@ fn call_helper<'local, T>(
     }
 
     let callee_class = callee.get_class(env)?;
-    let target_class = call!(env=> callee_class.as_ref().getName() -> String);
 
     let result = call(env)
         .catch(env)
         .map(|t| Ok(t))
-        .or_else(|err| match err {
-            JniError::Jni(jni::errors::Error::MethodNotFound { name, sig })
-                => Err(MethodCallError::MethodNotFound(MethodNotFoundError::from_jni(target_class, name, &sig))),
-            JniError::Jni(error) => Err(MethodCallError::Unknown { error: JniError::Jni(error) }),
-            JniError::Exception(exception) => {
-                if exception.is_instance_of(MethodNotFoundError::ERROR_CLASS)
-                || exception.is_instance_of(MethodNotFoundError::EXCEPTION_CLASS) {
-                    Err(MethodCallError::MethodNotFound(MethodNotFoundError::from_exception(exception)))
-                } else if exception.is_instance_of(ClassNotFoundError::class()) {
-                    Err(MethodCallError::ClassNotFound(ClassNotFoundError::from_exception(exception)))
-                } else if is_error(&exception, env) {
-                    // Classes that represent a JVM Error should be returned as a JNI MethodCallError.
-                    Err(MethodCallError::Unknown { error: JniError::Exception(exception) })
-                } else {
-                    // All other Exception classes are returned directly,
-                    // treating it like the JNI call succeeded, but the method itself did not.
-                    Ok(Err(exception))
-                }
-            },
+        .or_else(|err| {
+            let target_class = call!(env=> callee_class.as_ref().getName() -> String);
+
+            match err {
+                JniError::Jni(jni::errors::Error::MethodNotFound { name, sig })
+                    => Err(MethodCallError::MethodNotFound(MethodNotFoundError::new(target_class, name, &sig))),
+                JniError::Jni(error) => Err(MethodCallError::Unknown { error: JniError::Jni(error) }),
+                JniError::Exception(exception) => {
+                    if exception.is_instance_of(MethodNotFoundError::ERROR_CLASS)
+                    || exception.is_instance_of(MethodNotFoundError::EXCEPTION_CLASS) {
+                        Err(MethodCallError::MethodNotFound(MethodNotFoundError {
+                            error: Some(exception),
+                            ..MethodNotFoundError::new(target_class, method_name.to_string(), method_sig)
+                        }))
+                    } else if exception.is_instance_of(ClassNotFoundError::ERROR_CLASS)
+                    || exception.is_instance_of(ClassNotFoundError::EXCEPTION_CLASS) {
+                        Err(MethodCallError::ClassNotFound(ClassNotFoundError {
+                            target_class,
+                            exception
+                        }))
+                    } else if is_error(&exception, env) {
+                        // Classes that represent a JVM Error should be returned as a JNI MethodCallError.
+                        Err(MethodCallError::Unknown { error: JniError::Exception(exception) })
+                    } else {
+                        // All other Exception classes are returned directly,
+                        // treating it like the JNI call succeeded, but the method itself did not.
+                        Ok(Err(exception))
+                    }
+                },
+            }
         });
 
     // Check hints of why the method was not found (typo, private, etc.).
@@ -211,7 +233,7 @@ fn call_helper<'local, T>(
 }
 
 /// Generates the **name** and **signature** of the *Getter Method* that is called if a Field was not found.
-pub(super) fn getter_name_and_sig(field_name: &str, ty: &str) -> (String, String) { (
+fn getter_name_and_sig(field_name: &str, ty: &str) -> (String, String) { (
     format!("get{}", first_char_uppercase(field_name)),
     format!("(){ty}")
 ) }
@@ -325,19 +347,23 @@ pub(super) fn field_helper<'local>(
     }
 
     let callee_class = callee.get_class(env)?;
-    let target_class = call!(env=> callee_class.as_ref().getName() -> String);
 
     let result = field_op(env)
         .catch(env)
         .or_else(|err| {
+            let target_class = call!(env=> callee_class.as_ref().getName() -> String);
+
             // Only call method_op() if the error was FieldNotFound
             let field_access_error = match err {
                 JniError::Jni(jni::errors::Error::FieldNotFound { name, sig })
-                    => FieldNotFoundError::from_jni(target_class.clone(), name, &sig),
+                    => FieldNotFoundError::new(target_class, name, &sig),
                 JniError::Exception(exception)
                 if exception.is_instance_of(FieldNotFoundError::ERROR_CLASS)
                 || exception.is_instance_of(FieldNotFoundError::EXCEPTION_CLASS)
-                    => FieldNotFoundError::from_exception(exception),
+                    => FieldNotFoundError {
+                        error: Some(exception),
+                        ..FieldNotFoundError::new(target_class, name.to_string(), ty)
+                    },
                 err => return Err((err, None)),
             };
 
@@ -347,26 +373,37 @@ pub(super) fn field_helper<'local>(
                 .map_err(|err| (err, Some(field_access_error)))
         })
         // Previous returns the Error of field_op() if 2nd arg is None, and the Error of mathod_op() if 2nd arg is Some.
-        .map_err(|(error, field_error)| match error {
-            JniError::Jni(jni::errors::Error::MethodNotFound { name, sig })
-            if field_error.is_some() => FieldError::MethodNotFound {
-                cause: field_error,
-                error: MethodNotFoundError::from_jni(target_class, name, &sig),
-            },
-            JniError::Exception(exception)
-            if exception.is_instance_of(MethodNotFoundError::ERROR_CLASS)
-            || exception.is_instance_of(MethodNotFoundError::EXCEPTION_CLASS)
-            && field_error.is_some() => FieldError::MethodNotFound {
-                cause: field_error,
-                error: MethodNotFoundError::from_exception(exception),
-            },
-            JniError::Exception(exception)
-            if exception.is_instance_of(ClassNotFoundError::class()) => {
-                FieldError::ClassNotFound(ClassNotFoundError::from_exception(exception))
-            },
-            // If the error is FieldNotFound or MethodNotFound here it is not because field_op() or method_op() themselves failed,
-            // but because some other method called by those caused it to fail.
-            error => FieldError::Unknown { error },
+        .map_err(|(error, field_error)| {
+            let target_class = call!(env=> callee_class.as_ref().getName() -> String);
+
+            match error {
+                JniError::Jni(jni::errors::Error::MethodNotFound { name, sig })
+                if field_error.is_some() => FieldError::MethodNotFound {
+                    cause: field_error,
+                    error: MethodNotFoundError::new(target_class, name, &sig),
+                },
+                JniError::Exception(exception)
+                if exception.is_instance_of(MethodNotFoundError::ERROR_CLASS)
+                || exception.is_instance_of(MethodNotFoundError::EXCEPTION_CLASS)
+                && field_error.is_some() => FieldError::MethodNotFound {
+                    cause: field_error,
+                    error: MethodNotFoundError {
+                        error: Some(exception),
+                        ..MethodNotFoundError::new(target_class, name.to_string(), &format!("(){ty}"))
+                    },
+                },
+                JniError::Exception(exception)
+                if exception.is_instance_of(ClassNotFoundError::ERROR_CLASS)
+                || exception.is_instance_of(ClassNotFoundError::EXCEPTION_CLASS) => {
+                    FieldError::ClassNotFound(ClassNotFoundError {
+                        target_class,
+                        exception,
+                    })
+                },
+                // If the error is FieldNotFound or MethodNotFound here it is not because field_op() or method_op() themselves failed,
+                // but because some other method called by those caused it to fail.
+                error => FieldError::Unknown { error },
+            }
         });
 
     // Check hints of why the field or method were not found (typo, private, etc.).
