@@ -172,6 +172,9 @@ pub struct ClassNotFoundError {
     pub(crate) exception: JavaException,
 }
 impl ClassNotFoundError {
+    pub const ERROR_CLASS: &str = "java/lang/NoClassDefFoundError";
+    pub const EXCEPTION_CLASS: &str = "java/lang/ClassNotFoundException";
+
     /// Create an instance of this type by reading from an [`Exception`][JavaException].
     /// Use this over [FromObject::from_object_env()] to avoid cloning the [`Exception`][JavaException].
     /// 
@@ -184,15 +187,22 @@ impl ClassNotFoundError {
         }
     }
 }
-impl Class for ClassNotFoundError {
-    #[inline(always)]
-    fn class() -> Cow<'static, str> {
-        Cow::Borrowed("java/lang/ClassNotFoundException")
-    }
-}
 impl FromObject<'_> for ClassNotFoundError {
     fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        check_object_class(object, <Self as Class>::class().as_ref(), env)?;
+        if object.is_null() {
+            return Err(FromObjectError::Null);
+        }
+        if !env.is_instance_of(object, Self::ERROR_CLASS).catch(env)?
+        && !env.is_instance_of(object, Self::EXCEPTION_CLASS).catch(env)? {
+            return Err(FromObjectError::ClassMismatch {
+                obj_class: get_object_class_name(object, env),
+                target_classes: nonempty![
+                    Self::ERROR_CLASS.to_string(),
+                    Self::EXCEPTION_CLASS.to_string(),
+                ],
+            });
+        }
+
         let exception = JavaException::from_throwable(object.into(), env);
         Ok(Self::from_exception(exception))
     }
@@ -363,10 +373,10 @@ impl From<JniError> for FromObjectError {
                     expected: crate::hints::Type::from_sig_type(expected).into(),
                 },
                 JNIError::MethodNotFound { name, sig } => Self::MethodNotFound(
-                    MethodNotFoundError::from_jni("<unknown>".to_string(), name, &sig)
+                    MethodNotFoundError::new("<unknown>".to_string(), name, &sig)
                 ),
                 JNIError::FieldNotFound { name, sig } => Self::FieldNotFound(
-                    FieldNotFoundError::from_jni("<unknown>".to_string(), name, &sig)
+                    FieldNotFoundError::new("<unknown>".to_string(), name, &sig)
                 ),
                 JNIError::NullPtr(msg)
                 | JNIError::NullDeref(msg) => Self::Other {
@@ -386,7 +396,8 @@ impl From<JavaException> for FromObjectError {
         } else if exception.is_instance_of(FieldNotFoundError::ERROR_CLASS)
         || exception.is_instance_of(FieldNotFoundError::EXCEPTION_CLASS) {
             Self::FieldNotFound(FieldNotFoundError::from_exception(exception))
-        } else if exception.is_instance_of(ClassNotFoundError::class()) {
+        } else if exception.is_instance_of(ClassNotFoundError::ERROR_CLASS)
+        || exception.is_instance_of(ClassNotFoundError::EXCEPTION_CLASS)  {
             Self::ClassNotFound(ClassNotFoundError::from_exception(exception))
         } else {
             Self::Unknown { error: JniError::Exception(exception) }
@@ -515,7 +526,7 @@ impl From<JniError> for MethodCallError {
             JniError::Jni(error) => match error {
                 JNIError::JavaException => unreachable!("Exception was caught"),
                 JNIError::MethodNotFound { name, sig } => Self::MethodNotFound(
-                    MethodNotFoundError::from_jni("<unknown>".to_string(), name, &sig)
+                    MethodNotFoundError::new("<unknown>".to_string(), name, &sig)
                 ),
                 error => Self::Unknown { error: JniError::Jni(error) },
             },
@@ -527,7 +538,8 @@ impl From<JavaException> for MethodCallError {
         if exception.is_instance_of(MethodNotFoundError::ERROR_CLASS)
         || exception.is_instance_of(MethodNotFoundError::EXCEPTION_CLASS) {
             Self::MethodNotFound(MethodNotFoundError::from_exception(exception))
-        } else if exception.is_instance_of(ClassNotFoundError::class()) {
+        } else if exception.is_instance_of(ClassNotFoundError::ERROR_CLASS)
+        || exception.is_instance_of(ClassNotFoundError::EXCEPTION_CLASS) {
             Self::ClassNotFound(ClassNotFoundError::from_exception(exception))
         } else {
             Self::Unknown { error: JniError::Exception(exception) }
@@ -613,7 +625,8 @@ impl From<JavaException> for FieldError {
         } else if exception.is_instance_of(FieldNotFoundError::ERROR_CLASS)
         || exception.is_instance_of(FieldNotFoundError::EXCEPTION_CLASS) {
             Self::FieldNotFound(FieldNotFoundError::from_exception(exception))
-        } else if exception.is_instance_of(ClassNotFoundError::class()) {
+        } else if exception.is_instance_of(ClassNotFoundError::ERROR_CLASS)
+        || exception.is_instance_of(ClassNotFoundError::EXCEPTION_CLASS) {
             Self::ClassNotFound(ClassNotFoundError::from_exception(exception))
         } else {
             Self::Unknown { error: JniError::Exception(exception) }
@@ -702,70 +715,93 @@ fn exception_cause(exception: Option<&JavaException>) -> String {
     }
 }
 
-// TODO: Test that MethodNotFound and FieldNotFound can actually parse their respective exceptions
 #[cfg(test)]
 mod tests {
     use jni::objects::JValue;
-
-    use super::{JniError, MethodNotFoundError, FieldNotFoundError};
-    use crate::{FromObject, ToObject, utils::{JniResultExt as _, ResultExt as _}};
-
-    macro_rules! setup_env {
-        ($var:ident) => {
-            let mut $var = ::utils::TEST_JVM.attach_current_thread_permanently()
-                .unwrap_or_else(|err| panic!("Error attaching current thread to JavaVM: {err}"));
-            let $var = &mut $var;
-        };
-    }
+    use super::{ClassNotFoundError, MethodCallError, FieldError, JniError};
+    use crate::{FromObject, ToObject, utils::{JniResultExt as _, call_static_method, get_env, get_static_field, test_with_jnienv}};
 
     #[test]
-    fn method_not_found() {
-        setup_env!(env);
+    fn method_not_found() { test_with_jnienv(|| {
+        let env = get_env();
+
         let s = "a".to_object_env(env);
-        let error = env.call_static_method("java/lang/String", "myFakeMethod",
+        let error = call_static_method("java/lang/String".into(), "myFakeMethod",
             "(IILjava/lang/String;)Ljava/lang/String;",
             &[ JValue::Int(0), JValue::Int(0), JValue::Object(&s) ],
-        )
-            .catch(env)
+        env)
             .unwrap_err();
 
-        println!("-- Called");
-
         let error = match error {
-            JniError::Exception(exception) => MethodNotFoundError::from_object_env(&exception, env).unwrap_display(),
-            JniError::Jni(error) => match error {
-                jni::errors::Error::MethodNotFound { name, sig }
-                    => MethodNotFoundError::from_jni("java/lang/String".to_string(), name, &sig),
-                error => panic!("Unexpected error: {error}"),
-            }
+            MethodCallError::MethodNotFound(error) => error,
+            error => panic!("Unexpected error: {error}"),
         };
-
-        println!("-- Got Error");
 
         assert_eq!(error.target_class, "java.lang.String");
         assert_eq!(error.name, "myFakeMethod");
         assert_eq!(error.params.as_ref(), &[ "int", "int", "java.lang.String" ]);
         assert_eq!(error.return_ty, "java.lang.String");
-    }
+    }) }
+
+    // java.lang.NoSuchFieldError only returns the field name, so there is no point in running this test.
+    #[test]
+    fn field_not_found() { test_with_jnienv(|| {
+        let env = get_env();
+    
+        let error = env.get_static_field("java/lang/String", "myFakeField", "I")
+            .catch(env)
+            .unwrap_err();
+    
+        let error: FieldNotFoundError = match error {
+            JniError::Exception(exception) => FieldNotFoundError::from_object_env(&exception, env)
+                .unwrap_or_else(|err| panic!("Unexpected error: was not FieldNotFoundError: {err}")),
+            JniError::Jni(err) => panic!("JNIEnv::get_static_field() should return an Exception if field not found. Instead, returned: {err}"),
+        };
+    
+        assert_eq!(error.target_class, "java.lang.String");
+        assert_eq!(error.name, "myFakeField");
+        assert_eq!(error.ty, "int");
+    }) }
+
+    /// Tests that both [`FieldNotFoundError`] and [`MethodNotFoundError`] are returned from [`get_static_field()`].
+    /// [`MethodNotFoundError`] can also returned from this method because it will call a *getter method* if it failed to get the *field*.
+    /// 
+    /// [`MethodNotFoundError`]: super::MethodNotFoundError
+    #[test]
+    fn field_getter_method_not_found() { test_with_jnienv(|| {
+        let env = get_env();
+
+        let error = get_static_field("java/lang/String".into(), "myFakeField", "I", env)
+            .unwrap_err();
+
+        let (field_error, method_error) = match error {
+            FieldError::MethodNotFound { cause: field_error, error } => (field_error.unwrap(), error),
+            err => panic!("Unexpected Error: {err}"),
+        };
+
+        assert_eq!(field_error.target_class, "java.lang.String");
+        assert_eq!(field_error.name, "myFakeField");
+        assert_eq!(field_error.ty, "int");
+        assert_eq!(method_error.target_class, "java.lang.String");
+        assert_eq!(method_error.name, "myFakeField");
+        assert_eq!(method_error.params.as_ref(), &[ ] as &[&str]);
+        assert_eq!(method_error.return_ty, "int");
+    }) }
 
     #[test]
-    fn field_not_found() {
-        setup_env!(env);
-        let error = env.get_static_field("java/lang/String", "myFakeField", "I")
+    fn class_not_found() { test_with_jnienv(|| {
+        let env = get_env();
+
+        let error = env.find_class("me.fake.MyClass")
             .catch(env)
             .unwrap_err();
 
         let error = match error {
-            JniError::Exception(exception) => FieldNotFoundError::from_object_env(&exception, env).unwrap_display(),
-            JniError::Jni(error) => match error {
-                jni::errors::Error::FieldNotFound { name, sig }
-                    => FieldNotFoundError::from_jni("java/lang/String".to_string(), name, &sig),
-                error => panic!("Unexpected error: {error}"),
-            }
+            JniError::Exception(exception) => ClassNotFoundError::from_object_env(&exception, env)
+                .unwrap_or_else(|err| panic!("Unexpected error: was not ClassNotFoundError: {err}")),
+            JniError::Jni(err) => panic!("JNIEnv::find_class() should return an Exception if class not found. Instead, returned: {err}"),
         };
 
-        assert_eq!(error.target_class, "java.lang.String");
-        assert_eq!(error.name, "myFakeField");
-        assert_eq!(error.ty, "int");
-    }
+        assert_eq!(error.target_class, "me.fake.MyClass");
+    }) }
 }

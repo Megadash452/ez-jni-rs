@@ -146,3 +146,56 @@ pub fn jchar_to_char(c: jni::sys::jchar) -> char {
 pub fn char_to_jchar(c: char) -> jni::sys::jchar {
     c.encode_utf16(&mut [0;1])[0]
 }
+
+/// Utility function for running both *Unit* and *Integration* Tests.
+/// Set up the [`JNIEnv`] from the test [`JVM`][jni::JavaVM] and run some test code `f`.
+/// 
+/// This function can `panic!`.
+/// Panics are not caught in `test` builds because the panic will not unwind thrugh a *language boundary*,
+/// and it allows the test process to display error outputs correctly.
+#[doc(hidden)]
+pub fn test_with_jnienv(f: impl FnOnce() + std::panic::UnwindSafe) {
+    use crate::{__throw::PanicType, FromObject, JavaException};
+
+    let env = utils::TEST_JVM.attach_current_thread_permanently()
+        .unwrap_or_else(|err| panic!("Error attaching current thread to JavaVM: {err}"));
+
+    let (result, mut env) = unsafe { ez_jni::__throw::run_with_jnienv_helper(env, true, |_| f()) };
+    // Must use local variable env because the env passed to run_with_jnienv_helper() was popped, possibly leaving no JNIEnvs in the stack.
+    let env = &mut env;
+
+    if let Err(panic) = result {
+        let backtrace = panic.rust_backtrace;
+        
+        let msg = match &panic.panic {
+            PanicType::Message(msg) => msg.to_string(),
+            PanicType::Unknown => PanicType::UNKNOWN_PAYLOAD_TYPE_MSG.to_string(),
+            PanicType::Object(object) => {
+                JavaException::from_object_env(object.as_obj(), env)
+                    .unwrap_display()
+                    .to_string()
+            },
+        };
+
+        let backtrace = match backtrace {
+            Some(backtrace) => &backtrace.to_string(),
+            None => ""
+        };
+
+        let (thread_name, thread_id) = {
+            let thread = std::thread::current();
+            (
+                match thread.name() {
+                    Some(name) => &format!(" '{name}'"),
+                    None => ""
+                },
+                thread.id()
+            )
+        };
+
+        // Try to simulate the default panic hook by printing panic! information.
+        // This makes the test runner act normally, unlike how it would with the panic configuration of run_with_jnienv_helper().
+        println!("thread{thread_name} {thread_id:?} panicked at {loc}:\n{msg}\n{backtrace}", loc=panic.location);
+        std::panic::resume_unwind(Box::new(msg));
+    }
+}
