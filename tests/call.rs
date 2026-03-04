@@ -1,7 +1,7 @@
 mod common;
 
 use common::run_with_jnienv;
-use ez_jni::{FromObjectError, JavaException, ObjectArray, call, class, eprintln, field, new, println, singleton};
+use ez_jni::{FromObject, JavaException, ObjectArray, call, class, eprintln, error::{ClassNotFoundError, FromObjectError}, field, new, println, singleton, utils::ResultExt as _};
 use jni::objects::{JClass, JObject, JString, JThrowable};
 
 use crate::common::fail_with;
@@ -282,7 +282,9 @@ fn return_fail() { run_with_jnienv(|| {
     // Incorrect Error Class
     fail_with(
         || { call!(static me.test.Test.throwPrimArray() -> Result<[bool], java.lang.WrongException>).unwrap_err(); },
-        FromObjectError::ClassNotFound("java/lang/WrongException".to_string()).to_string().as_str()
+        FromObjectError::ClassNotFound(ClassNotFoundError::from_object(
+            &new!(java.lang.NoClassDefFoundError(String("java.lang.WrongException")))
+        ).unwrap_jni()).to_string().as_str(),
     );
 }) }
 

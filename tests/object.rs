@@ -1,6 +1,6 @@
 mod common;
 
-use ez_jni::{call, new, Class, FromObject, ObjectArray, ToObject};
+use ez_jni::{Class, FromObject, ObjectArray, ToObject, call, error::{FromJValueError, FromObjectError}, new};
 use jni::{objects::{JObject, JString, JValue}, JNIEnv};
 use crate::common::run_with_jnienv;
 
@@ -200,12 +200,12 @@ struct MyClass3<'local> {
 #[derive(Debug)]
 struct IntWrapper(i32);
 impl ::ez_jni::FromJValue<'_> for IntWrapper {
-    fn from_jvalue_env(val: JValue<'_, '_>, env: &mut JNIEnv<'_>) -> Result<Self, ez_jni::FromJValueError> {
+    fn from_jvalue_env(val: JValue<'_, '_>, env: &mut JNIEnv<'_>) -> Result<Self, FromJValueError> {
         Ok(Self(i32::from_jvalue_env(val, env)?))
     }
 }
 impl FromObject<'_> for IntWrapper {
-    fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Self, ez_jni::FromObjectError> {
+    fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         Ok(Self(i32::from_object_env(object, env)?))
     }
 }
