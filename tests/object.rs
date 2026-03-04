@@ -1,12 +1,11 @@
 mod common;
 
-use ez_jni::{Class, FromObject, ObjectArray, ToObject, call, error::{FromJValueError, FromObjectError}, new};
+use ez_jni::{Class, FromObject, ObjectArray, ToObject, call, error::{FromJValueError, FromObjectError}, new, utils::test_with_jnienv};
 use jni::{objects::{JObject, JString, JValue}, JNIEnv};
-use crate::common::run_with_jnienv;
 
 /// Tests the implementations of FromObject, etc. for *standard library* types.
 #[test]
-fn implementations() { run_with_jnienv(|| {
+fn implementations() { test_with_jnienv(|| {
     static S: &str = "Hello, World!";
     static N: i8 = -3;
     static UN: i8 = 3;
@@ -243,7 +242,7 @@ enum MyEnumClass2 {
 }
 
 #[test]
-fn from_object() { run_with_jnienv(|| {
+fn from_object() { test_with_jnienv(|| {
     const VAL: i32 = 3;
     const ARRAY_VAL: &[&'static str] = &["Hello", "World"];
     let mut object = new!(me.test.Test(int(VAL)));
@@ -322,7 +321,7 @@ fn from_object() { run_with_jnienv(|| {
 }) }
 
 #[test]
-fn from_object_array() { run_with_jnienv(|| {
+fn from_object_array() { test_with_jnienv(|| {
     let mut object;
 
     // 1-Dimensional Array

@@ -1,8 +1,8 @@
 mod common;
 
 use std::{path::PathBuf, process::Command, sync::LazyLock};
+use jni::JNIEnv;
 use utils::{CLASS_DIR, absolute_path, run};
-use common::get_env;
 
 static NATIVE_TEST_DIR: LazyLock<PathBuf> = LazyLock::new(|| absolute_path("./tests/native_test"));
 
@@ -37,19 +37,24 @@ fn jni_fn() {
 /// Tests when a jni_fn `panic!s` and the panic data jas to be thrown to the JVM.
 #[test]
 fn throw_panic() {
-    unsafe { ez_jni::__throw::run_with_jnienv::<()>(get_env(), |_| panic!("Release me!")) };
-    let exception = ez_jni::__throw::catch_exception(&mut get_env()).unwrap();
+    unsafe { ez_jni::__throw::run_with_jnienv::<()>(attach_to_jvm(), |_| panic!("Release me!")) };
+    let exception = ez_jni::__throw::catch_exception(&mut attach_to_jvm()).unwrap();
     assert_eq!(exception.to_string(), "me.marti.ezjni.RustPanic: Release me!");
 }
 /// Tests the same as [`throw_panic()`], but with a [`catch_unwind`] inside.
 #[test]
 fn throw_panic_catch() {
-    unsafe { ez_jni::__throw::run_with_jnienv(get_env(), |_| {
+    unsafe { ez_jni::__throw::run_with_jnienv(attach_to_jvm(), |_| {
         let err = std::panic::catch_unwind(|| {
             panic!("Release me!")
         }).unwrap_err();
         assert_eq!(&"Release me!", err.downcast::<&'static str>().unwrap().as_ref());
     }) };
+}
+
+fn attach_to_jvm<'local>() -> JNIEnv<'local> {
+    utils::TEST_JVM.attach_current_thread_permanently()
+        .unwrap_or_else(|err| panic!("Error attaching thread to JVM: {err}"))
 }
 
 // fn panic_with_jni(i: usize) {
