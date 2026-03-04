@@ -338,7 +338,7 @@ impl Parse for FieldCall {
         Ok(Self {
             env,
             call_type: CallType::parse_callee(pre_tokens.into_iter().collect(), is_static)?,
-            field_name: pattern_tokens.remove(1).ident()?,
+            field_name: pattern_tokens.tail.remove(0).ident()?,
             ty: input.parse()?,
             set_val: {
                 // If there is an equal sign, this means the field is being set

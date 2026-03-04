@@ -1,3 +1,4 @@
+use nonempty::{NonEmpty, nonempty};
 use proc_macro2::{Span, TokenTree};
 use syn::{buffer::Cursor, parse::ParseStream};
 
@@ -58,9 +59,9 @@ pub enum TokensMatchResult<'c> {
 /// Holds the return values for [`step_until()`].
 pub struct StepResult {
     /// The tokens that precede the pattern found in the input stream.
-    pub pre_tokens: Vec<TokenTree>,
+    pub pre_tokens: NonEmpty<TokenTree>,
     /// The tokens that were matched in the input stream.
-    pub pattern_tokens: Vec<TokenTree>,
+    pub pattern_tokens: NonEmpty<TokenTree>,
 }
 
 /// Parses an **input** [`ParseStream`] and looks for a **pattern** defined by a function `F`.
@@ -148,11 +149,10 @@ where M: for<'c> Fn(&TokenTree, Cursor<'c>) -> TokensMatchResult<'c> {
         while let Some(token) = main_cursor.next() {
             match matcher(&token, main_cursor.cursor) {
                 TokensMatchResult::Matched(next) => {
-                    // Collect the tokens between the current and returned cursors
-                    // These are the tokens matched by the pattern
-                    let mut pattern_tokens = Vec::new();
+                    // Collect the tokens between the current and returned cursors;
+                    // These are the tokens matched by the pattern.
                     // Push current token, as it was matched.
-                    pattern_tokens.push(token);
+                    let mut pattern_tokens = nonempty![token];
                     // Push tokens until it reaches the next token to be parsed
                     while let Some(token) = main_cursor.next() {
                         pattern_tokens.push(token);
@@ -171,6 +171,9 @@ where M: for<'c> Fn(&TokenTree, Cursor<'c>) -> TokensMatchResult<'c> {
 
         Err(syn::Error::new(Span::call_site(), "Invalid tokens; Pattern not found"))
     })?;
+
+    let pre_tokens = NonEmpty::from_vec(pre_tokens)
+        .ok_or_else(|| syn::Error::new(Span::call_site(), "Tokens preceding the pattern must not be empty"))?;
 
     Ok(StepResult { pre_tokens, pattern_tokens })
 }
