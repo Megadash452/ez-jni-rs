@@ -725,14 +725,7 @@ impl Display for FieldHintReport {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    macro_rules! setup_env {
-        ($var:ident) => {
-            let mut $var = ::utils::TEST_JVM.attach_current_thread_permanently()
-                .unwrap_or_else(|err| panic!("Error attaching current thread to JavaVM: {err}"));
-            let $var = &mut $var;
-        };
-    }
+    use crate::utils::{get_env, test_with_jnienv};
 
     macro_rules! check_report_hint {
         ($var:expr => $enm_ident:ident::$variant_ident:ident $pattern:tt => $block:block) => {
@@ -744,8 +737,8 @@ mod tests {
     }
 
     #[test]
-    fn test_check_method_existence() {
-        setup_env!(env);
+    fn test_check_method_existence() { test_with_jnienv(|| {
+        let env = get_env();
         let mut report;
 
         // Same Name and same Sig Methods
@@ -803,11 +796,11 @@ mod tests {
             env
         );
         assert!(matches!(report.hint, MethodHint::NoMatch))
-    }
+    }) }
 
     #[test]
-    fn test_check_field_existence() {
-        setup_env!(env);
+    fn test_check_field_existence() { test_with_jnienv(|| {
+        let env = get_env();
         let mut report;
 
         // Same Name and same Type Fields
@@ -903,7 +896,7 @@ mod tests {
             env
         );
         assert!(matches!(report.hint, FieldHint::NoMatch))
-    }
+    }) }
 
     #[test]
     #[should_panic(expected = "more than 1 visibility flag is set for Mods(5)")]
@@ -932,11 +925,11 @@ mod tests {
     }
 
     #[test]
-    fn method_from_object() {
+    fn method_from_object() { test_with_jnienv(|| {
         // Test Java compatibility
         use ez_jni_macros::class;
         use std::collections::HashMap;
-        setup_env!(env);
+        let env = get_env();
 
         let methods = call!(env=> class!(env=> me.test.Test).getDeclaredMethods() -> [java.lang.reflect.Method])
             .into_iter()
@@ -948,14 +941,14 @@ mod tests {
         assert_eq!(methods.len(), 2);
         assert_eq!(methods["objArgs"].to_string(), "public static void me.test.Test.objArgs(java.lang.Object, java.lang.String)");
         assert_eq!(methods["memberGetter"].to_string(), "public int me.test.Test.memberGetter()");
-    }
+    }) }
 
     #[test]
-    fn field_from_object() {
+    fn field_from_object() { test_with_jnienv(|| {
         // Test Java compatibility
         use ez_jni_macros::class;
         use std::collections::HashMap;
-        setup_env!(env);
+        let env = get_env();
 
         let fields = call!(env=> class!(env=> me.test.Test).getDeclaredFields() -> [java.lang.reflect.Field])
             .into_iter()
@@ -967,7 +960,7 @@ mod tests {
         assert_eq!(fields.len(), 2);
         assert_eq!(fields["memberField"].to_string(), "public int me.test.Test.memberField");
         assert_eq!(fields["member1"].to_string(), "public static int me.test.Test.member1");
-    }
+    }) }
 
     #[test]
     fn test_display_jni_type() {
