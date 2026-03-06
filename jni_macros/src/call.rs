@@ -147,10 +147,8 @@ pub fn get_class(env: Env, class: Class) -> TokenStream {
     let class = class.to_jni_class_path();
     quote! { {
         #ops_prelude
-        #[allow(noop_method_call)]
-        env.find_class(#class)
-            .catch(env)
-            .unwrap_jni()
+        ::ez_jni::utils::get_class(#class, env)
+            #error_handler
     } }
 }
 

@@ -3,7 +3,7 @@ use std::sync::OnceLock;
 use jni::{objects::GlobalRef};
 use nonempty::nonempty;
 use super::*;
-use crate::{JavaException, utils::{JNI_CALL_GHOST_EXCEPTION, JniResultExt as _, ResultExt as _}};
+use crate::{JavaException, utils::{JNI_CALL_GHOST_EXCEPTION, JniResultExt as _, ResultExt as _, get_class}};
 
 /// Panics with a *Java Exception* instead of *Rust String message*.
 #[track_caller]
@@ -26,9 +26,7 @@ pub fn panic_throwable(object: &JThrowable<'_>) -> ! {
         // Keep reference of the Class Object to avoid potentially expensive lookup.
         static THROWABLE_CLASS: OnceLock<GlobalRef> = OnceLock::new();
         let class = THROWABLE_CLASS.get_or_init(|| {
-            let class = env.find_class("java/lang/Throwable")
-                .catch(env)
-                .unwrap();
+            let class = get_class("java/lang/Throwable", env).unwrap();
             env.new_global_ref(class)
                 .catch(env)
                 .unwrap()
@@ -121,9 +119,7 @@ pub(crate) fn is_error<'local>(object: &JThrowable<'_>, env: &mut JNIEnv<'local>
     static ERROR_CLASS: OnceLock<GlobalRef> = OnceLock::new();
 
     let error_class = ERROR_CLASS.get_or_init(|| {
-        let class = env.find_class("java/lang/Error")
-            .catch(env)
-            .unwrap_jni();
+        let class = get_class("java/lang/Error", env).unwrap();
         env.new_global_ref(class)
             .catch(env)
             .unwrap_jni()

@@ -7,9 +7,9 @@ use thiserror::Error;
 use crate::{__throw::{catch_throwable, panic_exception}, FromObject, JValueType, JavaException, utils::{JNI_CALL_GHOST_EXCEPTION, JniResultExt as _, ResultExt as _, get_object_class_name}};
 
 #[derive(Debug, Error)]
-#[error("Could not find method {name}({params}) -> {return_ty} in class {target_class}; maybe its private?{caused_by}",
+#[error("Could not find method {name}({params}) -> {return_ty} in class {target_class}; maybe its private?{end}",
     params = comma_separated(params),
-    caused_by = exception_cause(error.as_ref()),
+    end = { let _ = error; "" },
 )]
 pub struct MethodNotFoundError {
     pub target_class: String,
@@ -93,7 +93,7 @@ impl MethodNotFoundError {
 }
 
 #[derive(Debug, Error)]
-#[error("Could not find field \"{name}\" of type {ty} in class {target_class}; maybe its private?{}", exception_cause(error.as_ref()))]
+#[error("Could not find field \"{name}\" of type {ty} in class {target_class}; maybe its private?{}", { let _ = error; "" })]
 pub struct FieldNotFoundError {
     pub target_class: String,
     pub name: String,
@@ -144,7 +144,7 @@ impl FieldNotFoundError {
 }
 
 #[derive(Debug, Error)]
-#[error("Could not find class \"{target_class}\"\n  From Exception:{exception}")]
+#[error("Could not find class \"{target_class}\"{}", { let _ = exception; "" })]
 pub struct ClassNotFoundError {
     pub target_class: String,
     #[source]
@@ -291,7 +291,7 @@ pub enum FromObjectError {
     Unknown {
         #[source]
         error: JniError,
-    }
+    },
 }
 impl FromObjectError {
     /// Convert from a [`JniError`] to a [`FromObjectError`] with a **prefix message**.
@@ -397,6 +397,15 @@ impl From<FromJValueError> for FromObjectError {
         }
     }
 }
+impl From<GetClassError> for FromObjectError {
+    #[inline(always)]
+    fn from(error: GetClassError) -> Self {
+        match error {
+            GetClassError::ClassNotFound(error) => Self::ClassNotFound(error),
+            GetClassError::Unknown { error } => Self::Unknown { error },
+        }
+    }
+}
 
 // TODO: Implement ToObjectError
 
@@ -410,7 +419,7 @@ pub enum FromJValueError {
     },
     /// This variant occurs only when the [`JValue`][jni::objects::JValue] is [`Object`][jni::objects::JObject] and the [`FromObject`][crate::FromObject] call returned an error.
     #[error("{0}")]
-    Object(#[from] FromObjectError)
+    Object(#[from] FromObjectError),
 }
 impl PanicError for FromJValueError { }
 impl __PanicErrorImpl for FromJValueError {
@@ -451,6 +460,12 @@ impl From<JavaException> for FromJValueError {
        Self::Object(FromObjectError::from(exception))
     }
 }
+impl From<GetClassError> for FromJValueError {
+    #[inline(always)]
+    fn from(error: GetClassError) -> Self {
+        Self::Object(error.into())
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum MethodCallError {
@@ -461,7 +476,7 @@ pub enum MethodCallError {
     #[error("{0}")]
     ClassNotFound(#[from] ClassNotFoundError),
     #[error("{error}")]
-    Unknown { #[source] error: JniError }
+    Unknown { #[source] error: JniError },
 }
 impl PanicError for MethodCallError { }
 impl __PanicErrorImpl for MethodCallError {
@@ -501,6 +516,15 @@ impl From<JavaException> for MethodCallError {
         Self::Unknown { error: JniError::Exception(exception) }
     }
 }
+impl From<GetClassError> for MethodCallError {
+    #[inline(always)]
+    fn from(error: GetClassError) -> Self {
+        match error {
+            GetClassError::ClassNotFound(error) => Self::ClassNotFound(error),
+            GetClassError::Unknown { error } => Self::Unknown { error },
+        }
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum FieldError {
@@ -517,7 +541,7 @@ pub enum FieldError {
     #[error("{0}")]
     ClassNotFound(#[from] ClassNotFoundError),
     #[error("{error}")]
-    Unknown { #[source] error: JniError }
+    Unknown { #[source] error: JniError },
 }
 impl PanicError for FieldError { }
 impl __PanicErrorImpl for FieldError {
@@ -566,6 +590,62 @@ impl From<JavaException> for FieldError {
     fn from(exception: JavaException) -> Self {
        // See [`<FromObjectError as From<JniError>>::from()`] for why no error types are checked here.
         Self::Unknown { error: JniError::Exception(exception) }
+    }
+}
+impl From<GetClassError> for FieldError {
+    #[inline(always)]
+    fn from(error: GetClassError) -> Self {
+        match error {
+            GetClassError::ClassNotFound(error) => Self::ClassNotFound(error),
+            GetClassError::Unknown { error } => Self::Unknown { error },
+        }
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum GetClassError {
+    #[error("{0}")]
+    ClassNotFound(#[from] ClassNotFoundError),
+    #[error("{error}")]
+    Unknown { #[source] error: JniError },
+}
+impl PanicError for GetClassError { }
+impl __PanicErrorImpl for GetClassError {
+    fn into_payload(self, location: &'static StdLocation<'static>, env: &mut JNIEnv<'_>) -> Either<String, JavaException> {
+        match self {
+            Self::ClassNotFound(error) => Either::Right(JavaException::new_rust_panic(location, error.to_string(), Some(error.exception), env)),
+            Self::Unknown { error } => error.into_payload(location, env),
+        }
+    }
+}
+impl From<jni::errors::Error> for GetClassError {
+    fn from(error: jni::errors::Error) -> Self {
+        let env = crate::utils::get_env();
+        env.with_local_frame(0, |env| {
+            Ok(Self::from(JniError::from_jni(error, env)))
+        }).catch(env).unwrap_jni()
+    }
+}
+impl From<JniError> for GetClassError {
+    fn from(error: JniError) -> Self {
+        use jni::errors::Error as JNIError;
+        match error {
+            JniError::Exception(ex) => Self::from(ex),
+            JniError::Jni(error) => match error {
+                JNIError::JavaException => unreachable!("Exception was caught"),
+                error => Self::Unknown { error: JniError::Jni(error) },
+            },
+        }
+    }
+}
+impl From<JavaException> for GetClassError {
+    fn from(exception: JavaException) -> Self {
+        if exception.is_instance_of(ClassNotFoundError::ERROR_CLASS)
+        || exception.is_instance_of(ClassNotFoundError::EXCEPTION_CLASS) {
+            Self::ClassNotFound(ClassNotFoundError::from_exception(exception))
+        } else {
+            Self::Unknown { error: JniError::Exception(exception) }
+        }
     }
 }
 
@@ -643,18 +723,11 @@ fn comma_separated<I: Display>(collection: impl IntoIterator<Item = I>) -> Strin
         .collect()
 }
 
-fn exception_cause(exception: Option<&JavaException>) -> String {
-    match exception {
-        Some(ex) => format!("\n  From Exception: {ex}"),
-        None => String::new(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use jni::objects::JValue;
-    use super::{ClassNotFoundError, MethodCallError, FieldError, JniError};
-    use crate::{FromObject, ToObject, utils::{JniResultExt as _, call_static_method, get_env, get_static_field, test_with_jnienv}};
+    use super::{MethodCallError, FieldError, GetClassError};
+    use crate::{ToObject, utils::{call_static_method, get_class, get_env, get_static_field, test_with_jnienv}};
 
     #[test]
     fn method_not_found() { test_with_jnienv(|| {
@@ -750,16 +823,13 @@ mod tests {
     fn class_not_found() { test_with_jnienv(|| {
         let env = get_env();
 
-        let error = env.find_class("me.fake.MyClass")
-            .catch(env)
-            .unwrap_err();
+        let error = get_class("me/fake/MyClass", env).unwrap_err();
 
         let error = match error {
-            JniError::Exception(exception) => ClassNotFoundError::from_object_env(&exception, env)
-                .unwrap_or_else(|err| panic!("Unexpected error: was not ClassNotFoundError: {err}")),
-            JniError::Jni(err) => panic!("JNIEnv::find_class() should return an Exception if class not found. Instead, returned: {err}"),
+            GetClassError::ClassNotFound(error) => error,
+            GetClassError::Unknown { error } => panic!("Unexpected error: was not ClassNotFoundError: {error}"),
         };
 
-        assert_eq!(error.target_class, "me.fake.MyClass");
+        assert_eq!(error.target_class, "me/fake/MyClass");
     }) }
 }

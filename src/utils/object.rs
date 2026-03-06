@@ -120,9 +120,9 @@ where T: FromJValue<'local> + Class {
 // In the name of space-efficiency with generic types...
 fn __guess_sig(err: FromJValueError, get_class: fn() -> Cow<'static, str>) -> Cow<'static, str> {
     match err {
-        FromJValueError::Object(_) => panic!("Encountered FromObjectError when JValue is Bool; FromJValue implementation can only call FromObject if JValue is Object"),
+        FromJValueError::Object(_) => unreachable!("FromJValue implementation can only return FromObjectError if it called from_object(), and that can only occur if Object is passed in to from_jvalue()"),
         FromJValueError::IncorrectType { expected, .. } => match expected {
-            JValueType::Bool   => panic!("Unreachable"),
+            JValueType::Bool   => unreachable!("A Bool was passed to from_jvalue(), so it can't return an error if it was expecting Bool"),
             JValueType::Void   => Cow::Borrowed("V"),
             JValueType::Char   => Cow::Borrowed("C"),
             JValueType::Byte   => Cow::Borrowed("B"),
@@ -192,7 +192,7 @@ pub fn check_object_class(object: &JObject<'_>, target_class: &str, env: &mut JN
         .catch(env)
         .map_err(|err| FromObjectError::from_jni_with_msg("Failed to get Object's class", err))?;
 
-    let target_class_obj = env.find_class(target_class).catch(env)?;
+    let target_class_obj = super::get_class(target_class, env)?;
     
     if !env.is_instance_of(object, target_class_obj).catch(env)? {
         return Err(FromObjectError::ClassMismatch {

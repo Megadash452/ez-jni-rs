@@ -725,7 +725,7 @@ impl Display for FieldHintReport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::{get_env, test_with_jnienv};
+    use crate::{class, utils::{get_env, test_with_jnienv}};
 
     macro_rules! check_report_hint {
         ($var:expr => $enm_ident:ident::$variant_ident:ident $pattern:tt => $block:block) => {
@@ -743,7 +743,7 @@ mod tests {
 
         // Same Name and same Sig Methods
         report = MethodHintReport::check_method_existence(
-            &env.find_class("me/test/Test").catch(env).unwrap(),
+            &class!(env=> me.test.Test),
             "memberGetter",
             "()I",
             true,
@@ -757,7 +757,7 @@ mod tests {
         });
         // Same Name but different Sig Methods
         report = MethodHintReport::check_method_existence(
-            &env.find_class("me/test/Test").catch(env).unwrap(),
+            &class!(env=> me.test.Test),
             "memberGetter",
             "()V",
             false,
@@ -770,7 +770,7 @@ mod tests {
         });
         // Different Name but same Sig Methods
         report = MethodHintReport::check_method_existence(
-            &env.find_class("me/test/Test").catch(env).unwrap(),
+            &class!(env=> me.test.Test),
             "myFakeMethod",
             "(Ljava/lang/Object;Ljava/lang/String;)V",
             true,
@@ -789,7 +789,7 @@ mod tests {
         });
         // No matches
         report = MethodHintReport::check_method_existence(
-            &env.find_class("me/test/Test").catch(env).unwrap(),
+            &class!(env=> me.test.Test),
             "myFakeMethod",
             "(Lmy.fake.Class;)V",
             false,
@@ -805,7 +805,7 @@ mod tests {
 
         // Same Name and same Type Fields
         report = FieldHintReport::check_field_existence(
-            &env.find_class("me/test/Test").catch(env).unwrap(),
+            &class!(env=> me.test.Test),
             "member1",
             "I",
             false,
@@ -818,7 +818,7 @@ mod tests {
         });
         // Same Name but different Type Fields
         report = FieldHintReport::check_field_existence(
-            &env.find_class("me/test/Test").catch(env).unwrap(),
+            &class!(env=> me.test.Test),
             "member1",
             "J",
             true,
@@ -830,7 +830,7 @@ mod tests {
         });
         // Similar Name and same Type Methods
         report = FieldHintReport::check_field_existence(
-            &env.find_class("me/test/Test").catch(env).unwrap(),
+            &class!(env=> me.test.Test),
             "memberGetter",
             "I",
             false,
@@ -842,7 +842,7 @@ mod tests {
         });
         // Different Name but same Type Methods
         report = FieldHintReport::check_field_existence(
-            &env.find_class("me/test/Test").catch(env).unwrap(),
+            &class!(env=> me.test.Test),
             "string",
             "Ljava/lang/String;",
             false,
@@ -854,7 +854,7 @@ mod tests {
         });
         // Similar Name but different Type Methods
         report = FieldHintReport::check_field_existence(
-            &env.find_class("me/test/Test").catch(env).unwrap(),
+            &class!(env=> me.test.Test),
             "memberGetter",
             "J",
             false,
@@ -866,7 +866,7 @@ mod tests {
         });
         // Fields and Methods with the same Type
         report = FieldHintReport::check_field_existence(
-            &env.find_class("me/test/Test").catch(env).unwrap(),
+            &class!(env=> me.test.Test),
             "myFakeField",
             "I",
             false,
@@ -889,7 +889,7 @@ mod tests {
         });
         // No matches
         report = FieldHintReport::check_field_existence(
-            &env.find_class("me/test/Test").catch(env).unwrap(),
+            &class!(env=> me.test.Test),
             "myFakeField",
             "Lmy.fake.Class;",
             false,

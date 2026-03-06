@@ -6,7 +6,7 @@ use jni::{
     JNIEnv
 };
 use utils::first_char_uppercase;
-use crate::{__throw::is_error, FromJValue, JavaException, error::{ClassNotFoundError, FieldError, FieldNotFoundError, JniError, MethodCallError, MethodNotFoundError}, utils::{JniResultExt as _, ResultExt as _}};
+use crate::{__throw::is_error, FromJValue, JavaException, error::{ClassNotFoundError, FieldError, FieldNotFoundError, GetClassError, JniError, MethodCallError, MethodNotFoundError}, utils::{JniResultExt as _, ResultExt as _}};
 
 /// A wrapper for a `Class` value that will be used in a **JNI Call**.
 #[derive(Clone, Copy)]
@@ -117,6 +117,12 @@ pub fn create_object<'local>(class: ClassRepr<'_, '_>, sig: &str, args: &[JValue
     }, env)
 }
 
+pub fn get_class<'local>(path: &str, env: &mut JNIEnv<'local>) -> Result<JClass<'local>, GetClassError> {
+    env.find_class(path)
+        .catch(env)
+        .map_err(GetClassError::from)
+}
+
 #[cfg_attr(not(debug_assertions), allow(unused))]
 pub(super) enum Callee<'a, 'obj> {
     ClassPath(&'a str),
@@ -136,10 +142,10 @@ impl<'a, 'obj> Callee<'a, 'obj> {
     /// Get a **Class Object** from the *value*.
     /// 
     /// `panic!`s if there is an error.
-    fn get_class<'local>(&self, env: &mut JNIEnv<'local>) -> Result<CowObject<'a, JClass<'obj>>, JniError>
+    fn get_class<'local>(&self, env: &mut JNIEnv<'local>) -> Result<CowObject<'a, JClass<'obj>>, GetClassError>
     where 'local: 'obj {
         match self {
-            Self::ClassPath(class) => Ok(CowObject::Owned(env.find_class(class).catch(env)?)),
+            Self::ClassPath(path) => Ok(CowObject::Owned(get_class(path, env)?)),
             Self::Class(class) => Ok(CowObject::Borrowed(*class)),
             Self::Object(object) => Ok(CowObject::Owned(env.get_object_class(object).catch(env)?)),
         }

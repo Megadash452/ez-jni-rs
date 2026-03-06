@@ -2,7 +2,7 @@ use jni::objects::{GlobalRef, JClass};
 use nonempty::nonempty;
 use std::{fmt::{Debug, Display}, io, ops::Deref, sync::OnceLock};
 use ez_jni_macros::new;
-use crate::{__throw::{Location, backtrace::{Backtrace, inject_backtrace}}, error::PanicError, utils::{JniResultExt as _, ResultExt as _, get_object_class_name}};
+use crate::{__throw::{Location, backtrace::{Backtrace, inject_backtrace}}, error::PanicError, utils::{JniResultExt as _, ResultExt as _, get_class, get_object_class_name}};
 
 use super::*;
 
@@ -61,6 +61,8 @@ impl JavaException {
     /// > NOTE: The **location** that is passed in here should be obtained with [`std::panic::Location::caller()`],
     /// > and that should be called from a function with the `#[track_caller]` attribute.
     /// > This is to accurately capture the location where the `panic!` was triggered.
+    /// 
+    /// `panic!s` if a JNI error occurs (e.g. could not find RustPanic class).
     pub(crate) fn new_rust_panic<'local>(location: impl Into<Location>, message: String, cause: Option<Self>, env: &mut JNIEnv<'local>) -> Self {
         let location = location.into();
         let (file, line, col) = (location.file, location.line, location.col);
@@ -76,10 +78,9 @@ impl JavaException {
             }
         }
         let panic_class = PANIC_CLASS.get_or_init(|| {
-            let class = env.find_class(Self::RUST_PANIC_CLASS)
-                .catch(env)
-                .or_else(|_| env.define_class(Self::RUST_PANIC_CLASS, &JObject::null(),  class_binary))
-                .expect("Failed loading/finding RustPanic class");
+            let class = get_class(Self::RUST_PANIC_CLASS, env)
+                .or_else(|_| env.define_class(Self::RUST_PANIC_CLASS, &JObject::null(),  class_binary).catch(env))
+                .unwrap_or_else(|err| panic!("Failed loading/finding RustPanic class: {err}"));
             env.new_global_ref(class)
                 .expect("Failed to make JClass into GlobalRef")
         });
@@ -102,9 +103,13 @@ impl JavaException {
     }
 
     /// Tells whether the [`Exception`][JavaException] Object's class extends the passed in **class**.
+    /// 
+    /// `panic!s` if **class** is not loaded in the JVM.
     pub fn is_instance_of(&self, class: impl AsRef<str>) -> bool {
         let env = crate::utils::get_env();
-        env.is_instance_of(self, class.as_ref())
+        
+        let class = get_class(class.as_ref(), env).unwrap_jni();
+        env.is_instance_of(self, &class)
             .catch(env)
             .unwrap_jni()
     }
@@ -279,8 +284,7 @@ impl ToObject for std::io::Error {
             .find(|(err, _)| self.kind() == *err)
             .map(|(_, class)| *class)
             .unwrap_or(IO_ERROR_BASE_PATH);
-        let class = env.find_class(class)
-            .catch(env).unwrap_jni();
+        let class = get_class(class, env).unwrap_jni();
         // TODO: return ToObjectError
 
         new!(env=> class(String(self.to_string())))
