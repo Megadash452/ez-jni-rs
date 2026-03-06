@@ -1,10 +1,10 @@
-use std::{borrow::Cow, cmp::Ordering, fmt::{Debug, Display}, panic::Location as StdLocation};
+use std::{cmp::Ordering, fmt::{Debug, Display}, panic::Location as StdLocation};
 use either::Either;
 use itertools::Itertools;
 use jni::{JNIEnv, objects::JObject};
 use nonempty::{NonEmpty, nonempty};
 use thiserror::Error;
-use crate::{__throw::{catch_throwable, panic_exception}, Class, FromObject, JValueType, JavaException, utils::{JNI_CALL_GHOST_EXCEPTION, JniResultExt as _, ResultExt as _, check_object_class, get_object_class_name}};
+use crate::{__throw::{catch_throwable, panic_exception}, FromObject, JValueType, JavaException, utils::{JNI_CALL_GHOST_EXCEPTION, JniResultExt as _, ResultExt as _, get_object_class_name}};
 
 #[derive(Debug, Error)]
 #[error("Could not find method {name}({params}) -> {return_ty} in class {target_class}; maybe its private?{caused_by}",
@@ -23,58 +23,14 @@ impl MethodNotFoundError {
     pub const ERROR_CLASS: &str = "java/lang/NoSuchMethodError";
     pub const EXCEPTION_CLASS: &str = "java/lang/NoSuchMethodException";
 
-    /// Create an instance of this type by reading from an [`Exception`][JavaException].
-    /// Use this over [FromObject::from_object_env()] to avoid cloning the [`Exception`][JavaException].
-    /// 
-    /// As these types of Exceptions are expected to have a certain message format,
-    /// this function will `panic!` if it fails to parse the Exception's message.
-    pub(super) fn from_exception(exception: JavaException) -> Self {
-        let (path, sig) = exception.message() // This Error class always has a message
-            .split_once('(')
-            .expect("NoSuchMethodError's message was malformed: did not contain opening parenthesis ('(') for parameters.");
-
-        let mut components = path.split(|c| c == '.' || c == '/');
-        let mut target_class = String::new();
-        let mut name = String::new();
-
-        while let Some(component) = components.next() {
-            // Last component is the function name.
-            if components.clone().next().is_none() {
-                name = component.to_string();
-                break;
-            }
-            // Don't prepend dot separator if this is the first component.
-            if !target_class.is_empty() {
-                target_class.push('.');
-            }
-            target_class.push_str(component);
-        }
-
-        if target_class.is_empty() || name.is_empty() {
-            panic!("NoSuchMethod's message did not contain the Method path")
-        }
-
-        let (params, return_ty) = crate::hints::Type::parse_method_sig(sig)
-            .expect("NoSuchMethodError's method signature is malformed");
-
-        Self {
-            target_class,
-            name,
-            params: params.into_iter()
-                .map(|t| t.to_string())
-                .collect(),
-            return_ty: return_ty.to_string(),
-            error: Some(exception),
-        }
-    }
     /// Create an instance of [`MethodNotFoundError`] given the data from a [jni::errors::Error::MethodNotFound] and a **target_class**.
     /// 
     /// **sig** is a JNI style *method* signature.
     /// 
     /// This function will `panic!` if the **sig** is malformed.
-    pub(super) fn from_jni(target_class: String, name: String, sig: &str) -> Self {
+    pub(super) fn new(target_class: String, name: String, sig: &str) -> Self {
         let (params, return_ty) = crate::hints::Type::parse_method_sig(sig)
-            .expect("NoSuchMethodError contained malformed Java method signature");
+            .expect("NoSuchMethodError contained an invalid Java method signature");
 
         MethodNotFoundError {
             target_class,
@@ -86,26 +42,54 @@ impl MethodNotFoundError {
             error: None,
         }
     }
-}
-impl FromObject<'_> for MethodNotFoundError {
-    fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        if object.is_null() {
-            return Err(FromObjectError::Null);
-        }
-        if !env.is_instance_of(object, Self::ERROR_CLASS).catch(env)?
-        && !env.is_instance_of(object, Self::EXCEPTION_CLASS).catch(env)? {
-            return Err(FromObjectError::ClassMismatch {
-                obj_class: get_object_class_name(object, env),
-                target_classes: nonempty![
-                    Self::ERROR_CLASS.to_string(),
-                    Self::EXCEPTION_CLASS.to_string()
-                ],
-            });
-        }
 
-        let exception = JavaException::from_throwable(object.into(), env);
-        Ok(Self::from_exception(exception))
-    }
+    // // java.lang.NoSuchMethodError only has the method name in the message,
+    // // so constructing [`MethodNotFoundError`] from the Throwable is not possible.
+    // 
+    // /// Create an instance of this type by reading from an [`Exception`][JavaException].
+    // /// Use this over [FromObject::from_object_env()] to avoid cloning the [`Exception`][JavaException].
+    // /// 
+    // /// As these types of Exceptions are expected to have a certain message format,
+    // /// this function will `panic!` if it fails to parse the Exception's message.
+    // pub(super) fn from_exception(exception: JavaException) -> Self {
+    //     let (path, sig) = exception.message() // This Error class always has a message
+    //         .split_once('(')
+    //         .expect("NoSuchMethodError's message was malformed: did not contain opening parenthesis ('(') for parameters.");
+    //
+    //     let mut components = path.split(|c| c == '.' || c == '/');
+    //     let mut target_class = String::new();
+    //     let mut name = String::new();
+    //
+    //     while let Some(component) = components.next() {
+    //         // Last component is the function name.
+    //         if components.clone().next().is_none() {
+    //             name = component.to_string();
+    //             break;
+    //         }
+    //         // Don't prepend dot separator if this is the first component.
+    //         if !target_class.is_empty() {
+    //             target_class.push('.');
+    //         }
+    //         target_class.push_str(component);
+    //     }
+    //
+    //     if target_class.is_empty() || name.is_empty() {
+    //         panic!("NoSuchMethod's message did not contain the Method path")
+    //     }
+    //
+    //     let (params, return_ty) = crate::hints::Type::parse_method_sig(sig)
+    //         .expect("NoSuchMethodError's method signature is malformed");
+    //
+    //     Self {
+    //         target_class,
+    //         name,
+    //         params: params.into_iter()
+    //             .map(|t| t.to_string())
+    //             .collect(),
+    //         return_ty: return_ty.to_string(),
+    //         error: Some(exception),
+    //     }
+    // }
 }
 
 #[derive(Debug, Error)]
@@ -121,20 +105,12 @@ impl FieldNotFoundError {
     pub const ERROR_CLASS: &str = "java/lang/NoSuchFieldError";
     pub const EXCEPTION_CLASS: &str = "java/lang/NoSuchFieldException";
     
-    /// Create an instance of this type by reading from an [`Exception`][JavaException].
-    /// Use this over [FromObject::from_object_env()] to avoid cloning the [`Exception`][JavaException].
-    /// 
-    /// As these types of Exceptions are expected to have a certain message format,
-    /// this function will `panic!` if it fails to parse the Exception's message.
-    pub(super) fn from_exception(exception: JavaException) -> Self {
-        todo!()
-    }
     /// Create an instance of [`FieldNotFoundError`] given the data from a [jni::errors::Error::FieldNotFound] and a **target_class**.
     /// 
     /// **sig** is a JNI style *field* signature.
     /// 
     /// This function will `panic!` if the **sig** is malformed.
-    pub(super) fn from_jni(target_class: String, name: String, sig: &str) -> Self {
+    pub(super) fn new(target_class: String, name: String, sig: &str) -> Self {
         FieldNotFoundError {
             target_class,
             name,
@@ -142,26 +118,29 @@ impl FieldNotFoundError {
             error: None,
         }
     }
-}
-impl FromObject<'_> for FieldNotFoundError {
-    fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        if object.is_null() {
-            return Err(FromObjectError::Null);
-        }
-        if !env.is_instance_of(object, Self::ERROR_CLASS).catch(env)?
-        && !env.is_instance_of(object, Self::EXCEPTION_CLASS).catch(env)? {
-            return Err(FromObjectError::ClassMismatch {
-                obj_class: get_object_class_name(object, env),
-                target_classes: nonempty![
-                    Self::ERROR_CLASS.to_string(),
-                    Self::EXCEPTION_CLASS.to_string(),
-                ],
-            });
-        }
 
-        let exception = JavaException::from_throwable(object.into(), env);
-        Ok(Self::from_exception(exception))
-    }
+    // // java.lang.NoSuchMethodError only has the method name in the message,
+    // // so constructing [`MethodNotFoundError`] from the Throwable is not possible.
+    // 
+    // /// Create an instance of this type by reading from an [`Exception`][JavaException].
+    // /// Use this over [FromObject::from_object_env()] to avoid cloning the [`Exception`][JavaException].
+    // /// 
+    // /// As these types of Exceptions are expected to have a certain message format,
+    // /// this function will `panic!` if it fails to parse the Exception's message.
+    // pub(super) fn from_exception(exception: JavaException) -> Self {
+    //     // java.lang.NoSuchFieldError and NoSuchFieldException only contain information about the field's name,
+    //     // but not the Class or type of the field that the caller tried to use.
+    //     // There is a PR (https://git.openjdk.org/jdk/pull/11745) to include this details in the error message that was (apparently) merged in 2023,
+    //     // but even in Java 25 (released Sep 2025) it appears this change was not included.
+    //     // Not sure what's happening there.
+    //
+    //     Self {
+    //         target_class: "<unknown>".to_string(),
+    //         name: exception.message().to_string(),
+    //         ty: "<unknown>".to_string(),
+    //         error: Some(exception),
+    //     }
+    // }
 }
 
 #[derive(Debug, Error)]
@@ -368,21 +347,10 @@ impl From<JniError> for FromObjectError {
             JniError::Exception(ex) => Self::from(ex),
             JniError::Jni(error) => match error {
                 JNIError::JavaException => unreachable!("Exception was caught"),
-                JNIError::WrongJValueType(expected, actual) => Self::IncorrectType {
-                    actual: crate::hints::Type::from_sig_type(actual).into(),
-                    expected: crate::hints::Type::from_sig_type(expected).into(),
-                },
-                JNIError::MethodNotFound { name, sig } => Self::MethodNotFound(
-                    MethodNotFoundError::new("<unknown>".to_string(), name, &sig)
-                ),
-                JNIError::FieldNotFound { name, sig } => Self::FieldNotFound(
-                    FieldNotFoundError::new("<unknown>".to_string(), name, &sig)
-                ),
-                JNIError::NullPtr(msg)
-                | JNIError::NullDeref(msg) => Self::Other {
-                    prefix: msg.to_string(),
-                    error: Box::new(Self::Null),
-                },
+                // Why only no ez_jni errors are checked here?
+                // Because all other errors should be returned directly from the ez_jni function failing to do something it INTENDED to do.
+                // All other errors can be caused by an operation in the Java binary that was not caused by a bug or bad input in an ez_jni function,
+                // so it is better to store them here as Unknown to not confuse the caller that it was because of something they did wrong.
                 _ => Self::Unknown { error: JniError::Jni(error) },
             },
         }
@@ -390,18 +358,8 @@ impl From<JniError> for FromObjectError {
 }
 impl From<JavaException> for FromObjectError {
     fn from(exception: JavaException) -> Self {
-        if exception.is_instance_of(MethodNotFoundError::ERROR_CLASS)
-        || exception.is_instance_of(MethodNotFoundError::EXCEPTION_CLASS) {
-            Self::MethodNotFound(MethodNotFoundError::from_exception(exception))
-        } else if exception.is_instance_of(FieldNotFoundError::ERROR_CLASS)
-        || exception.is_instance_of(FieldNotFoundError::EXCEPTION_CLASS) {
-            Self::FieldNotFound(FieldNotFoundError::from_exception(exception))
-        } else if exception.is_instance_of(ClassNotFoundError::ERROR_CLASS)
-        || exception.is_instance_of(ClassNotFoundError::EXCEPTION_CLASS)  {
-            Self::ClassNotFound(ClassNotFoundError::from_exception(exception))
-        } else {
-            Self::Unknown { error: JniError::Exception(exception) }
-        }
+        // See [`<FromObjectError as From<JniError>>::from()`] for why no error types are checked here.
+        Self::Unknown { error: JniError::Exception(exception) }
     }
 }
 impl From<MethodCallError> for FromObjectError {
@@ -487,6 +445,12 @@ impl From<JniError> for FromJValueError {
         }
     }
 }
+impl From<JavaException> for FromJValueError {
+    #[inline(always)]
+    fn from(exception: JavaException) -> Self {
+       Self::Object(FromObjectError::from(exception))
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum MethodCallError {
@@ -525,9 +489,7 @@ impl From<JniError> for MethodCallError {
             JniError::Exception(ex) => Self::from(ex),
             JniError::Jni(error) => match error {
                 JNIError::JavaException => unreachable!("Exception was caught"),
-                JNIError::MethodNotFound { name, sig } => Self::MethodNotFound(
-                    MethodNotFoundError::new("<unknown>".to_string(), name, &sig)
-                ),
+                // See [`<FromObjectError as From<JniError>>::from()`] for why no error types are checked here.
                 error => Self::Unknown { error: JniError::Jni(error) },
             },
         }
@@ -535,15 +497,8 @@ impl From<JniError> for MethodCallError {
 }
 impl From<JavaException> for MethodCallError {
     fn from(exception: JavaException) -> Self {
-        if exception.is_instance_of(MethodNotFoundError::ERROR_CLASS)
-        || exception.is_instance_of(MethodNotFoundError::EXCEPTION_CLASS) {
-            Self::MethodNotFound(MethodNotFoundError::from_exception(exception))
-        } else if exception.is_instance_of(ClassNotFoundError::ERROR_CLASS)
-        || exception.is_instance_of(ClassNotFoundError::EXCEPTION_CLASS) {
-            Self::ClassNotFound(ClassNotFoundError::from_exception(exception))
-        } else {
-            Self::Unknown { error: JniError::Exception(exception) }
-        }
+        // See [`<FromObjectError as From<JniError>>::from()`] for why no error types are checked here.
+        Self::Unknown { error: JniError::Exception(exception) }
     }
 }
 
@@ -553,12 +508,9 @@ pub enum FieldError {
     Null,
     #[error("{0}")]
     FieldNotFound(#[from] FieldNotFoundError),
-    #[error("{}", match cause {
-        Some(field_error) => format!("{field_error}, but also failed calling getter/setter: {error}"),
-        None => error.to_string(),
-    })]
+    #[error("{}", format!("{cause}, but also failed calling getter/setter: {error}"))]
     MethodNotFound {
-        cause: Option<FieldNotFoundError>,
+        cause: FieldNotFoundError,
         #[source]
         error: MethodNotFoundError,
     },
@@ -575,13 +527,12 @@ impl __PanicErrorImpl for FieldError {
             Self::FieldNotFound(error) => Either::Right(JavaException::new_rust_panic(location, error.to_string(), error.error, env)),
             err @ Self::MethodNotFound { .. } => {
                 let message = err.to_string();
-                let (cause, method_error) = match err {
+                let (field_error, method_error) = match err {
                     Self::MethodNotFound { cause, error } => (cause, error),
                     _ => unreachable!(),
                 };
-                let field_exception = cause
-                    .map(|field_error| JavaException::new_rust_panic(location, field_error.to_string(), field_error.error, env));
-                let method_exception = JavaException::new_rust_panic(location, method_error.to_string(), field_exception, env);
+                let field_exception = JavaException::new_rust_panic(location, field_error.to_string(), field_error.error, env);
+                let method_exception = JavaException::new_rust_panic(location, method_error.to_string(), Some(field_exception), env);
 
                 Either::Right(JavaException::new_rust_panic(location, message, Some(method_exception), env))
             },
@@ -605,10 +556,7 @@ impl From<JniError> for FieldError {
             JniError::Exception(ex) => Self::from(ex),
             JniError::Jni(error) => match error {
                 JNIError::JavaException => unreachable!("Exception was caught"),
-                JNIError::MethodNotFound { name, sig } => Self::MethodNotFound {
-                    cause: None,
-                    error: MethodNotFoundError::from_jni("<unknown>".to_string(), name, &sig)
-                },
+                // See [`<FromObjectError as From<JniError>>::from()`] for why no error types are checked here.
                 error => Self::Unknown { error: JniError::Jni(error) },
             },
         }
@@ -616,21 +564,8 @@ impl From<JniError> for FieldError {
 }
 impl From<JavaException> for FieldError {
     fn from(exception: JavaException) -> Self {
-        if exception.is_instance_of(MethodNotFoundError::ERROR_CLASS)
-        || exception.is_instance_of(MethodNotFoundError::EXCEPTION_CLASS) {
-            Self::MethodNotFound {
-                cause: None,
-                error: MethodNotFoundError::from_exception(exception),
-            }
-        } else if exception.is_instance_of(FieldNotFoundError::ERROR_CLASS)
-        || exception.is_instance_of(FieldNotFoundError::EXCEPTION_CLASS) {
-            Self::FieldNotFound(FieldNotFoundError::from_exception(exception))
-        } else if exception.is_instance_of(ClassNotFoundError::ERROR_CLASS)
-        || exception.is_instance_of(ClassNotFoundError::EXCEPTION_CLASS) {
-            Self::ClassNotFound(ClassNotFoundError::from_exception(exception))
-        } else {
-            Self::Unknown { error: JniError::Exception(exception) }
-        }
+       // See [`<FromObjectError as From<JniError>>::from()`] for why no error types are checked here.
+        Self::Unknown { error: JniError::Exception(exception) }
     }
 }
 
@@ -725,10 +660,9 @@ mod tests {
     fn method_not_found() { test_with_jnienv(|| {
         let env = get_env();
 
-        let s = "a".to_object_env(env);
         let error = call_static_method("java/lang/String".into(), "myFakeMethod",
             "(IILjava/lang/String;)Ljava/lang/String;",
-            &[ JValue::Int(0), JValue::Int(0), JValue::Object(&s) ],
+            &[ JValue::Int(0), JValue::Int(0), JValue::Object(&"a".to_object_env(env)) ],
         env)
             .unwrap_err();
 
@@ -743,25 +677,49 @@ mod tests {
         assert_eq!(error.return_ty, "java.lang.String");
     }) }
 
-    // java.lang.NoSuchFieldError only returns the field name, so there is no point in running this test.
-    #[test]
-    fn field_not_found() { test_with_jnienv(|| {
-        let env = get_env();
-    
-        let error = env.get_static_field("java/lang/String", "myFakeField", "I")
-            .catch(env)
-            .unwrap_err();
-    
-        let error: FieldNotFoundError = match error {
-            JniError::Exception(exception) => FieldNotFoundError::from_object_env(&exception, env)
-                .unwrap_or_else(|err| panic!("Unexpected error: was not FieldNotFoundError: {err}")),
-            JniError::Jni(err) => panic!("JNIEnv::get_static_field() should return an Exception if field not found. Instead, returned: {err}"),
-        };
-    
-        assert_eq!(error.target_class, "java.lang.String");
-        assert_eq!(error.name, "myFakeField");
-        assert_eq!(error.ty, "int");
-    }) }
+    // // java.lang.NoSuchMethodError only returns the field name, so there is no point in running this test.
+    // /// Like [`method_not_found()`], but tests that the error type can be constructed from a Throwable generated by the JVM.
+    // #[test]
+    // fn method_not_found_exception() { test_with_jnienv(|| {
+    //     let env = get_env();
+    //
+    //     let s = "a".to_object_env(env);
+    //     let error = env.call_static_method("java/lang/String", "myFakeMethod",
+    //         "(IILjava/lang/String;)Ljava/lang/String;",
+    //         &[ JValue::Int(0), JValue::Int(0), JValue::Object(&s) ],
+    //     ).catch(env).unwrap_err();
+    //
+    //     let error = match error {
+    //         JniError::Exception(exception) => MethodNotFoundError::from_object_env(&exception, env)
+    //             .unwrap_or_else(|err| panic!("Unexpected error: was not MethodNotFoundError: {err}")),
+    //         JniError::Jni(err) => panic!("JNIEnv::call_static_method() should return an Exception if method not found. Instead, returned: {err}"),
+    //     };
+    //
+    //     assert_eq!(error.target_class, "java.lang.String");
+    //     assert_eq!(error.name, "myFakeMethod");
+    //     assert_eq!(error.params.as_ref(), &[ "int", "int", "java.lang.String" ]);
+    //     assert_eq!(error.return_ty, "java.lang.String");
+    // }) }
+
+    // //java.lang.NoSuchFieldError only returns the field name, so there is no point in running this test.
+    // #[test]
+    // fn field_not_found_exception() { test_with_jnienv(|| {
+    //     let env = get_env();
+    //
+    //     let error = env.get_static_field("java/lang/String", "myFakeField", "I")
+    //         .catch(env)
+    //         .unwrap_err();
+    //
+    //     let error = match error {
+    //         JniError::Exception(exception) => FieldNotFoundError::from_object_env(&exception, env)
+    //             .unwrap_or_else(|err| panic!("Unexpected error: was not FieldNotFoundError: {err}")),
+    //         JniError::Jni(err) => panic!("JNIEnv::get_static_field() should return an Exception if field not found. Instead, returned: {err}"),
+    //     };
+    //
+    //     assert_eq!(error.target_class, "java.lang.String");
+    //     assert_eq!(error.name, "myFakeField");
+    //     assert_eq!(error.ty, "int");
+    // }) }
 
     /// Tests that both [`FieldNotFoundError`] and [`MethodNotFoundError`] are returned from [`get_static_field()`].
     /// [`MethodNotFoundError`] can also returned from this method because it will call a *getter method* if it failed to get the *field*.
@@ -775,7 +733,7 @@ mod tests {
             .unwrap_err();
 
         let (field_error, method_error) = match error {
-            FieldError::MethodNotFound { cause: field_error, error } => (field_error.unwrap(), error),
+            FieldError::MethodNotFound { cause: field_error, error } => (field_error, error),
             err => panic!("Unexpected Error: {err}"),
         };
 
@@ -783,7 +741,7 @@ mod tests {
         assert_eq!(field_error.name, "myFakeField");
         assert_eq!(field_error.ty, "int");
         assert_eq!(method_error.target_class, "java.lang.String");
-        assert_eq!(method_error.name, "myFakeField");
+        assert_eq!(method_error.name, "getMyFakeField");
         assert_eq!(method_error.params.as_ref(), &[ ] as &[&str]);
         assert_eq!(method_error.return_ty, "int");
     }) }

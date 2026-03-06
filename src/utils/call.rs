@@ -232,9 +232,13 @@ fn call_helper<'local, T>(
     result
 }
 
+// Generates the **name** of the *Getter Method* that is called if a Field was not found.
+fn getter_name(field_name: &str) -> String {
+    format!("get{}", first_char_uppercase(field_name))
+}
 /// Generates the **name** and **signature** of the *Getter Method* that is called if a Field was not found.
 fn getter_name_and_sig(field_name: &str, ty: &str) -> (String, String) { (
-    format!("get{}", first_char_uppercase(field_name)),
+    getter_name(field_name),
     format!("(){ty}")
 ) }
 /// Generates the **name** and **signature** of the *Setter Method* that is called if a Field was not found.
@@ -375,21 +379,22 @@ pub(super) fn field_helper<'local>(
         // Previous returns the Error of field_op() if 2nd arg is None, and the Error of mathod_op() if 2nd arg is Some.
         .map_err(|(error, field_error)| {
             let target_class = call!(env=> callee_class.as_ref().getName() -> String);
+            let getter_name = getter_name(name);
 
             match error {
                 JniError::Jni(jni::errors::Error::MethodNotFound { name, sig })
                 if field_error.is_some() => FieldError::MethodNotFound {
-                    cause: field_error,
-                    error: MethodNotFoundError::new(target_class, name, &sig),
+                    cause: field_error.unwrap(),
+                    error: MethodNotFoundError::new(target_class, getter_name, &sig),
                 },
                 JniError::Exception(exception)
                 if exception.is_instance_of(MethodNotFoundError::ERROR_CLASS)
                 || exception.is_instance_of(MethodNotFoundError::EXCEPTION_CLASS)
                 && field_error.is_some() => FieldError::MethodNotFound {
-                    cause: field_error,
+                    cause: field_error.unwrap(),
                     error: MethodNotFoundError {
                         error: Some(exception),
-                        ..MethodNotFoundError::new(target_class, name.to_string(), &format!("(){ty}"))
+                        ..MethodNotFoundError::new(target_class, getter_name, &format!("(){ty}"))
                     },
                 },
                 JniError::Exception(exception)
