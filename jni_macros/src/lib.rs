@@ -79,7 +79,7 @@ use utils::{item_from_derive_input, SynResultExt as _};
 ///         3
 ///     }
 ///     unsafe { ez_jni::__throw::run_with_jnienv(env, move |env| {
-///         let s = <String as FromObject>::from_object_env(&s, env).unwrap();
+///         let s = <String as FromObject>::from_object_env(&s, env).unwrap_jni();
 ///         f(class, s)
 ///     }) }
 /// }
@@ -128,10 +128,11 @@ pub fn jni_fn(input: TokenStream) -> TokenStream {
 /// You can also pass a [`Class object`][jni::objects::JClass] instead of the full ClassPath,
 /// as if it was an *object method*.
 /// ```ignore
-/// let class = env.get_object_class(obj).unwrap();
+/// let class = env.get_object_class(obj).unwrap_jni();
 /// call!(static class.methodName() -> void);
 /// ```
 /// 
+/// TODO: doc # Modifiers
 /// ## Explicit `JNIEnv`
 /// 
 /// The macro implicitly gets the [`JNIEnv`][jni::JNIEnv] from a thread-local stack.
@@ -252,7 +253,9 @@ pub fn call(input: TokenStream) -> TokenStream {
 /// new!(me.author.ClassName(int(arg1), String(arg2), java.lang.Int(arg3)))
 /// ```
 /// 
+/// TODO: simple doc modifiers
 /// Can also take a custom [`JNIEnv`][jni::JNIEnv], like in [`call!`](call!#explicit-jnienv).
+/// Can also *propagate* JNI errors, like in [`call!`](call!#propagate-jni-errors).
 /// 
 /// ### Exceptions
 /// 
@@ -295,7 +298,9 @@ pub fn new(input: TokenStream) -> TokenStream {
 /// 
 /// The **type** follows the same syntax as in [`call!`](call!#types).
 /// 
+/// // TODO: simple doc modifiers
 /// Can also take a custom [`JNIEnv`][jni::JNIEnv], like in [`call!`](call!#explicit-jnienv).
+/// Can also *propagate* JNI errors, like in [`call!`](call!#propagate-jni-errors).
 #[proc_macro]
 pub fn field(input: TokenStream) -> TokenStream {
     let call = syn::parse_macro_input!(input as FieldCall);
@@ -312,15 +317,17 @@ pub fn field(input: TokenStream) -> TokenStream {
 /// let class: JClass = class!(me.author.Class);
 /// ```
 /// 
+/// // TODO: simple doc modifiers
 /// Can also take a custom [`JNIEnv`][jni::JNIEnv], like in [`call!`](call!#explicit-jnienv).
+/// Can also *propagate* JNI errors, like in [`call!`](call!#propagate-jni-errors).
 /// 
-/// This is essentially just a shortcut to [`JNIEnv::find_class()`][jni::JNIEnv::find_class()].
+/// This is essentially just a shortcut to [`get_class()`](https://docs.rs/ez_jni/latest/ez_jni/utils/fn.get_class.html).
 #[proc_macro]
 pub fn class(input: TokenStream) -> TokenStream {
     parse(input, |input| { Ok((
         input.parse()?, input.parse()?
     )) })
-        .map(|(env, class)| call::get_class(env, class))
+        .map(|(mods, class)| call::get_class(mods, class))
         .unwrap_tokens()
 }
 
@@ -328,12 +335,14 @@ pub fn class(input: TokenStream) -> TokenStream {
 /// 
 /// Takes the *fully-qualified* **Class** as input.
 /// 
-/// Can also take a custom [`JNIEnv`][jni::JNIEnv], like in [`call!`](call!#explicit-jnienv).
-/// 
 /// ```ignore
 /// singleton!(me.author.Singleton);
 /// singleton!(env=> me.author.Singleton);
 /// ```
+/// 
+/// TODO: simple doc modifiers
+/// Can also take a custom [`JNIEnv`][jni::JNIEnv], like in [`call!`](call!#explicit-jnienv).
+/// Can also *propagate* JNI errors, like in [`call!`](call!#propagate-jni-errors).
 /// 
 /// This is essentially just a shortcut to [`call!`] `Class.getInstance() -> Class`.
 #[proc_macro]
@@ -341,7 +350,7 @@ pub fn singleton(input: TokenStream) -> TokenStream {
     parse(input, |input| { Ok((
         input.parse()?, input.parse()?
     )) })
-        .map(|(env, class)| call::singleton_instance(env, class))
+        .map(|(mods, class)| call::singleton_instance(mods, class))
         .unwrap_tokens()
 }
 
@@ -437,8 +446,6 @@ fn parse<T>(input: proc_macro::TokenStream, parser: impl FnOnce(syn::parse::Pars
 /// ```
 /// static BYTE_CODE: &[u8] = ez_jni_macros::compile_java_class!("./src/", "me/marti/ezjni/RustPanic");
 /// ```
-/// 
-/// This is only used internally used by `ez_jni::__throw::throw_panic()`.
 #[doc(hidden)]
 #[proc_macro]
 pub fn compile_java_class(input: TokenStream) -> TokenStream {

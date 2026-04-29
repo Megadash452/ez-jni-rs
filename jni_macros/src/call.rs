@@ -11,7 +11,7 @@ use crate::{
 
 /// Processes input for macro call [super::call!].
 pub fn jni_call(call: MethodCall) -> TokenStream {
-    let ops_prelude = ops_prelude(call.env);
+    let ops_prelude = ops_prelude(call.mods.env);
     // The class or object that the method is being called on.
     let callee = match &call.call_type {
         CallType::Static(ClassRepr::String(class)) => {
@@ -21,47 +21,33 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
         CallType::Static(ClassRepr::Object(expr)) => quote!{ ::ez_jni::utils::ClassRepr::Object((#expr).borrow()) },
         CallType::Object(expr) => quote!{ (#expr).borrow() },
     };
+
     let name = call.method_name.to_string();
     let signature = gen_signature(call.parameters.iter(), &call.return_type);
     let arguments = gen_arguments(call.parameters.iter());
 
-    // Convert from the returned Java value to Rust value
-    let return_val_token = |span: Span| quote_spanned! {span=> __val };
-    let return_conversion = match &call.return_type {
-        // Normal conversion
-        Return::Assertive(ReturnableType::Type(ty))
-        | Return::Result { ty: ReturnableType::Type(ty), .. } => ty.convert_jvalue_to_rvalue(&return_val_token(ty.span())),
-        // Void conversion
-        Return::Assertive(ReturnableType::Void(ident))
-        | Return::Result { ty: ReturnableType::Void(ident), .. } => Type::convert_void_to_unit(&return_val_token(ident.span()))
-    };
-
-    // Handle Exception result depending on if the method is expected to throw or not.
-    let exception_handler = match &call.return_type {
-        // For return types that are not Result
-        Return::Assertive(_) => quote! { .unwrap_jni() },
-        Return::Result { err_class, ..} => check_exception_class(err_class),
-    };
+    // Convert from the returned Result to a value the caller expects.
+    let return_conversion = call.mods.jni_error_handler.convert_call_return_value(&call.return_type);
+    // TODO: make an error handler for #val_conversion of arguments, so that errors gets returned in the MethodCallError.
 
     // Build the macro function call
+
     let jni_method = if call.call_type.is_static() {
-        quote!(::ez_jni::utils::call_static_method)
+        quote! { ::ez_jni::utils::call_static_method(#callee, #name, #signature, #arguments, env) }
     } else {
-        quote!(::ez_jni::utils::call_obj_method)
+        quote! { ::ez_jni::utils::call_obj_method(#callee, #name, #signature, #arguments, env) }
     };
     quote! { {
         #ops_prelude
         #[allow(noop_method_call)]
         #jni_method(#callee, #name, #signature, #arguments, env)
-            .unwrap_jni()
-            .map(|__val| #return_conversion)
-            #exception_handler
+            #return_conversion
     } }
 }
 
 /// Processes input for macro call [super::new!].
 pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
-    let ops_prelude = ops_prelude(call.env);
+    let ops_prelude = ops_prelude(call.mods.env);
     // The Class/ClassObject that the constructor was called for
     let callee = match &call.class {
         ClassRepr::String(class) => {
@@ -70,28 +56,31 @@ pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
         },
         ClassRepr::Object(expr) => quote!{ ::ez_jni::utils::ClassRepr::Object((#expr).borrow()) },
     };
+
     let signature = gen_signature(call.parameters.iter(), &Return::new_void(Span::call_site()));
     let arguments = gen_arguments(call.parameters.iter());
 
-    // Handle Exception result depending on if the method is expected to throw or not.
-    let exception_handler = match call.err_class {
-        Some(err_class) => check_exception_class(&err_class),
-        // For return types that are not Result
-        None => quote! { .unwrap_jni() },
+    let return_type = match call.class {
+        ClassRepr::String(class) => Type::Assertive(InnerType::Object(class)),
+        ClassRepr::Object(expr) => Type::Assertive(InnerType::Object(Class::from_rust_type(ClassRustType::JObject, expr.span()))),
     };
+    let return_type = match call.err_class {
+        Some(err_class) => Return::Result { result: Ident::new("throws", err_class.span()), ty: ReturnableType::Type(return_type), err_class },
+        None => Return::Assertive(ReturnableType::Type(return_type)),
+    };
+    let return_conversion = call.mods.jni_error_handler.convert_call_return_value(&return_type);
 
     quote! { {
         #ops_prelude
         #[allow(noop_method_call)]
         ::ez_jni::utils::create_object(#callee, #signature, #arguments, env)
-            .unwrap_jni()
-            #exception_handler
+            #return_conversion
     } }
 }
 
 /// Processes input for macro call [super::field!].
 pub fn field(call: FieldCall) -> TokenStream {
-    let ops_prelude = ops_prelude(call.env);
+    let ops_prelude = ops_prelude(call.mods.env);
     // The class or object that the method is being called on.
     let callee = match &call.call_type {
         CallType::Static(ClassRepr::String(class)) => {
@@ -103,6 +92,7 @@ pub fn field(call: FieldCall) -> TokenStream {
     };
     let name = call.field_name.to_string();
     let ty_sig = call.ty.sig_type();
+    let error_handler = call.mods.jni_error_handler.handle_call_error();
 
     // Build the macro function call
     match call.set_val {
@@ -114,11 +104,12 @@ pub fn field(call: FieldCall) -> TokenStream {
             };
             // Convert Rust value to JValue for argument
             let val = call.ty.convert_rvalue_to_jvalue(&val.to_token_stream());
+            // TODO: make an error handler for #val_conversion, so that error gets returned in the FieldError.
             quote! { {
                 #ops_prelude
                 #[allow(noop_method_call)]
                 #jni_method(#callee, #name, #ty_sig, #val, env)
-                    .unwrap_jni()
+                    #error_handler
             } }
         },
         None => {
@@ -128,23 +119,24 @@ pub fn field(call: FieldCall) -> TokenStream {
                 quote!(::ez_jni::utils::get_obj_field)
             };
             // Convert jvalue returned from call
-            let call = call.ty.convert_jvalue_to_rvalue(&quote! {
-                #jni_method(#callee, #name, #ty_sig, env)
-                    .unwrap_jni()
-            });
+            let conversion = call.ty.convert_jvalue_to_rvalue(&quote!(__val), &call.mods.jni_error_handler);
             quote! { {
                 #ops_prelude
                 #[allow(noop_method_call)]
-                #call
+                #jni_method(#callee, #name, #ty_sig, env)
+                    .and_then(|__val| Ok(#conversion))
+                    #error_handler
             } }
         }
     }
 }
 
 /// Processes input for macro call [super::class!].
-pub fn get_class(env: Env, class: Class) -> TokenStream {
-    let ops_prelude = ops_prelude(env);
+pub fn get_class(mods: MacroCallModifiers, class: Class) -> TokenStream {
+    let ops_prelude = ops_prelude(mods.env);
     let class = class.to_jni_class_path();
+    let error_handler = mods.jni_error_handler.handle_call_error();
+
     quote! { {
         #ops_prelude
         ::ez_jni::utils::get_class(#class, env)
@@ -153,9 +145,9 @@ pub fn get_class(env: Env, class: Class) -> TokenStream {
 }
 
 /// Processes input for macro call [super::singleton!].
-pub fn singleton_instance(env: Env, class: Class) -> TokenStream {
+pub fn singleton_instance(mods: MacroCallModifiers, class: Class) -> TokenStream {
     jni_call(MethodCall {
-        env, 
+        mods,
         call_type: CallType::Static(ClassRepr::String(class.clone())),
         method_name: Ident::new("getInstance", Span::call_site()),
         parameters: Punctuated::new(),
@@ -167,7 +159,7 @@ pub fn singleton_instance(env: Env, class: Class) -> TokenStream {
 ///
 /// See [`crate::call`] for an example.
 pub struct MethodCall {
-    pub env: Env,
+    pub mods: MacroCallModifiers,
     pub call_type: CallType,
     pub method_name: Ident,
     pub parameters: Punctuated<Parameter, Token![,]>,
@@ -178,8 +170,7 @@ impl Parse for MethodCall {
         // This parse implementation is complicated to allow parsing arbitrary Expressions as the callee.
         use proc_macro2::{TokenTree, Delimiter, Spacing};
 
-        let env = input.parse()?;
-
+        let mods = input.parse()?;
         let is_static = input.parse::<Token![static]>().is_ok();
 
         // Search for pattern `(...) ->`
@@ -216,7 +207,7 @@ impl Parse for MethodCall {
             })?;
 
         Ok(Self {
-            env,
+            mods,
             call_type: CallType::parse_callee(callee_tokens.into_iter().collect(), is_static)?,
             method_name,
             parameters: Parser::parse2(Punctuated::parse_terminated, param_group.stream())?,
@@ -310,7 +301,7 @@ impl Debug for CallType {
 
 /// A JNI call to *access* or *set* the value of a **field**.
 pub struct FieldCall {
-    pub env: Env,
+    pub mods: MacroCallModifiers,
     pub call_type: CallType,
     pub field_name: Ident,
     pub ty: Type,
@@ -321,8 +312,7 @@ impl Parse for FieldCall {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         use proc_macro2::{TokenTree, Spacing};
 
-        let env = input.parse()?;
-
+        let mods = input.parse()?;
         let is_static = input.parse::<Token![static]>().is_ok();
         
         // Search for pattern `.#Ident :`
@@ -334,7 +324,7 @@ impl Parse for FieldCall {
         .map_err(|err| syn::Error::new(err.span(), format!("{err}; Expected pattern `.#Ident :`")))?;
 
         Ok(Self {
-            env,
+            mods,
             call_type: CallType::parse_callee(pre_tokens.into_iter().collect(), is_static)?,
             field_name: pattern_tokens.tail.remove(0).ident()?,
             ty: input.parse()?,
@@ -352,11 +342,11 @@ impl Parse for FieldCall {
 impl Debug for FieldCall {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FieldCall")
-            .field("env", &self.env)
+            .field("mods", &self.mods)
             .field("call_type", &self.call_type)
             .field("field_name", &self.field_name)
             .field("ty", &self.ty)
-            .field("set_val", &self.set_val.is_some())
+            .field("set_val", &self.set_val.as_ref().map(|expr| expr.to_token_stream().to_string()))
             .finish()
     }
 }
@@ -365,7 +355,7 @@ impl Debug for FieldCall {
 /// 
 /// See [`crate::new`] for an example.
 pub struct ConstructorCall {
-    pub env: Env,
+    pub mods: MacroCallModifiers,
     pub class: ClassRepr,
     pub parameters: Punctuated<Parameter, Token![,]>,
     pub err_class: Option<Class>
@@ -375,7 +365,7 @@ impl Parse for ConstructorCall {
         // This is similar to MethodCall::parse() in that it will collect tokens to parse as the class until it finds a certain pattern.
         use proc_macro2::{TokenTree, Delimiter};
 
-        let env = input.parse()?;
+        let mods = input.parse()?;
 
         // Search for pattern `(...)` | `(...) throws`
         let StepResult { pre_tokens, pattern_tokens } = crate::utils::step_until(input, |first, next| {
@@ -418,7 +408,7 @@ impl Parse for ConstructorCall {
         }, pre_tokens.into_iter().collect())?;
 
         Ok(Self {
-            env,
+            mods,
             class,
             parameters: Parser::parse2(Punctuated::parse_terminated, param_tokens)?,
             err_class: (!input.is_empty())
@@ -659,52 +649,114 @@ impl Debug for Return {
     }
 }
 
+/// (Optional) Modifier tokens for [`crate::call!`] and its adjacent macros.
+/// 
+/// # Parsing
+/// Parses the beginnning tokens of the [`crate::call`] macros to find an
+/// *[`Explicit`][Env::Explicit] [`JNIEnv`][jni::JNIEnv] declaration* and/or a `?` ([JniCallErrorHandler]).
+/// 
+/// Takes all tokens until it finds the symbol `=>`.
+/// All tokens before that symbol are the expression that resolves to the [`JNIEnv`][jni::JNIEnv].
+/// 
+/// Returns `Err` if the tokens could't be parsed into an [`Explicit`][Env::Explicit] [`Expression`][syn::Expr] or a `?`.
+/// 
+/// ## Example
+/// ```ignore
+/// call!(env, ?=> myfn() -> void)
+/// ```
+#[derive(Debug, Default)]
+pub struct MacroCallModifiers {
+    pub jni_error_handler: JniCallErrorHandler,
+    pub env: Env,
+}
+impl Parse for MacroCallModifiers {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        use proc_macro2::{TokenTree, Spacing};
+
+        // Check whether the macro caller is going to declare modifiers for this call.
+        let result = crate::utils::step_until_each(input, [
+            |token| matches!(token, TokenTree::Punct(punct) if punct.as_char() == '=' && punct.spacing() == Spacing::Joint),
+            |token| matches!(token, TokenTree::Punct(punct) if punct.as_char() == '>' && punct.spacing() == Spacing::Alone),
+        ]);
+
+        Ok(match result {
+            Ok(pattern) => {
+                enum ModPossibilities {
+                    ErrorHandler(JniCallErrorHandler),
+                    Env(Env),
+                }
+                impl Parse for ModPossibilities {
+                    fn parse(input: ParseStream) -> syn::Result<Self> {
+                        if input.peek(Token![?]) {
+                            Ok(Self::ErrorHandler(input.parse()?))
+                        } else {
+                            Ok(Self::Env(input.parse()?))
+                        }
+                    }
+                }
+
+                let tokens = pattern.pre_tokens
+                    .into_iter()
+                    .collect::<TokenStream>();
+                let span = tokens.span();
+                let mods = syn::parse::Parser::parse2(|input: ParseStream| {
+                    Punctuated::<ModPossibilities, Token![,]>::parse_terminated(input)
+                }, tokens)?;
+
+                let mut jni_error_handler = Option::<JniCallErrorHandler>::None;
+                let mut env = Option::<Env>::None;
+
+                for m in mods {
+                    match m {
+                        ModPossibilities::ErrorHandler(error_handler) => match jni_error_handler {
+                            Some(_) => return Err(syn::Error::new(span, "ErrorHandler modifier is set twice")),
+                            None => jni_error_handler = Some(error_handler),
+                        },
+                        ModPossibilities::Env(expr) => match env {
+                            Some(_) => return Err(syn::Error::new(span, "JNIEnv modifier is set twice")),
+                            None => env = Some(expr),
+                        },
+                    }
+                }
+
+                Self {
+                    jni_error_handler: jni_error_handler.unwrap_or_default(),
+                    env: env.unwrap_or_default(),
+                }
+            },
+            // Arrow pattern not found.
+            Err(_) => Self::default(),
+        })
+    }
+}
+
 /// Handles the declaration of the [`JNIEnv`][jni::JNIEnv] used in the macros.
 /// 
 /// This can take the form of either a **local variable** declared within the *macro block*,
 /// or an **argument** that is passed externally.
 /// Regardless of the form, a *local* `env: &mut JNIEnv<'_>` MUST be *in scope* in all generated code by the macros.
 /// 
-/// # Parsing
-/// Parses the beginnning tokens of the [`crate::call`] macros to find an *[`Explicit`][Env::Explicit] declaration* of the [`JNIEnv`][jni::JNIEnv].
-/// 
-/// Takes all tokens until it finds the symbol `=>`.
-/// All tokens before that symbol are the expression that resolves to the [`JNIEnv`][jni::JNIEnv].
-/// 
-/// Returns [`None`][Env::None] if the pattern was not found.
-/// Returns `Err` if the tokens could't be parsed into an [`Expression`][syn::Expr].
-/// 
-/// ## Example
-/// ```ignore
-/// call!(env=> myfn() -> void)
-/// ```
+/// Parses an [`Expr`] and returns [`Explicit`][Env::Explicit], otherwise returns [`None`][Env::None] (does not return `Err`).
+#[derive(Default)]
 pub enum Env {
     /// The `env` is evaluated from a custom [`Expression`][Expr] passed in by the macro user.
     /// The caller macro still needs to create a local `env: &mut JNIEnv<'_>` to store the reference.
     Explicit(Expr),
     /// The `env` is in scope because it is an **argument**,
     /// so the caller macro doesn't need to generate `env` local.
+    /// 
+    /// This is only used in [`jni_fn`][crate::jni_fn::jni_fn()] and [`FromObject` derive][crate::object].
+    /// This CANNOT be used in the other (function-like) macros.
     Argument,
     /// No `env` available.
     /// The caller macro has to create its own `env` local by calling [`get_env()`][ez_jni::utils::get_env()].
-    None
+    #[default] None
 }
 impl Parse for Env {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        use proc_macro2::{TokenTree, Spacing};
-
-        crate::utils::step_until_each(input, [
-            |token| matches!(token, TokenTree::Punct(punct) if punct.as_char() == '=' && punct.spacing() == Spacing::Joint),
-            |token| matches!(token, TokenTree::Punct(punct) if punct.as_char() == '>' && punct.spacing() == Spacing::Alone),
-        ])
-            .map(|result| result.pre_tokens.into_iter().collect::<TokenStream>())
-            .ok()
-            .map(|tokens| syn::parse2::<Expr>(tokens))
-            .transpose()
-            .map(|expr| match expr {
-                Some(expr) => Self::Explicit(expr),
-                None => Self::None
-            })
+        input.parse::<Expr>()
+            .map(Self::Explicit)
+            .or(Ok(Self::None))
     }
 }
 impl ToTokens for Env {
@@ -716,15 +768,134 @@ impl ToTokens for Env {
         })
     }
 }
-impl Default for Env {
-    fn default() -> Self { Self::Argument }
-}
 impl Debug for Env {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Explicit(expr) => f.write_str(&format!("Env::Explicit({})", expr.to_token_stream().to_string())),
             Self::Argument => f.write_str("Env::Argument"),
             Self::None => write!(f, "Env::None")
+        }
+    }
+}
+
+/// Handles errors of JNI calls, whether the macro should `panic!` on error ([`Unwrap`][Self::Unwrap]), or wether it should *let the caller handle it* ([`Manual`][Self::Manual]).
+/// 
+/// This should generate different tokens depending on which part of the macro output is handling the error.
+/// For instance, for **value conversions** in [`types` module][crate::types] simply `unwrap()` the result or *propagate it* (with `?`, use [`Self::handle_value_conversion_error`]).
+/// When used with the *top-level macros* (i.e. [`call`][MethodCall], [`field`][FieldCall], [`new`][ConstructorCall], and [`class`][get_class]),
+/// however, the result can be `unwraped`, but the error can't be propagated because the macro doesn't know in what scope it is being called in,
+/// so it lets the caller handle the [`Err`].
+/// On top of that, the ez_jni functions for [`call`][MethodCall] and [`new`][ConstructorCall] can return an [`Err`] of either `MethodCallEror` or `JavaException`,
+/// so those need completely different *error handling* and *value conversion* tokens.
+#[derive(Default)]
+pub enum JniCallErrorHandler {
+    Manual(Token![?]),
+    #[default] Unwrap,
+}
+impl JniCallErrorHandler {
+    /// Handle the [`Result`] of a call to any ez_jni function/method for converting a value to/from Java/Rust.
+    /// 
+    /// Generates tokens for `unwraping` or propagating (`?`) error to the macro call error handler (see [`Self::handle_call_error`] and [`Self::convert_call_return_value`])
+    /// 
+    /// The resulting tokens from this function *must* be used as a **method chain**.
+    pub fn handle_value_conversion_error(&self) -> TokenStream {
+        match self {
+            Self::Unwrap => quote! { .unwrap_jni() },
+            Self::Manual(q) => q.to_token_stream(),
+        }
+    }
+
+    /// Handle the [`Result`] of a *top-level macro call*.
+    /// 
+    /// Generates `unwraping` tokens, or nothing if the error should be handled by the caller.
+    /// 
+    /// The resulting tokens from this function *must* be used as a **chain**.
+    fn handle_call_error(&self) -> TokenStream {
+        match self {
+            Self::Unwrap => quote! { .unwrap_jni() },
+            Self::Manual(_) => quote! { },
+        }
+    }
+
+    /// Handle the [`Result`]s of [`call`][MethodCall] and [`new`][ConstructorCall].
+    /// Both error types `MethodCallError` and `JavaException` have to be handled in product form of the [`Return`] and [`JniCallError`] states.
+    /// 
+    /// Generates `unwraping` tokens, or tries to combine the two error types.
+    /// 
+    /// The resulting tokens from this function *must* be used as a **chain**.
+    fn convert_call_return_value(&self, return_type: &Return) -> TokenStream {
+        // Convert from the returned Java value to Rust value
+        let val_token = |span: Span| quote_spanned! {span=> __val };
+        let value_conversion = match return_type {
+            // Normal conversion
+            Return::Assertive(ReturnableType::Type(ty))
+            | Return::Result { ty: ReturnableType::Type(ty), .. } => ty.convert_jvalue_to_rvalue(&val_token(ty.span()), self),
+            // Void conversion
+            Return::Assertive(ReturnableType::Void(ident))
+            | Return::Result { ty: ReturnableType::Void(ident), .. } => Type::convert_void_to_unit(&val_token(ident.span()), self)
+        };
+
+        match (self, return_type) {
+            // Panic if the call returned MethodCallError or a JavaException.
+            (JniCallErrorHandler::Unwrap, Return::Assertive(_)) => {
+                quote! {
+                    .unwrap_jni()
+                    .map(|__val| #value_conversion)
+                    .unwrap_jni()
+                }
+            },
+            // Panic if the call returned MethodCallError, but return the JavaException in a Result.
+            (JniCallErrorHandler::Unwrap, Return::Result { .. }) => {
+                quote! {
+                    .and_then(|__result| {
+                        if let Err(__exception) = &__result {
+                            ::ez_jni::utils::check_object_class(__exception.as_ref(), "class", env)?;
+                        }
+                        Ok(__result)
+                    })
+                    .unwrap_jni()
+                    .map(|__val| #value_conversion)
+                }
+            },
+            // Combine the MethodCallError and JavaException into the same result with MethodCallError.
+            (JniCallErrorHandler::Manual(_), Return::Assertive(_)) => {
+                quote! {
+                    .and_then(|__result| match __result {
+                        // Can't use map because the #value_conversion errors are being propagated.
+                        Ok(__val) => Ok(#value_conversion),
+                        Err(__exception) => Err(<::ez_jni::JavaException as ::core::convert::Into<::ez_jni::error::MethodCallError>>::into(__exception)),
+                    })
+                }
+            },
+            // Return the MethodCallError or JavaException in different Results.
+            (JniCallErrorHandler::Manual(_), Return::Result { .. }) => {
+                quote! {
+                    .and_then(|__result| match __result {
+                        Ok(__val) => Ok(#value_conversion),
+                        // Can't use map because the #value_conversion errors are being propagated.
+                        Err(__exception) => {
+                            ::ez_jni::utils::check_object_class(__exception.as_ref(), "class", env)?;
+                            __exception
+                        },
+                    })
+                }
+            },
+        }
+    }
+}
+impl Parse for JniCallErrorHandler {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        Ok(match input.parse::<Token![?]>() {
+            Ok(q) => Self::Manual(q),
+            Err(_) => Self::Unwrap,
+        })
+    }
+}
+impl Debug for JniCallErrorHandler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Manual(_) => f.write_str("JniCallErrorHandler::Manual"),
+            Self::Unwrap => f.write_str("JniCallErrorHandler::Unwrap"),
         }
     }
 }
@@ -741,19 +912,4 @@ fn gen_arguments<'a>(params: impl Iterator<Item = &'a Parameter>) -> TokenStream
             }
         });
     quote! { &[ #( #params ),* ] }
-}
-
-/// Generates code to check if `Exception` Object returned from a `method call` is of an expected [`Class`].
-fn check_exception_class(err_class: &Class) -> TokenStream {
-    if err_class.rust_type() == ClassRustType::JThrowable {
-        // Skip exception class check if user used the shorthand
-        quote!()
-    } else {
-        let class = err_class.to_jni_class_path();
-        quote! {
-            .inspect_err(|exception| {
-                ::ez_jni::utils::check_object_class(exception.as_ref(), #class, env).unwrap_display()
-            })
-        }
-    }
 }

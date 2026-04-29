@@ -228,10 +228,9 @@ fn call_helper<'local, T>(
     //
     // This only happens in DEBUG builds.
     #[cfg(debug_assertions)] {
-        if let Err(error) = &result {
-            if let MethodCallError::MethodNotFound { .. } = error {
-                crate::hints::print_method_existence_report(&callee_class, method_name, method_sig, callee.is_static(), env)
-            }
+        if let Err(error) = &result
+        && let MethodCallError::MethodNotFound { .. } = error {
+            crate::hints::print_method_existence_report(&callee_class, method_name, method_sig, callee.is_static(), env)
         }
     };
 
@@ -421,11 +420,9 @@ pub(super) fn field_helper<'local>(
     //
     // This only happens in DEBUG builds.
     #[cfg(debug_assertions)] {
-        if let Err(error) = &result {
-            if let FieldError::FieldNotFound(_)
-            | FieldError::MethodNotFound { .. } = error {
-                crate::hints::print_field_existence_report(&callee_class, name, ty, callee.is_static(), env)
-            }
+        if let Err(error) = &result
+        && let FieldError::FieldNotFound(_) | FieldError::MethodNotFound { .. } = error {
+            crate::hints::print_field_existence_report(&callee_class, name, ty, callee.is_static(), env)
         }
     };
 

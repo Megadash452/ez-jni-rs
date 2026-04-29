@@ -3,9 +3,9 @@ use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
 use syn::{braced, ext::IdentExt as _, parenthesized, parse::{Parse, ParseStream}, punctuated::Punctuated, token::{Brace, Paren}, Attribute, GenericParam, Generics, Ident, Lifetime, LitStr, Token};
 use utils::java_method_to_symbol;
 use crate::{
-    call::Env,
+    call::{Env, JniCallErrorHandler},
     types::{Class, ClassRustType, Conversion as _, InnerType, Primitive, SigType, Type},
-    utils::{gen_signature, merge_errors, ops_prelude, take_class_attribute_required, Spanned}
+    utils::{Spanned, gen_signature, merge_errors, ops_prelude, take_class_attribute_required}
 };
 
 /// Processes the input for [`crate::jni_fns`].
@@ -350,7 +350,7 @@ impl JniFnArg {
         if matches!(&self.ty, Type::Assertive(InnerType::Object(class)) if class.is_object_ref()) {
             return TokenStream::new();
         }
-        self.ty.convert_java_to_rust(&name.to_token_stream())
+        self.ty.convert_java_to_rust(&name.to_token_stream(), &JniCallErrorHandler::Unwrap)
             .map(|conversion| quote! { #(#attrs)* let #mutability #name = #conversion; })
             // Output nothing if there is no conversion to be done.
             .unwrap_or_default()

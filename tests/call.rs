@@ -496,6 +496,32 @@ fn singleton() { test_with_jnienv(|| {
 }) }
 
 #[test]
+fn error_handler() { test_with_jnienv(|| {
+    // Method call
+    call!(? => static me.test.Test.getBoolean() -> bool).unwrap_jni();
+    call!(? => static me.test.Test.getString() -> String).unwrap_jni();
+    call!(? => static me.test.Test.throwPrim() -> Result<bool, Exception>).unwrap_jni().unwrap_jni();
+    call!(? => static me.test.Test.getBooleanArray() -> [bool]).unwrap_jni();
+    call!(? => static me.test.Test.getStringArray() -> [String]).unwrap_jni();
+    call!(? => static me.test.Test.get3DObjectArray() -> [[[Object]]]).unwrap_jni();
+    call!(? => static me.test.Test.primArgs(bool(true), char('a'), i8(0), i16(0), i32(0), i64(0), f32(0.0), f64(0.0)) -> void).unwrap_jni();
+    call!(? => static me.test.Test.objArgs(Object(JObject::null()), String("Hello")) -> void).unwrap_jni();
+    call!(? => static me.test.Test.objArrayArgs([Object](&[JObject::null()]), [String](&["Hello"])) -> void).unwrap_jni();
+    // Field Access
+    field!(? => static me.test.Test.member1: int).unwrap_jni();
+    field!(? => static me.test.Test.member1: int = 3).unwrap_jni();
+    // ... With getter/setter
+    field!(? => static me.test.Test.member3: int).unwrap_jni();
+    field!(? => static me.test.Test.member3: int = 3).unwrap_jni();
+    // Constructor
+    new!(? => me.test.Test()).unwrap_jni();
+    // Class object
+    clas!(? => me.test.Test).unwrap_jni();
+    // Singleton class
+    singleton!(? => me.test.Test$Singleton).unwrap_jni();
+}) }
+
+#[test]
 fn print() {
     // This test will NOT run in the android environment, so it is impossible to test if the call to android.util.Log will be successful.
     println!("Hello, World!");

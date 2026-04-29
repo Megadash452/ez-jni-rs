@@ -17,7 +17,7 @@ use crate::{call::Env, types::{Class, SigType}};
 /// (see [`Env::Argument`]).
 pub fn ops_prelude(env: Env) -> TokenStream {
     quote! {
-        #[allow(unused_imports)] use ::std::borrow::Borrow;
+        #[allow(unused_imports)] use ::std::borrow::Borrow as _;
         #[allow(unused_imports)] use ::ez_jni::utils::ResultExt as _;
         #[allow(unused_imports)] use ::ez_jni::utils::JniResultExt as _;
         #env

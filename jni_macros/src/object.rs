@@ -53,7 +53,7 @@ pub fn derive_enum(enm: syn::ItemEnum) -> syn::Result<TokenStream> {
     let base_class_check = enm.class.as_ref()
         .map(|_| quote_spanned! {enm.ident.span()=> {
             let class = <Self as ::ez_jni::Class>::class();
-            if !env.is_instance_of(object, &class).catch(env).unwrap_jni() {
+            if !env.is_instance_of(object, &class).catch(env)? {
                 return Err(::ez_jni::error::FromObjectError::ClassMismatch {
                     obj_class: __class,
                     target_classes: ::ez_jni::utils::NonEmpty::new(::std::borrow::Cow::into_owned(class)),
@@ -537,7 +537,7 @@ impl Enum {
                 let _if = if i == 0 { quote!(if) } else { quote!(else if) };
                 
                 Ok(quote_spanned! {variant.span()=>
-                    #_if env.is_instance_of(object, #class).catch(env).unwrap_jni() {
+                    #_if env.is_instance_of(object, #class).catch(env)? {
                         Ok(Self::#ident #ctor)
                     }
                 })
