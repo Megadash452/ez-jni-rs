@@ -1,6 +1,6 @@
 mod common;
 
-use ez_jni::{JavaException, ObjectArray, call, class, eprintln, error::FromObjectError, field, new, println, singleton, utils::test_with_jnienv};
+use ez_jni::{JavaException, ObjectArray, call, class, eprintln, error::{FieldError, FromObjectError, GetClassError, MethodCallError}, field, new, println, singleton, utils::test_with_jnienv};
 use jni::objects::{JClass, JObject, JString, JThrowable};
 
 use crate::common::fail_with;
@@ -281,7 +281,7 @@ fn return_fail() { test_with_jnienv(|| {
     // Incorrect Error Class
     fail_with(
         || { call!(static me.test.Test.throwPrimArray() -> Result<[bool], java.lang.WrongException>).unwrap_err(); },
-        "me.ezjni.RustPanic: Could not find class \"java/lang/WrongException\"",
+        "Error converting JValue returned by method call: Could not find class \"java/lang/WrongException\"",
     );
 }) }
 
@@ -496,29 +496,29 @@ fn singleton() { test_with_jnienv(|| {
 }) }
 
 #[test]
-fn error_handler() { test_with_jnienv(|| {
+fn manual_call_error_handling() { test_with_jnienv(|| {
     // Method call
-    call!(? => static me.test.Test.getBoolean() -> bool).unwrap_jni();
-    call!(? => static me.test.Test.getString() -> String).unwrap_jni();
-    call!(? => static me.test.Test.throwPrim() -> Result<bool, Exception>).unwrap_jni().unwrap_jni();
-    call!(? => static me.test.Test.getBooleanArray() -> [bool]).unwrap_jni();
-    call!(? => static me.test.Test.getStringArray() -> [String]).unwrap_jni();
-    call!(? => static me.test.Test.get3DObjectArray() -> [[[Object]]]).unwrap_jni();
-    call!(? => static me.test.Test.primArgs(bool(true), char('a'), i8(0), i16(0), i32(0), i64(0), f32(0.0), f64(0.0)) -> void).unwrap_jni();
-    call!(? => static me.test.Test.objArgs(Object(JObject::null()), String("Hello")) -> void).unwrap_jni();
-    call!(? => static me.test.Test.objArrayArgs([Object](&[JObject::null()]), [String](&["Hello"])) -> void).unwrap_jni();
+    let _: Result<_, MethodCallError> = call!(? => static me.test.Test.getBoolean() -> bool);
+    let _: Result<_, MethodCallError> = call!(? => static me.test.Test.getString() -> String);
+    let _: Result<Result<_, JavaException>, MethodCallError> = call!(? => static me.test.Test.throwPrim() -> Result<bool, Exception>);
+    let _: Result<_, MethodCallError> = call!(? => static me.test.Test.getBooleanArray() -> [bool]);
+    let _: Result<_, MethodCallError> = call!(? => static me.test.Test.getStringArray() -> [String]);
+    let _: Result<_, MethodCallError> = call!(? => static me.test.Test.get3DObjectArray() -> [[[Object]]]);
+    let _: Result<_, MethodCallError> = call!(? => static me.test.Test.primArgs(bool(true), char('a'), i8(0), i16(0), i32(0), i64(0), f32(0.0), f64(0.0)) -> void);
+    let _: Result<_, MethodCallError> = call!(? => static me.test.Test.objArgs(Object(JObject::null()), String("Hello")) -> void);
+    let _: Result<_, MethodCallError> = call!(? => static me.test.Test.objArrayArgs([Object](&[JObject::null()]), [String](&["Hello"])) -> void);
     // Field Access
-    field!(? => static me.test.Test.member1: int).unwrap_jni();
-    field!(? => static me.test.Test.member1: int = 3).unwrap_jni();
+    let _: Result<_, FieldError> = field!(? => static me.test.Test.member1: int);
+    let _: Result<(), FieldError> = field!(? => static me.test.Test.member1: int = 3);
     // ... With getter/setter
-    field!(? => static me.test.Test.member3: int).unwrap_jni();
-    field!(? => static me.test.Test.member3: int = 3).unwrap_jni();
+    let _: Result<_, FieldError> = field!(? => static me.test.Test.member3: int);
+    let _: Result<(), FieldError> = field!(? => static me.test.Test.member3: int = 3);
     // Constructor
-    new!(? => me.test.Test()).unwrap_jni();
+    let _: Result<JObject<'_>, MethodCallError> = new!(? => me.test.Test());
     // Class object
-    clas!(? => me.test.Test).unwrap_jni();
+    let _: Result<JClass<'_>, GetClassError> = class!(? => me.test.Test);
     // Singleton class
-    singleton!(? => me.test.Test$Singleton).unwrap_jni();
+    let _: Result<JObject<'_>, MethodCallError> = singleton!(? => me.test.Test$Singleton);
 }) }
 
 #[test]

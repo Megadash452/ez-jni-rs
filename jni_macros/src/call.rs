@@ -27,15 +27,15 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
     let arguments = gen_arguments(call.parameters.iter());
 
     // Convert from the returned Result to a value the caller expects.
-    let return_conversion = call.mods.jni_error_handler.convert_call_return_value(&call.return_type);
+    let return_conversion = call.mods.jni_error_handler.convert_call_return_value(&call.return_type, true);
     // TODO: make an error handler for #val_conversion of arguments, so that errors gets returned in the MethodCallError.
 
     // Build the macro function call
 
     let jni_method = if call.call_type.is_static() {
-        quote! { ::ez_jni::utils::call_static_method(#callee, #name, #signature, #arguments, env) }
+        quote! { ::ez_jni::utils::call_static_method }
     } else {
-        quote! { ::ez_jni::utils::call_obj_method(#callee, #name, #signature, #arguments, env) }
+        quote! { ::ez_jni::utils::call_obj_method }
     };
     quote! { {
         #ops_prelude
@@ -68,7 +68,7 @@ pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
         Some(err_class) => Return::Result { result: Ident::new("throws", err_class.span()), ty: ReturnableType::Type(return_type), err_class },
         None => Return::Assertive(ReturnableType::Type(return_type)),
     };
-    let return_conversion = call.mods.jni_error_handler.convert_call_return_value(&return_type);
+    let return_conversion = call.mods.jni_error_handler.convert_call_return_value(&return_type, false);
 
     quote! { {
         #ops_prelude
@@ -820,41 +820,59 @@ impl JniCallErrorHandler {
     /// Handle the [`Result`]s of [`call`][MethodCall] and [`new`][ConstructorCall].
     /// Both error types `MethodCallError` and `JavaException` have to be handled in product form of the [`Return`] and [`JniCallError`] states.
     /// 
+    /// The argument **`convert_jvalue`** indicates whether the jni call's [`Ok`] value is a [`JValue`][jni::objects::JValueOwned] that must be converted to a *Rust value*.
+    /// Otherwise, pass `false` if the returned value should *not* be converted.
+    /// 
     /// Generates `unwraping` tokens, or tries to combine the two error types.
     /// 
     /// The resulting tokens from this function *must* be used as a **chain**.
-    fn convert_call_return_value(&self, return_type: &Return) -> TokenStream {
+    fn convert_call_return_value(&self, return_type: &Return, convert_jvalue: bool) -> TokenStream {
         // Convert from the returned Java value to Rust value
         let val_token = |span: Span| quote_spanned! {span=> __val };
-        let value_conversion = match return_type {
-            // Normal conversion
-            Return::Assertive(ReturnableType::Type(ty))
-            | Return::Result { ty: ReturnableType::Type(ty), .. } => ty.convert_jvalue_to_rvalue(&val_token(ty.span()), self),
-            // Void conversion
-            Return::Assertive(ReturnableType::Void(ident))
-            | Return::Result { ty: ReturnableType::Void(ident), .. } => Type::convert_void_to_unit(&val_token(ident.span()), self)
+        let value_conversion = if convert_jvalue {
+            match return_type {
+                // Normal conversion
+                Return::Assertive(ReturnableType::Type(ty))
+                | Return::Result { ty: ReturnableType::Type(ty), .. } => ty.convert_jvalue_to_rvalue(&val_token(ty.span()), self),
+                // Void conversion
+                Return::Assertive(ReturnableType::Void(ident))
+                | Return::Result { ty: ReturnableType::Void(ident), .. } => Type::convert_void_to_unit(&val_token(ident.span()), self)
+            }
+        } else {
+            val_token(Span::call_site())
         };
 
         match (self, return_type) {
             // Panic if the call returned MethodCallError or a JavaException.
             (JniCallErrorHandler::Unwrap, Return::Assertive(_)) => {
+                let value_conversion = if convert_jvalue {
+                    quote! { .map(|__val| #value_conversion) }
+                } else {
+                    quote! { }
+                };
                 quote! {
                     .unwrap_jni()
-                    .map(|__val| #value_conversion)
+                    #value_conversion
                     .unwrap_jni()
                 }
             },
             // Panic if the call returned MethodCallError, but return the JavaException in a Result.
-            (JniCallErrorHandler::Unwrap, Return::Result { .. }) => {
+            (JniCallErrorHandler::Unwrap, Return::Result { err_class, .. }) => {
+                let value_conversion = if convert_jvalue {
+                    quote! { .map(|__val| #value_conversion) }
+                } else {
+                    quote! { }
+                };
+                let err_class = err_class.to_jni_class_path();
                 quote! {
                     .and_then(|__result| {
                         if let Err(__exception) = &__result {
-                            ::ez_jni::utils::check_object_class(__exception.as_ref(), "class", env)?;
+                            ::ez_jni::utils::check_object_class(__exception.as_ref(), #err_class, env)?;
                         }
                         Ok(__result)
                     })
                     .unwrap_jni()
-                    .map(|__val| #value_conversion)
+                    #value_conversion
                 }
             },
             // Combine the MethodCallError and JavaException into the same result with MethodCallError.
@@ -863,19 +881,20 @@ impl JniCallErrorHandler {
                     .and_then(|__result| match __result {
                         // Can't use map because the #value_conversion errors are being propagated.
                         Ok(__val) => Ok(#value_conversion),
-                        Err(__exception) => Err(<::ez_jni::JavaException as ::core::convert::Into<::ez_jni::error::MethodCallError>>::into(__exception)),
+                        Err(__exception) => Err(::ez_jni::error::MethodCallError::UnhandledException(__exception)),
                     })
                 }
             },
             // Return the MethodCallError or JavaException in different Results.
-            (JniCallErrorHandler::Manual(_), Return::Result { .. }) => {
+            (JniCallErrorHandler::Manual(_), Return::Result { err_class, .. }) => {
+                let err_class = err_class.to_jni_class_path();
                 quote! {
                     .and_then(|__result| match __result {
-                        Ok(__val) => Ok(#value_conversion),
+                        Ok(__val) => Ok(Ok(#value_conversion)),
                         // Can't use map because the #value_conversion errors are being propagated.
                         Err(__exception) => {
-                            ::ez_jni::utils::check_object_class(__exception.as_ref(), "class", env)?;
-                            __exception
+                            ::ez_jni::utils::check_object_class(__exception.as_ref(), #err_class, env)?;
+                            Ok(Err(__exception))
                         },
                     })
                 }

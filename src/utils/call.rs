@@ -387,7 +387,7 @@ pub(super) fn field_helper<'local>(
             let getter_name = getter_name(name);
 
             match error {
-                JniError::Jni(jni::errors::Error::MethodNotFound { name, sig })
+                JniError::Jni(jni::errors::Error::MethodNotFound { sig, .. })
                 if field_error.is_some() => FieldError::MethodNotFound {
                     cause: field_error.unwrap(),
                     error: MethodNotFoundError::new(target_class, getter_name, &sig),
