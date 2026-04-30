@@ -783,7 +783,7 @@ impl Debug for Env {
 /// This should generate different tokens depending on which part of the macro output is handling the error.
 /// For instance, for **value conversions** in [`types` module][crate::types] simply `unwrap()` the result or *propagate it* (with `?`, use [`Self::handle_value_conversion_error`]).
 /// When used with the *top-level macros* (i.e. [`call`][MethodCall], [`field`][FieldCall], [`new`][ConstructorCall], and [`class`][get_class]),
-/// however, the result can be `unwraped`, but the error can't be propagated because the macro doesn't know in what scope it is being called in,
+/// however, the result can be `unwrapped`, but the error can't be propagated because the macro doesn't know in what scope it is being called in,
 /// so it lets the caller handle the [`Err`].
 /// On top of that, the ez_jni functions for [`call`][MethodCall] and [`new`][ConstructorCall] can return an [`Err`] of either `MethodCallEror` or `JavaException`,
 /// so those need completely different *error handling* and *value conversion* tokens.
@@ -795,7 +795,7 @@ pub enum JniCallErrorHandler {
 impl JniCallErrorHandler {
     /// Handle the [`Result`] of a call to any ez_jni function/method for converting a value to/from Java/Rust.
     /// 
-    /// Generates tokens for `unwraping` or propagating (`?`) error to the macro call error handler (see [`Self::handle_call_error`] and [`Self::convert_call_return_value`])
+    /// Generates tokens for `unwrapping` or propagating (`?`) error to the macro call error handler (see [`Self::handle_call_error`] and [`Self::convert_call_return_value`])
     /// 
     /// The resulting tokens from this function *must* be used as a **method chain**.
     pub fn handle_value_conversion_error(&self) -> TokenStream {
@@ -807,7 +807,7 @@ impl JniCallErrorHandler {
 
     /// Handle the [`Result`] of a *top-level macro call*.
     /// 
-    /// Generates `unwraping` tokens, or nothing if the error should be handled by the caller.
+    /// Generates `unwrapping` tokens, or nothing if the error should be handled by the caller.
     /// 
     /// The resulting tokens from this function *must* be used as a **chain**.
     fn handle_call_error(&self) -> TokenStream {
@@ -823,7 +823,7 @@ impl JniCallErrorHandler {
     /// The argument **`convert_jvalue`** indicates whether the jni call's [`Ok`] value is a [`JValue`][jni::objects::JValueOwned] that must be converted to a *Rust value*.
     /// Otherwise, pass `false` if the returned value should *not* be converted.
     /// 
-    /// Generates `unwraping` tokens, or tries to combine the two error types.
+    /// Generates `unwrapping` tokens, or tries to combine the two error types.
     /// 
     /// The resulting tokens from this function *must* be used as a **chain**.
     fn convert_call_return_value(&self, return_type: &Return, convert_jvalue: bool) -> TokenStream {
@@ -931,4 +931,37 @@ fn gen_arguments<'a>(params: impl Iterator<Item = &'a Parameter>) -> TokenStream
             }
         });
     quote! { &[ #( #params ),* ] }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn macro_call_modifiers() {
+        // JNI Call error handler
+        assert!(matches!(syn::parse_quote! { ? => }, MacroCallModifiers {
+            jni_error_handler: JniCallErrorHandler::Manual(_),
+            env: Env::None,
+        }));
+        // Explicit JNIEnv
+        assert!(matches!(syn::parse_quote! { env => }, MacroCallModifiers {
+            jni_error_handler: JniCallErrorHandler::Unwrap,
+            env: Env::Explicit(_),
+        }));
+        // All
+        assert!(matches!(syn::parse_quote! { ?, env => }, MacroCallModifiers {
+            jni_error_handler: JniCallErrorHandler::Manual(_),
+            env: Env::Explicit(_),
+        }));
+        assert!(matches!(syn::parse_quote! { env, ? => }, MacroCallModifiers {
+            jni_error_handler: JniCallErrorHandler::Manual(_),
+            env: Env::Explicit(_),
+        }));
+        // Empty
+        assert!(matches!(syn::parse_quote! { => }, MacroCallModifiers {
+            jni_error_handler: JniCallErrorHandler::Unwrap,
+            env: Env::None,
+        }));
+    }
 }

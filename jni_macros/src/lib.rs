@@ -132,15 +132,20 @@ pub fn jni_fn(input: TokenStream) -> TokenStream {
 /// call!(static class.methodName() -> void);
 /// ```
 /// 
-/// TODO: doc # Modifiers
-/// ## Explicit `JNIEnv`
+/// ## Macro Modifiers
 /// 
-/// The macro implicitly gets the [`JNIEnv`][jni::JNIEnv] from a thread-local stack.
-/// If a different value is preffered, it can be specified at the beginning:
+/// The macro does certain operations implicitly, like getting the [`JNIEnv`][jni::JNIEnv] from the *thread-local stack*,
+/// and `unwrapping` errors returned by the underlying jni functions.
+/// However, the caller can (optionally) modify this default behavior by passing certain tokens before the actual macro tokens.
+/// These modifier tokens must be preceded by a *fat arrow (`=>`)*, are *comma separated*, and can be supplied in any order.
+///  * Pass any expression that resolves to a [`&mut JNIEnv`][jni::JNIEnv] value.
+///  * Pass the *propagate operator (`?`)* to make the macro return a [`Result`] with the jni function's error.
+///    This avoids a `panic!` and allows the caller to handle the error.
+/// 
+/// Example:
 /// ```ignore
-/// call!(env=> ...)
+/// call!(env,?=> obj.method())
 /// ```
-/// where `env` can be any expression that resolves to a [`&mut JNIEnv`][jni::JNIEnv].
 /// 
 /// ## Types
 /// 
@@ -253,11 +258,12 @@ pub fn call(input: TokenStream) -> TokenStream {
 /// new!(me.author.ClassName(int(arg1), String(arg2), java.lang.Int(arg3)))
 /// ```
 /// 
-/// TODO: simple doc modifiers
-/// Can also take a custom [`JNIEnv`][jni::JNIEnv], like in [`call!`](call!#explicit-jnienv).
-/// Can also *propagate* JNI errors, like in [`call!`](call!#propagate-jni-errors).
+/// ## Macro Modifiers
 /// 
-/// ### Exceptions
+/// This macro can take modifiers preceded by a *fat arrow (`=>`)*.
+/// See [`call!`][call!#macro-modifiers] macro's documentation for details.
+/// 
+/// ## Exceptions
 /// 
 /// The constructor can be followed by **`throws`** and a **Java Class**.
 /// This will make the constructor call return a [`Result<JObject, JavaException>`] instead,
@@ -298,9 +304,10 @@ pub fn new(input: TokenStream) -> TokenStream {
 /// 
 /// The **type** follows the same syntax as in [`call!`](call!#types).
 /// 
-/// // TODO: simple doc modifiers
-/// Can also take a custom [`JNIEnv`][jni::JNIEnv], like in [`call!`](call!#explicit-jnienv).
-/// Can also *propagate* JNI errors, like in [`call!`](call!#propagate-jni-errors).
+/// ## Macro Modifiers
+/// 
+/// This macro can take modifiers preceded by a *fat arrow (`=>`)*.
+/// See [`call!`][call!#macro-modifiers] macro's documentation for details.
 #[proc_macro]
 pub fn field(input: TokenStream) -> TokenStream {
     let call = syn::parse_macro_input!(input as FieldCall);
@@ -317,11 +324,12 @@ pub fn field(input: TokenStream) -> TokenStream {
 /// let class: JClass = class!(me.author.Class);
 /// ```
 /// 
-/// // TODO: simple doc modifiers
-/// Can also take a custom [`JNIEnv`][jni::JNIEnv], like in [`call!`](call!#explicit-jnienv).
-/// Can also *propagate* JNI errors, like in [`call!`](call!#propagate-jni-errors).
-/// 
 /// This is essentially just a shortcut to [`get_class()`](https://docs.rs/ez_jni/latest/ez_jni/utils/fn.get_class.html).
+/// 
+/// ## Macro Modifiers
+/// 
+/// This macro can take modifiers preceded by a *fat arrow (`=>`)*.
+/// See [`call!`][call!#macro-modifiers] macro's documentation for details.
 #[proc_macro]
 pub fn class(input: TokenStream) -> TokenStream {
     parse(input, |input| { Ok((
@@ -340,11 +348,12 @@ pub fn class(input: TokenStream) -> TokenStream {
 /// singleton!(env=> me.author.Singleton);
 /// ```
 /// 
-/// TODO: simple doc modifiers
-/// Can also take a custom [`JNIEnv`][jni::JNIEnv], like in [`call!`](call!#explicit-jnienv).
-/// Can also *propagate* JNI errors, like in [`call!`](call!#propagate-jni-errors).
-/// 
 /// This is essentially just a shortcut to [`call!`] `Class.getInstance() -> Class`.
+/// 
+/// ## Macro Modifiers
+/// 
+/// This macro can take modifiers preceded by a *fat arrow (`=>`)*.
+/// See [`call!`][call!#macro-modifiers] macro's documentation for details.
 #[proc_macro]
 pub fn singleton(input: TokenStream) -> TokenStream {
     parse(input, |input| { Ok((

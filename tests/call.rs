@@ -281,7 +281,7 @@ fn return_fail() { test_with_jnienv(|| {
     // Incorrect Error Class
     fail_with(
         || { call!(static me.test.Test.throwPrimArray() -> Result<[bool], java.lang.WrongException>).unwrap_err(); },
-        "Error converting JValue returned by method call: Could not find class \"java/lang/WrongException\"",
+        "me.ezjni.RustPanic: Error converting JValue returned by method call: Could not find class \"java/lang/WrongException\"",
     );
 }) }
 
