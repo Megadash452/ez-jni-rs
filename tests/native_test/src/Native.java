@@ -148,10 +148,23 @@ public final class Native {
             }
         });
 
-        try {
-            native_test_panic();
-        } catch (Exception e) {
+        try { native_test_panic(); } catch (Exception e) {
             assert e.getMessage().equals("LALALA");
+        }
+        try { assert native_test_primitive_result() == 0; } catch (Exception e) {
+            assert false;
+        }
+        try { native_test_optional_primitive_result(); } catch (Exception e) {
+            assert e.getMessage().equals("Goodbye, World!");
+        }
+        try { assert native_test_object_result().equals("Hello, World!"); } catch (Exception e) {
+            assert false;
+        }
+        try { assert native_test_optional_object_result() == null; } catch (Exception e) {
+            assert false;
+        }
+        try { native_test_result_propagation(); } catch (Exception e) {
+            assert e.getMessage().equals("Goodbye, World!");
         }
     }
 
@@ -213,4 +226,9 @@ public final class Native {
     public native String[][][] native_test_3d_null_str_arr(String[][][] t);
 
     public native void native_test_panic();
+    public native int native_test_primitive_result() throws Exception;
+    public native Integer native_test_optional_primitive_result() throws Exception;
+    public native String native_test_object_result() throws Exception;
+    public native String native_test_optional_object_result() throws Exception;
+    public native void native_test_result_propagation() throws Exception;
 }

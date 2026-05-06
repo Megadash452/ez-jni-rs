@@ -1,6 +1,7 @@
-use proc_macro2::{Span, TokenStream};
+use either::Either;
+use proc_macro2::{Delimiter, Span, TokenStream};
 use quote::{quote_spanned, ToTokens};
-use syn::{bracketed, parse::{discouraged::Speculative as _, Parse}, punctuated::Punctuated, token::Bracket, Ident, LitStr, Token};
+use syn::{Ident, LitStr, Token, bracketed, parse::{Parse, discouraged::{AnyDelimiter, Speculative as _}}, punctuated::Punctuated, token::Bracket};
 use itertools::Itertools as _;
 use std::{fmt::{Debug, Display}, num::NonZeroU32, str::FromStr};
 use crate::{call::JniCallErrorHandler, utils::{Spanned, join_spans}};
@@ -1109,14 +1110,14 @@ impl Conversion for RustPrimitive {
     }
     fn convert_rust_to_java(&self, value: &TokenStream) -> Option<TokenStream> {
         // Use primitive cast to convert to the Java primitive
-        let cast = || {
+        let cast = {
             let jtype = Ident::new(&format!("j{}", JavaPrimitive::from(*self)), Span::call_site());
             quote_spanned! {value.span()=> (#value) as ::jni::sys::#jtype }
         };
         match self {
             Self::Char => Some(quote_spanned! {value.span()=> ::ez_jni::utils::char_to_jchar(#value) }),
-            Self::Bool => Some(cast()),
-            _ if self.is_unsigned() => Some(cast()),
+            Self::Bool => Some(cast),
+            _ if self.is_unsigned() => Some(cast),
             _ => None,
         }
     }
@@ -1272,6 +1273,189 @@ impl From<RustPrimitive> for JavaPrimitive {
             RustPrimitive::I64  => JavaPrimitive::Long,
             RustPrimitive::F32  => JavaPrimitive::Float,
             RustPrimitive::F64  => JavaPrimitive::Double,
+        }
+    }
+}
+
+/// The return type of a JNI [`MethodCall`] or [`jni_fn`].
+///
+/// The caller of the macro can assert that the JNI method call will result in one of the following:
+/// 1. [`Type`] (or `void`) if the function being called can't return `NULL` or throw an `exception` (e.g. `bool` or `java.lang.String`).
+/// 2. `Option<Type>` if the return type is an [`Object`][Type::Object] that could be **NULL**.
+/// 3. `Result<void | Type | Option<Type>, Class>` if the method call can throw an **Exception**,
+///    where the `Err` type is a **Java Class** that extends `java.lang.Throwable`.
+pub enum Return {
+    Empty,
+    /// The method being called can't throw (will `panic!` if it does).
+    Assertive {
+        arrow: Token![->],
+        ty: ReturnType,
+    },
+    /// Holds the Ok Type (a Type or Option), and the Err Type.
+    Result {
+        arrow: Token![->],
+        result: Ident,
+        ty: ReturnType,
+        err_class: Class
+    },
+}
+impl Return {
+    /// Create a new [`Return`] Type containing [`ReturnType::JavaVoid`].
+    pub fn new_void(span: Span) -> Self {
+        Self::Assertive {
+            arrow: syn::token::RArrow { spans: [span; 2] },
+            ty: ReturnType::JavaVoid(Ident::new("void", span)),
+        }
+    }
+    #[allow(unused)]
+    /// Create a new [`Return`] Type containing a regular [`Type`].
+    pub fn new_type(ty: Type) -> Self {
+        Self::Assertive {
+            arrow: syn::token::RArrow { spans: [ty.span(); 2] },
+            ty: ReturnType::Type(ty),
+        }
+    }
+
+    /// Returns the inner Type for the return type. Can be `void` or a [`Type`].
+    /// This does the same thing regardless of if [`Return`] is [`Result`][Return::Result] or not.
+    pub fn ok_type(&self) -> Either<Ident, &Type> {
+        match self {
+            Self::Empty => Either::Left(Ident::new("void", Span::call_site())),
+            Self::Assertive { ty, .. }
+            | Self::Result { ty, .. } => match ty {
+                ReturnType::JavaVoid(ident) => Either::Left(ident.clone()),
+                ReturnType::RustUnit(paren) => Either::Left(Ident::new("void", paren.span.span())),
+                ReturnType::Type(ty) => Either::Right(ty),
+            },
+        }
+    }
+    /// Returns the Java [`Class`] in the [`Err`] type if the return type is [`Result`][Return::Result].
+    pub fn exception_class(&self) -> Option<&Class> {
+        match self {
+            Self::Empty
+            | Self::Assertive { .. } => None,
+            Self::Result { err_class, .. } => Some(err_class),
+        }
+    }
+}
+impl SigType for Return {
+    fn sig_type(&self) -> LitStr {
+        match self {
+            Self::Empty => LitStr::new("V", Span::call_site()),
+            Self::Assertive { ty: inner, .. }
+            | Self::Result { ty: inner, .. } => inner.sig_type(),
+        }
+    }
+}
+impl Spanned for Return {
+    fn span(&self) -> Span {
+        match self {
+            Self::Empty => Span::call_site(),
+            Self::Assertive { arrow, ty } => join_spans([
+                arrow.span(), ty.span()
+            ]),
+            Self::Result { arrow, result, ty, err_class } => join_spans([
+                arrow.span(), result.span(), ty.span(), err_class.span()
+            ]),
+        }
+    }
+}
+impl Parse for Return {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let arrow = match input.parse::<Token![->]>() {
+            Ok(arrow) => arrow,
+            Err(_) => return Ok(Self::Empty),
+        };
+
+        let fork = input.fork();
+        Ok(if let Ok(ident) = fork.parse::<Ident>()
+        && ident == "Result" {
+            input.advance_to(&fork);
+            drop(fork);
+
+            // Parse generic arguements
+            input.parse::<Token![<]>().map_err(|err| {
+                input.error(format!("Result takes generic arguments; {err}"))
+            })?;
+
+            let ty = input.parse()?;
+
+            input.parse::<Token![,]>().map_err(|err| {
+                input.error(format!("Result takes 2 generic arguments; {err}"))
+            })?;
+
+            let err_class = input.parse::<Class>()?;
+            err_class.is_throwable()?;
+
+            input.parse::<Token![>]>()?;
+            Self::Result { arrow, result: ident, ty, err_class }
+        } else {
+            Self::Assertive { arrow, ty: input.parse()? }
+        })
+    }
+}
+impl Debug for Return {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Empty => f.write_str("Return::Empty"),
+            Self::Assertive { ty, .. } => f.debug_tuple("Return::Aserrtive")
+                .field(ty)
+                .finish(),
+            Self::Result { ty, err_class, .. } => f.debug_struct("Return::Result")
+                .field("ty", ty)
+                .field("err_class", &err_class.to_jni_class_path())
+                .finish()
+        }
+    }
+}
+
+/// Same as [`Type`], but has the extra option of `void` both in *Rust and Java*.
+pub enum ReturnType {
+    JavaVoid(Ident),
+    RustUnit(syn::token::Paren),
+    Type(Type)
+}
+impl SigType for ReturnType {
+    fn sig_type(&self) -> LitStr {
+        match self {
+            Self::JavaVoid(ident) => LitStr::new("V", ident.span()),
+            Self::RustUnit(paren) => LitStr::new("V", paren.span.span()),
+            Self::Type(ty) => ty.sig_type(),
+        }
+    }
+}
+impl Spanned for ReturnType {
+    fn span(&self) -> Span {
+        match self {
+            Self::JavaVoid(ident) => ident.span(),
+            Self::RustUnit(paren) => paren.span.span(),
+            Self::Type(ty) => ty.span(),
+        }
+    }
+}
+impl Parse for ReturnType {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let fork = input.fork();
+        if let Ok(ident) = fork.parse::<Ident>()
+        && ident == "void" {
+            input.advance_to(&fork);
+            Ok(Self::JavaVoid(ident))
+        } else if let Ok((delim, span, inner)) = fork.parse_any_delimiter()
+        && delim == Delimiter::Parenthesis
+        && inner.is_empty() {
+            input.advance_to(&fork);
+            Ok(Self::RustUnit(syn::token::Paren { span }))
+        } else {
+            Ok(Self::Type(input.parse()?))
+        }
+    }
+}
+impl Debug for ReturnType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::JavaVoid(_) => f.write_str("void"),
+            Self::RustUnit(_) => f.write_str("()"),
+            Self::Type(ty) => <Type as Debug>::fmt(ty, f),
         }
     }
 }

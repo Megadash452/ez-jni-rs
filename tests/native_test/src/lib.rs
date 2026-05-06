@@ -1,4 +1,4 @@
-use ez_jni::{FromObject as _, ObjectArray, call, jni_fn};
+use ez_jni::{FromObject as _, ObjectArray, call, jni_fn, new};
 use jni::objects::{JClass, JObject};
 
 jni_fn! { me.test.Native =>
@@ -160,11 +160,24 @@ jni_fn! { me.test.Native =>
         panic!("LALALA")
     }
 
-    // pub fn test_jni_fn_10<'local>() -> Result<String, java.lang.Exception> {
-    //
-    // }
+    pub fn native_test_primitive_result<'local>() -> Result<int, Exception> {
+        Ok(0)
+    }
 
-    // pub fn test_jni_fn_11<'local>() -> Result<Option<String>, java.lang.Exception> {
-    //
-    // }
+    pub fn native_test_optional_primitive_result<'local>() -> Result<Option<int>, Exception> {
+        Err(new!(Exception(String("Goodbye, World!"))).into())
+    }
+
+    pub fn native_test_object_result<'local>() -> Result<String, java.lang.Exception> {
+        Ok("Hello, World!".to_string())
+    }
+
+    pub fn native_test_optional_object_result<'local>() -> Result<Option<String>, java.lang.Exception> {
+        Ok(None)
+    }
+
+    pub fn native_test_result_propagation<'local>() -> Result<(), Exception> {
+        Err("Goodbye, World")?;
+        Ok(())
+    }
 }

@@ -1,11 +1,11 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
-use syn::{braced, ext::IdentExt as _, parenthesized, parse::{Parse, ParseStream}, punctuated::Punctuated, token::{Brace, Paren}, Attribute, GenericParam, Generics, Ident, Lifetime, LitStr, Token};
+use syn::{braced, ext::IdentExt as _, parenthesized, parse::{Parse, ParseStream}, punctuated::Punctuated, token::{Brace, Paren}, Attribute, GenericParam, Generics, Ident, Lifetime, Token};
 use utils::java_method_to_symbol;
 use crate::{
     call::{Env, JniCallErrorHandler},
-    types::{Class, ClassRustType, Conversion as _, InnerType, Primitive, SigType, Type},
-    utils::{Spanned, gen_signature, merge_errors, ops_prelude, take_class_attribute_required}
+    types::{Class, ClassRustType, Conversion as _, InnerType, Primitive, Return, ReturnType, Type},
+    utils::{Spanned, gen_signature, join_spans, merge_errors, ops_prelude, take_class_attribute_required}
 };
 
 /// Processes the input for [`crate::jni_fns`].
@@ -44,11 +44,12 @@ pub struct JniFn {
     pub paren_token: Paren,
     pub inputs: Punctuated<JniFnArg, Token![,]>,
     // pub variadic: Option<Variadic>, Should this be allowed?
-    pub output: JniReturn,
+    pub output: Return,
     pub brace_token: Brace,
     pub content: TokenStream,
 }
 impl JniFn {
+    const LIFETIME_NAME: &str = "local";
     const USER_FUNCTION_NAME: &str = "f";
 
     /// Fulfills the same role as [`ToTokens::to_tokens`],
@@ -92,29 +93,48 @@ impl JniFn {
         });
         // Parameters
         self.paren_token.surround(tokens, |tokens| {
-            let receiver = self.receiver();
+            let receiver = self.receiver_param();
             tokens.append_all(quote_spanned!(self.paren_token.span.span()=>
                 env: ::jni::JNIEnv<'local>, #receiver,
             ));
             self.inputs.to_tokens(tokens);
         });
-        self.output.to_tokens(tokens);
+        self.output.to_jni_fn_tokens(tokens);
         self.brace_token.surround(tokens, |tokens| {
             tokens.append_all(self.user_function());
-            let run = self.convert_arguments();
             let ops_prelude = ops_prelude(Env::Argument);
+            // Create variables with the converted value, where the variable name shadows the argument of the jni_fn
+            let args_conversions = self.inputs.iter()
+                .map(|arg| arg.create_rust_val())
+                .collect::<TokenStream>();
+            // Generates teh token that call the inner user function. The return value of this called is converted in the next local variable.
+            let user_fn_call = {
+                let user_function_ident = Ident::new(Self::USER_FUNCTION_NAME, join_spans([self.name.span(), self.inputs.span()]));
+
+                let receiver = match &self.static_token {
+                    Some(ident) => Ident::new("class", ident.span),
+                    None => Ident::new("this", self.name.span()),
+                };
+
+                // Create list of argument names to pass to the user_function (the arguments are already converted to the Rust types at this point).
+                let arg_names = self.inputs.pairs()
+                    .map(|pair| {
+                        let (arg, punct) = pair.into_tuple();
+                        syn::punctuated::Pair::new(&arg.name, punct)
+                    })
+                    .collect::<Punctuated<_, Token![,]>>();
+
+                quote! { #user_function_ident(#receiver, #arg_names) }
+            };
+            let call_and_return_conversion = self.output.convert_rust_to_java_sys(user_fn_call);
 
             // Use the _map version of run_with_jnienv() if the return type needs conversion to Java
-            tokens.append_all(match self.output.convert_rust_to_java_sys(&quote_spanned!(self.output.span()=> r)) {
-                Some(conversion) => quote_spanned! {self.content.span()=>
-                    unsafe { ::ez_jni::__throw::run_with_jnienv_map(env, #run, |r, #[allow(unused_variables)] env| {
-                        #ops_prelude
-                        #conversion
-                    }) }
-                },
-                None => quote_spanned! {self.content.span()=>
-                    unsafe { ::ez_jni::__throw::run_with_jnienv(env, #run) }
-                }
+            tokens.append_all(quote_spanned! {self.content.span()=>
+                unsafe { ::ez_jni::__throw::run_with_jnienv(env, #[allow(noop_method_call)] move | #[allow(unused_variables)] env | {
+                    #ops_prelude
+                    #args_conversions
+                    #call_and_return_conversion
+                }) }
             });
         });
 
@@ -132,7 +152,7 @@ impl JniFn {
         let mut parameters = TokenStream::new();
         paren_token.surround(&mut parameters, |tokens| {
             // Add receiver to parameters
-            tokens.append_all(self.receiver());
+            tokens.append_all(self.receiver_param());
             tokens.append(proc_macro2::TokenTree::Punct(proc_macro2::Punct::new(',', proc_macro2::Spacing::Alone)));
             
             for (param, comma) in inputs.pairs().map(|pair| pair.into_tuple()) {
@@ -145,11 +165,28 @@ impl JniFn {
             }
         });
 
+        let rust_type_tokens = |ty: &ReturnType| -> TokenStream {
+            match ty {
+                ReturnType::JavaVoid(ident) => ident.to_token_stream(),
+                ReturnType::RustUnit(paren) => {
+                    let mut tokens = TokenStream::new();
+                    paren.surround(&mut tokens, |_| {});
+                    tokens
+                },
+                ReturnType::Type(ty) => ty.type_tokens(false, false, Some(lifetime.clone())),
+            }
+        };
         let output = match output {
-            JniReturn::Void => quote!(),
-            JniReturn::Type { arrow_token, ty } => {
-                let rust_ty = ty.type_tokens(false, false, Some(lifetime.clone()));
-                quote! { #arrow_token #rust_ty }
+            Return::Empty => quote!(),
+            Return::Assertive { arrow, ty } => {
+                let rust_ty = rust_type_tokens(ty);
+                quote! { #arrow #rust_ty }
+            },
+            Return::Result { arrow, result, ty, err_class } => {
+                let rust_ty = rust_type_tokens(ty);
+                let err_type = Class::from_rust_type(ClassRustType::JThrowable, err_class.span())
+                    .type_tokens(false, false, Some(lifetime.clone()));
+                quote! { #arrow #result<#rust_ty, #err_type> }
             }
         };
 
@@ -158,45 +195,11 @@ impl JniFn {
         quote! { #fn_token #name #lt_token #lifetime #gt_token #parameters #output #body }
     }
 
-    /// Generates the **closure** that converts the *Java arguments* passed to the jni_fn to *Rust values* to be passed to the [`user_function`][Self::user_function()].
-    /// 
-    /// The generated closure is also what calls the [`user_function`][Self::user_function()] at the end and passes the arguments to it.
-    fn convert_arguments<'a>(&self) -> TokenStream {
-        let user_function_ident = Ident::new(Self::USER_FUNCTION_NAME, Span::call_site());
-        let ops_prelude = ops_prelude(Env::Argument);
-
-        let receiver = Ident::new(match &self.static_token {
-            Some(_) => "class",
-            None => "this"
-        }, Span::call_site());
-
-        // Create list of argument names to pass to the user_function
-        let arg_names = self.inputs.pairs()
-            .map(|pair| {
-                let (arg, punct) = pair.into_tuple();
-                syn::punctuated::Pair::new(&arg.name, punct)
-            })
-            .collect::<Punctuated<_, Token![,]>>();
-        
-        // Create variables with the converted value, where the variable name shadows the argument of the jni_fn
-        let conversions = self.inputs.iter()
-            .map(|arg| arg.create_rust_val())
-            .collect::<TokenStream>();
-
-        quote! {
-            #[allow(noop_method_call)] move | #[allow(unused_variables)] env | {
-                #ops_prelude
-                #conversions
-                #user_function_ident(#receiver, #arg_names)
-            }
-        }
-    }
-
     /// Generates a **parameter** that is used as the receiver of the function.
     /// This is the same funcitonality as `self` but with Java names.
     /// 
     /// *Static* methods receive [`Class`][jni::objects::JClass], and *object* methods receive [`Object`][jni::objects::JObject].
-    fn receiver(&self) -> TokenStream {
+    fn receiver_param(&self) -> TokenStream {
         let param = match &self.static_token {
             Some(static_token) => quote_spanned! {static_token.span()=> class: ::jni::objects::JClass<'local> },
             None => quote! { this: ::jni::objects::JObject<'local> }
@@ -206,8 +209,6 @@ impl JniFn {
 }
 impl Parse for JniFn {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        static LIFETIME_ERROR: &str = "jni_fn must have one and only one lifetime, named \"local\"";
-
         // -- Parse input function. Collect multiple errors
         let mut errors = Vec::new();
 
@@ -261,7 +262,7 @@ impl Parse for JniFn {
         };
 
         // Parse return arrow `->` and return type (is void if there is none)
-        let output = input.parse::<JniReturn>()
+        let output = input.parse::<Return>()
             .map_err(|err| errors.push(err))
             .ok();
 
@@ -283,14 +284,14 @@ impl Parse for JniFn {
 
         // -- Perform checks on the successfully parsed function
         errors = Vec::new();
-
+        let lifetime_error_msg = format!("jni_fn must have one and only one lifetime, named \"{}\"", Self::LIFETIME_NAME);
         let mut iter = generics.into_iter();
 
         // Parsed all generics, but will only accept one lifetime, and no other generic types
         let lifetime = match iter.next() {
             Some(GenericParam::Lifetime(lifetime)) =>
-                if lifetime.lifetime.ident.to_string() != "local" {
-                    errors.push(syn::Error::new(lifetime.span(), LIFETIME_ERROR));
+                if lifetime.lifetime.ident.to_string() != Self::LIFETIME_NAME {
+                    errors.push(syn::Error::new(lifetime.span(), &lifetime_error_msg));
                     None
                 } else {
                     Some(lifetime)
@@ -300,13 +301,13 @@ impl Parse for JniFn {
                 None
             },
             None => {
-                errors.push(syn::Error::new(name.span(), LIFETIME_ERROR));
+                errors.push(syn::Error::new(name.span(), &lifetime_error_msg));
                 None
             },
         };
         // Only allow 1 lifetime
         if let Some(lifetime) = iter.next() {
-            errors.push(syn::Error::new(lifetime.span(), LIFETIME_ERROR))
+            errors.push(syn::Error::new(lifetime.span(), &lifetime_error_msg))
         }
 
         // Check that the function doesn't have arguments with these names because those are implicitly added
@@ -396,58 +397,68 @@ impl ToTokens for JniFnArg {
     }
 }
 
-pub enum JniReturn {
-    Void,
-    Type {
-        arrow_token: Token![->],
-        ty: Type
-    }
-}
-impl JniReturn {
-    /// Convert the value returned by the *main body* of the jni_fn to one of the [`jni::sys`] types.
+impl Return {
+    /// Generates the code that converts the value returned by the *main body* (inner function) of the jni_fn to one of the [`jni::sys`] types.
     /// 
     /// See [`Type::convert_rust_to_java()`].
-    /// Returns [`None`] if no conversion is necessary.
-    pub fn convert_rust_to_java_sys(&self, value: &TokenStream) -> Option<TokenStream> {
+    /// Returns the *unmodified* passed **`value`** in if no conversion is necessary.
+    /// 
+    /// This should only be used with the [`jni_fn`] macro.
+    fn convert_rust_to_java_sys(&self, value: TokenStream) -> TokenStream {
+        fn ok_conversion(ty: &ReturnType, val: &TokenStream) -> Option<TokenStream> {
+            match ty {
+                ReturnType::JavaVoid(_) | ReturnType::RustUnit(_) => None,
+                ReturnType::Type(ty) => match ty {
+                    Type::Assertive(InnerType::Primitive(prim)) => prim.convert_rust_to_java(val),
+                    // Always convert Object to jni::sys::jobject
+                    Type::Assertive(InnerType::Object(_) | InnerType::Array(_))
+                    | Type::Option { .. } => Some(match ty.convert_rust_to_java(val) {
+                        Some(conversion) => quote_spanned!(conversion.span()=> #conversion.as_raw()),
+                        None => quote_spanned!(val.span()=> #val.as_raw())
+                    }),
+                },
+            }
+        }
+
         match self {
-            Self::Void => None,
-            Self::Type { ty, .. } => match ty {
-                Type::Assertive(InnerType::Primitive(prim)) => prim.convert_rust_to_java(value),
-                // Always convert Object to jni::sys::jobject
-                Type::Assertive(InnerType::Object(_) | InnerType::Array(_))
-                | Type::Option { .. } => Some(match ty.convert_rust_to_java(value) {
-                    Some(conversion) => quote_spanned!(conversion.span()=> #conversion.as_raw()),
-                    None => quote_spanned!(value.span()=> #value.as_raw())
-                })
+            Self::Empty
+            | Self::Assertive { ty: ReturnType::JavaVoid(_) | ReturnType::RustUnit(_), .. } => value,
+            Self::Assertive { ty, .. } => ok_conversion(ty, &value).unwrap_or(value),
+            Self::Result { ty, err_class, .. } => {
+                let exception_class = err_class.to_jni_class_path();
+
+                let val_token = quote_spanned! {ty.span()=> __val };
+                let exception_token = quote_spanned! {exception_class.span()=> __exception };
+                let ok_conversion = match ok_conversion(ty, &val_token) {
+                    Some(conversion) => quote_spanned! {self.span()=> .map(|#val_token| #conversion) },
+                    None => quote! { },
+                };
+
+                quote_spanned! {self.span()=>
+                    #value
+                        #ok_conversion
+                        .unwrap_or_else(|#exception_token| {
+                            ::ez_jni::utils::check_object_class(&#exception_token, #exception_class, env).unwrap_jni();
+                            ::ez_jni::__throw::panic_throwable(&#exception_token)
+                        })
+                }
             },
         }
     }
-}
-impl SigType for JniReturn {
-    fn sig_type(&self) -> LitStr {
+
+    /// Appends to the [`TokenStream`] the correct type in [`jni::sys`] that corresponds to the [`ReturnType`].
+    /// 
+    /// Fulfills the purpose of [`ToTokens`] for [`Return`].
+    /// This should only be used with the [`jni_fn`] macro.
+    fn to_jni_fn_tokens(&self, tokens: &mut TokenStream) {
         match self {
-            Self::Void => LitStr::new("V", Span::call_site()),
-            Self::Type { ty, .. } => ty.sig_type()
-        }
-    }
-}
-impl Parse for JniReturn {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        // Parse return arrow `->` and return type (is void if there is none)
-        Ok(if let Ok(arrow_token) = input.parse::<Token![->]>() {
-            Self::Type { arrow_token, ty: input.parse()? }
-        } else {
-            Self::Void
-        })
-    }
-}
-impl ToTokens for JniReturn {
-    /// Appends the [`jni::sys`] type tokens to the [`TokenStream`].
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        match self {
-            Self::Void => { }, // Void return has no tokens
-            Self::Type { arrow_token, ty: output } => {
-                arrow_token.to_tokens(tokens);
+            Self::Empty
+            | Self::Assertive { ty: ReturnType::JavaVoid(_) | ReturnType::RustUnit(_), .. }
+            | Self::Result { ty: ReturnType::JavaVoid(_) | ReturnType::RustUnit(_), .. } => { },
+            Self::Assertive { arrow, ty: ReturnType::Type(output) }
+            | Self::Result { arrow, ty: ReturnType::Type(output), .. } => {
+                arrow.to_tokens(tokens);
+
                 /// Convert the `Type` to a `jni::sys` type.
                 /// Used for *raw primitives* and *raw primitive arrays*.
                 fn primitive(prim: &Primitive, is_array: bool) -> TokenStream {

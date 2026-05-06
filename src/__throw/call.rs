@@ -18,7 +18,6 @@ pub fn panic_exception(ex: JavaException) -> ! {
 /// 
 /// This function `panic!s` if the **object** could not be thrown.
 #[track_caller]
-#[inline(always)]
 pub fn panic_throwable(object: &JThrowable<'_>) -> ! {
     // NOTE: Unwrap Debug instead of JNI so that a potential Exception is not thrown and confuses the catcher.
     let env = crate::utils::get_env();

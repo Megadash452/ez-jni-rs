@@ -64,6 +64,20 @@ pub struct StepResult {
     pub pattern_tokens: NonEmpty<TokenTree>,
 }
 
+pub trait CursorExt {
+    /// An iterator-like method to advance the [`Cursor`].
+    /// 
+    /// Same as [`Cursor::token_tree()`], but advances the [`Cursor`] pointer automatically.
+    fn next(&mut self) -> Option<TokenTree>;
+}
+impl CursorExt for Cursor<'_> {
+    fn next(&mut self) -> Option<TokenTree> {
+        let (tt, new_cursor) = self.token_tree()?;
+        *self = new_cursor;
+        Some(tt)
+    }
+}
+
 /// Parses an **input** [`ParseStream`] and looks for a **pattern** defined by a function `F`.
 /// 
 /// If some tokens are found that match the **pattern**,

@@ -1,12 +1,13 @@
 use std::fmt::Debug;
+use either::Either;
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
 use syn::{
-    parenthesized, parse::{discouraged::Speculative, Parse, ParseStream, Parser}, punctuated::Punctuated, Expr, Ident, LitStr, Token
+    Expr, Ident, LitStr, Token, parenthesized, parse::{Parse, ParseStream, Parser, discouraged::Speculative}, punctuated::Punctuated
 };
 use crate::{
-    types::{Class, ClassRustType, InnerType, SigType, Type, NULL_KEYWORD},
-    utils::{gen_signature, join_spans, ops_prelude, Spanned, StepResult, TokenTreeExt as _}
+    types::{Class, ClassRustType, InnerType, NULL_KEYWORD, Return, ReturnType, SigType, Type},
+    utils::{CursorExt as _, Spanned, StepResult, TokenTreeExt as _, gen_signature, join_spans, ops_prelude, step_until}
 };
 
 /// Processes input for macro call [super::call!].
@@ -27,7 +28,14 @@ pub fn jni_call(call: MethodCall) -> TokenStream {
     let arguments = gen_arguments(call.parameters.iter());
 
     // Convert from the returned Result to a value the caller expects.
-    let return_conversion = call.mods.jni_error_handler.convert_call_return_value(&call.return_type, true);
+    let val_token = |span: Span| quote_spanned! {span=> __val };
+    let value_conversion = match call.return_type.ok_type() {
+        // Normal conversion
+        Either::Right(ty) => ty.convert_jvalue_to_rvalue(&val_token(ty.span()), &call.mods.jni_error_handler),
+        // Void conversion
+        Either::Left(ident) => Type::convert_void_to_unit(&val_token(ident.span()), &call.mods.jni_error_handler),
+    };
+    let return_conversion = call.mods.jni_error_handler.convert_call_return_value(Some(value_conversion), call.return_type.exception_class());
     // TODO: make an error handler for #val_conversion of arguments, so that errors gets returned in the MethodCallError.
 
     // Build the macro function call
@@ -60,15 +68,7 @@ pub fn jni_call_constructor(call: ConstructorCall) -> TokenStream {
     let signature = gen_signature(call.parameters.iter(), &Return::new_void(Span::call_site()));
     let arguments = gen_arguments(call.parameters.iter());
 
-    let return_type = match call.class {
-        ClassRepr::String(class) => Type::Assertive(InnerType::Object(class)),
-        ClassRepr::Object(expr) => Type::Assertive(InnerType::Object(Class::from_rust_type(ClassRustType::JObject, expr.span()))),
-    };
-    let return_type = match call.err_class {
-        Some(err_class) => Return::Result { result: Ident::new("throws", err_class.span()), ty: ReturnableType::Type(return_type), err_class },
-        None => Return::Assertive(ReturnableType::Type(return_type)),
-    };
-    let return_conversion = call.mods.jni_error_handler.convert_call_return_value(&return_type, false);
+    let return_conversion = call.mods.jni_error_handler.convert_call_return_value(None, call.err_class.as_ref());
 
     quote! { {
         #ops_prelude
@@ -151,7 +151,10 @@ pub fn singleton_instance(mods: MacroCallModifiers, class: Class) -> TokenStream
         call_type: CallType::Static(ClassRepr::String(class.clone())),
         method_name: Ident::new("getInstance", Span::call_site()),
         parameters: Punctuated::new(),
-        return_type: Return::Assertive(ReturnableType::Type(Type::Assertive(InnerType::Object(class)))),
+        return_type: Return::Assertive {
+            arrow: syn::token::RArrow { spans: [Span::call_site(); 2] },
+            ty: ReturnType::Type(Type::Assertive(InnerType::Object(class))),
+        },
     })
 }
 
@@ -173,38 +176,38 @@ impl Parse for MethodCall {
         let mods = input.parse()?;
         let is_static = input.parse::<Token![static]>().is_ok();
 
-        // Search for pattern `(...) ->`
-        let result = crate::utils::step_until_each(input, [
-            |token| matches!(token, TokenTree::Group(group) if group.delimiter() == Delimiter::Parenthesis),
-            |token| matches!(token, TokenTree::Punct(punct) if punct.as_char() == '-' && punct.spacing() == Spacing::Joint),
-            |token| matches!(token, TokenTree::Punct(punct) if punct.as_char() == '>' && punct.spacing() == Spacing::Alone),
-        ])
-        .map_err(|err| syn::Error::new(err.span(), format!("{err}; Expected pattern `(...) ->`")))?;
+        // Search for pattern `.methodName(...) ->` (or without arrow, but is the last tokens).
+        let fork = input.fork();
+        let result = step_until(&fork, |token, mut cursor| {
+            if matches!(token, TokenTree::Punct(punct) if punct.as_char() == '.')
+            && matches!(cursor.next()?, TokenTree::Ident(_))
+            && matches!(cursor.next()?, TokenTree::Group(group) if group.delimiter() == Delimiter::Parenthesis) {
+                if cursor.clone().next().is_none() {
+                    // No return arrow
+                    cursor.next();
+                    Some(cursor)
+                } else if {
+                    let mut fork = cursor.clone();
+                    matches!(fork.next()?, TokenTree::Punct(punct) if punct.as_char() == '-' && punct.spacing() == Spacing::Joint)
+                    && matches!(fork.next()?, TokenTree::Punct(punct) if punct.as_char() == '>' && punct.spacing() == Spacing::Alone)
+                } {
+                    // If found arrow, DON'T advance the cursor, because the Return parser expects to find the arrow at the start of input.
+                    Some(cursor)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .map_err(|err| syn::Error::new(err.span(), format!("{err}; Expected pattern `.methodName(...)` or `.methodName(...) -> `")))?;
+        input.advance_to(&fork);
+        drop(fork);
 
-        let param_group = result.pattern_tokens[0].clone().group()?;
-        let mut callee_tokens = result.pre_tokens;
-
-        let method_ident = callee_tokens.pop();
-        let method_dot = callee_tokens.pop();
-
-        // Error used if either method_dot or method_ident were None.
-        let none_err = syn::Error::new(param_group.span(), "Expected Dot and Ident `.methodName`");
-
-        // Get the method name from the stepped tokens, ensureing there is also the Dot.
-        let method_name = method_dot
-            .ok_or_else(|| none_err.clone())
-            .and_then(|token| match token {
-                TokenTree::Punct(punct)
-                    if punct.as_char() == '.'
-                    && punct.spacing() == Spacing::Alone
-                        => Ok(()),
-                _ => Err(syn::Error::new(token.span(), "Expected Dot '.'"))
-            })
-            .and(method_ident.ok_or(none_err))
-            .and_then(|token| match token {
-                TokenTree::Ident(ident) => Ok(ident),
-                _ => Err(syn::Error::new(token.span(), "Expected Ident"))
-            })?;
+        // let method_dot = result.pattern_tokens[0].clone().punct().unwrap();
+        let method_name = result.pattern_tokens[1].clone().ident().unwrap();
+        let param_group = result.pattern_tokens[2].clone().group()?;
+        let callee_tokens = result.pre_tokens;
 
         Ok(Self {
             mods,
@@ -527,128 +530,6 @@ impl Parse for ParamValue {
     }
 }
 
-/// The return type of a JNI method call.
-///
-/// The caller of the macro can assert that the JNI method call will result in one of the following:
-/// 1. [`Type`] (or `void`) if the function being called can't return `NULL` or throw an `exception` (e.g. `bool` or `java.lang.String`).
-/// 2. `Option<Type>` if the return type is an [`Object`][Type::Object] that could be **NULL**.
-/// 3. `Result<void | Type | Option<Type>, Class>` if the method call can throw an **Exception**,
-///    where the `Err` type is a **Java Class** that extends `java.lang.Throwable`.
-pub enum Return {
-    /// The method being called can't throw (will `panic!` if it does).
-    Assertive(ReturnableType),
-    /// Holds the Ok Type (a Type or Option), and the Err Type.
-    Result {
-        result: Ident,
-        ty: ReturnableType,
-        err_class: Class
-    },
-}
-#[derive(Debug)]
-pub enum ReturnableType {
-    Void(Ident),
-    Type(Type)
-}
-#[allow(unused)]
-impl Return {
-    /// Create a new [`Return`] Type that is **Void**.
-    pub fn new_void(span: Span) -> Self {
-        Self::Assertive(ReturnableType::Void(Ident::new("void", span)))
-    }
-    /// Create a new [`Return`] Type that holds a regular [`Type`].
-    pub fn new_type(ty: Type) -> Self {
-        Self::Assertive(ReturnableType::Type(ty))
-    }
-}
-impl SigType for Return {
-    fn sig_type(&self) -> LitStr {
-        match self {
-            Self::Assertive(ReturnableType::Void(ident))
-            | Self::Result { ty: ReturnableType::Void(ident), .. } => LitStr::new("V", ident.span()),
-            Self::Assertive(ReturnableType::Type(ty))
-            | Self::Result { ty: ReturnableType::Type(ty), .. } => ty.sig_type(),
-        }
-    }
-}
-impl Spanned for Return {
-    fn span(&self) -> Span {
-        #[inline] fn inner_ty_span(ty: &ReturnableType) -> Span {
-            match ty {
-                ReturnableType::Void(ident) => ident.span(),
-                ReturnableType::Type(ty) => ty.span(),
-            }
-        }
-        match self {
-            Self::Assertive(ty) => inner_ty_span(ty),
-            Self::Result { result, ty, err_class } => join_spans([
-                result.span(), inner_ty_span(ty), err_class.span()
-            ]),
-        }
-    }
-}
-impl Parse for Return {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let fork = input.fork();
-        // Check if caller uses void or Result as the return type
-        Ok(match fork.parse::<Ident>() {
-            Ok(ident) => match ident.to_string().as_str() {
-                "void" => {
-                    input.advance_to(&fork);
-                    Self::Assertive(ReturnableType::Void(ident))
-                },
-                "Result" => {
-                    input.advance_to(&fork);
-                    drop(fork);
-                    // Parse generic arguements
-                    input.parse::<Token![<]>().map_err(|err| {
-                        input.error(format!("Result takes generic arguments; {err}"))
-                    })?;
-
-                    let ty = {
-                        let fork = input.fork();
-                        match fork.parse::<Ident>() {
-                            // Check if is void, or a regular type
-                            Ok(ident) if ident.to_string() == "void" => {
-                                input.advance_to(&fork);
-                                ReturnableType::Void(ident)
-                            },
-                            _ => ReturnableType::Type(input.parse()?)
-                        }
-                    };
-
-                    input.parse::<Token![,]>().map_err(|err| {
-                        input.error(format!("Result takes 2 generic arguments; {err}"))
-                    })?;
-
-                    let err_class = input.parse::<Class>()?;
-                    err_class.is_throwable()?;
-
-                    input.parse::<Token![>]>()?;
-                    Self::Result { result: ident, ty, err_class }
-                }
-                // Is probably a primitive or Class
-                _ => Self::Assertive(ReturnableType::Type(input.parse()?)),
-            },
-            // Is probably an Array
-            Err(_) => Self::Assertive(ReturnableType::Type(input.parse()?)),
-        })
-    }
-}
-impl Debug for Return {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Assertive(ty) => f.debug_tuple("Return::Aserrtive")
-                .field(ty)
-                .finish(),
-            Self::Result { result, ty, err_class } => f.debug_struct("Return::Result")
-                .field("result", result)
-                .field("ty", ty)
-                .field("err_class", &err_class.to_jni_class_path())
-                .finish()
-        }
-    }
-}
-
 /// (Optional) Modifier tokens for [`crate::call!`] and its adjacent macros.
 /// 
 /// # Parsing
@@ -820,35 +701,16 @@ impl JniCallErrorHandler {
     /// Handle the [`Result`]s of [`call`][MethodCall] and [`new`][ConstructorCall].
     /// Both error types `MethodCallError` and `JavaException` have to be handled in product form of the [`Return`] and [`JniCallError`] states.
     /// 
-    /// The argument **`convert_jvalue`** indicates whether the jni call's [`Ok`] value is a [`JValue`][jni::objects::JValueOwned] that must be converted to a *Rust value*.
-    /// Otherwise, pass `false` if the returned value should *not* be converted.
-    /// 
     /// Generates `unwrapping` tokens, or tries to combine the two error types.
     /// 
     /// The resulting tokens from this function *must* be used as a **chain**.
-    fn convert_call_return_value(&self, return_type: &Return, convert_jvalue: bool) -> TokenStream {
-        // Convert from the returned Java value to Rust value
-        let val_token = |span: Span| quote_spanned! {span=> __val };
-        let value_conversion = if convert_jvalue {
-            match return_type {
-                // Normal conversion
-                Return::Assertive(ReturnableType::Type(ty))
-                | Return::Result { ty: ReturnableType::Type(ty), .. } => ty.convert_jvalue_to_rvalue(&val_token(ty.span()), self),
-                // Void conversion
-                Return::Assertive(ReturnableType::Void(ident))
-                | Return::Result { ty: ReturnableType::Void(ident), .. } => Type::convert_void_to_unit(&val_token(ident.span()), self)
-            }
-        } else {
-            val_token(Span::call_site())
-        };
-
-        match (self, return_type) {
+    fn convert_call_return_value(&self, value_conversion: Option<TokenStream>, exception_class: Option<&Class>) -> TokenStream {
+        match (self, exception_class) {
             // Panic if the call returned MethodCallError or a JavaException.
-            (JniCallErrorHandler::Unwrap, Return::Assertive(_)) => {
-                let value_conversion = if convert_jvalue {
-                    quote! { .map(|__val| #value_conversion) }
-                } else {
-                    quote! { }
+            (JniCallErrorHandler::Unwrap, None) => {
+                let value_conversion = match value_conversion {
+                    Some(value_conversion) => quote! { .map(|__val| #value_conversion) },
+                    None => quote! { },
                 };
                 quote! {
                     .unwrap_jni()
@@ -857,17 +719,16 @@ impl JniCallErrorHandler {
                 }
             },
             // Panic if the call returned MethodCallError, but return the JavaException in a Result.
-            (JniCallErrorHandler::Unwrap, Return::Result { err_class, .. }) => {
-                let value_conversion = if convert_jvalue {
-                    quote! { .map(|__val| #value_conversion) }
-                } else {
-                    quote! { }
+            (JniCallErrorHandler::Unwrap, Some(exception_class)) => {
+                let value_conversion = match value_conversion {
+                    Some(value_conversion) => quote! { .map(|__val| #value_conversion) },
+                    None => quote! { },
                 };
-                let err_class = err_class.to_jni_class_path();
+                let exception_class = exception_class.to_jni_class_path();
                 quote! {
                     .and_then(|__result| {
                         if let Err(__exception) = &__result {
-                            ::ez_jni::utils::check_object_class(__exception.as_ref(), #err_class, env)?;
+                            ::ez_jni::utils::check_object_class(__exception.as_ref(), #exception_class, env)?;
                         }
                         Ok(__result)
                     })
@@ -876,7 +737,8 @@ impl JniCallErrorHandler {
                 }
             },
             // Combine the MethodCallError and JavaException into the same result with MethodCallError.
-            (JniCallErrorHandler::Manual(_), Return::Assertive(_)) => {
+            (JniCallErrorHandler::Manual(_), None) => {
+                let value_conversion = value_conversion.or(Some(quote!(__val)));
                 quote! {
                     .and_then(|__result| match __result {
                         // Can't use map because the #value_conversion errors are being propagated.
@@ -886,14 +748,15 @@ impl JniCallErrorHandler {
                 }
             },
             // Return the MethodCallError or JavaException in different Results.
-            (JniCallErrorHandler::Manual(_), Return::Result { err_class, .. }) => {
-                let err_class = err_class.to_jni_class_path();
+            (JniCallErrorHandler::Manual(_), Some(exception_class)) => {
+                let value_conversion = value_conversion.or(Some(quote!(__val)));
+                let exception_class = exception_class.to_jni_class_path();
                 quote! {
                     .and_then(|__result| match __result {
                         Ok(__val) => Ok(Ok(#value_conversion)),
                         // Can't use map because the #value_conversion errors are being propagated.
                         Err(__exception) => {
-                            ::ez_jni::utils::check_object_class(__exception.as_ref(), #err_class, env)?;
+                            ::ez_jni::utils::check_object_class(__exception.as_ref(), #exception_class, env)?;
                             Ok(Err(__exception))
                         },
                     })

@@ -23,7 +23,7 @@ use crate::{JavaException, LOCAL_JNIENV_STACK, ToObject, utils::{JniResultExt as
 /// All that said, this function is NOT meant to be used by users of the library (thus it's hidden).
 /// This function is used by [ez_jni_macros::jni_fn].
 // This function ***MUST NOT*** `panic!`.
-pub unsafe fn run_with_jnienv<'local, R: Sized>(mut env: JNIEnv<'local>, f: impl FnOnce(&mut JNIEnv<'local>) -> R + UnwindSafe) -> R {
+pub unsafe fn run_with_jnienv<'local, T: Sized>(mut env: JNIEnv<'local>, f: impl FnOnce(&mut JNIEnv<'local>) -> T + UnwindSafe) -> T {
     let result = unsafe { run_with_jnienv_helper(env, false, f) };
     env = result.1;
 
@@ -33,17 +33,6 @@ pub unsafe fn run_with_jnienv<'local, R: Sized>(mut env: JNIEnv<'local>, f: impl
             throw_panic(panic, env);
             unsafe { std::mem::zeroed() }
         }
-    }
-}
-/// Same as [`run_with_jnienv()`], but maps the returned `R` to a Java value `J`.
-pub unsafe fn run_with_jnienv_map<'local, R, J: Sized>(
-    env: JNIEnv<'local>,
-    f: impl FnOnce(&mut JNIEnv<'local>) -> R + UnwindSafe,
-    // map function should not capture variables
-    map: fn(R, &mut JNIEnv<'local>) -> J,
-) -> J {
-    unsafe {
-        run_with_jnienv(env, |env| map(f(env), env))
     }
 }
 
