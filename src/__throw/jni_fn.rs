@@ -23,6 +23,7 @@ use crate::{JavaException, LOCAL_JNIENV_STACK, ToObject, utils::{JniResultExt as
 /// All that said, this function is NOT meant to be used by users of the library (thus it's hidden).
 /// This function is used by [ez_jni_macros::jni_fn].
 // This function ***MUST NOT*** `panic!`.
+#[track_caller]
 pub unsafe fn run_with_jnienv<'local, T: Sized>(mut env: JNIEnv<'local>, f: impl FnOnce(&mut JNIEnv<'local>) -> T + UnwindSafe) -> T {
     let result = unsafe { run_with_jnienv_helper(env, false, f) };
     env = result.1;
@@ -63,6 +64,7 @@ pub struct JniRunPanic {
 /// 
 /// This is also used in integration tests.
 #[doc(hidden)]
+#[track_caller]
 pub unsafe fn run_with_jnienv_helper<'local, R: Sized>(
     mut env: JNIEnv<'local>,
     integration_test: bool,

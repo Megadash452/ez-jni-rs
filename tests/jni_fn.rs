@@ -1,10 +1,15 @@
 mod common;
 
-use std::{path::PathBuf, process::Command, sync::LazyLock};
+use std::{path::PathBuf, process::Command, sync::{Arc, Barrier, LazyLock}};
 use jni::JNIEnv;
 use utils::{CLASS_DIR, absolute_path, run};
 
 static NATIVE_TEST_DIR: LazyLock<PathBuf> = LazyLock::new(|| absolute_path("./tests/native_test"));
+
+fn attach_to_jvm<'local>() -> JNIEnv<'local> {
+    utils::TEST_JVM.attach_current_thread_permanently()
+        .unwrap_or_else(|err| panic!("Error attaching thread to JVM: {err}"))
+}
 
 /// Tests building a binary library (`/tests/native_test`) that exports Rust functions to be called from Java.
 #[test]
@@ -34,12 +39,16 @@ fn jni_fn() {
     ).unwrap_or_else(|err| panic!("{err}"));
 }
 
-/// Tests when a jni_fn `panic!s` and the panic data jas to be thrown to the JVM.
+/// Tests when a jni_fn `panic!s`, it catches it, and a RustPanic Exception is thrown to the JVM.
 #[test]
 fn throw_panic() {
-    unsafe { ez_jni::__throw::run_with_jnienv::<()>(attach_to_jvm(), |_| panic!("Release me!")) };
-    let exception = ez_jni::__throw::catch_exception(&mut attach_to_jvm()).unwrap();
-    assert_eq!(exception.to_string(), "me.marti.ezjni.RustPanic: Release me!");
+    let mut env = attach_to_jvm();
+    unsafe { ez_jni::__throw::run_with_jnienv::<()>(env, |_| panic!("Release me!")) };
+    env = attach_to_jvm();
+    unsafe { ez_jni::__throw::run_with_jnienv::<()>(env, |env| {
+        let exception = ez_jni::__throw::catch_exception(env).unwrap();
+        assert_eq!(exception.to_string(), "me.marti.ezjni.RustPanic: Release me!");
+    }) };
 }
 /// Tests the same as [`throw_panic()`], but with a [`catch_unwind`] inside.
 #[test]
@@ -52,33 +61,36 @@ fn throw_panic_catch() {
     }) };
 }
 
-fn attach_to_jvm<'local>() -> JNIEnv<'local> {
-    utils::TEST_JVM.attach_current_thread_permanently()
-        .unwrap_or_else(|err| panic!("Error attaching thread to JVM: {err}"))
+fn panic_with_jni(i: usize) {
+    if i == 5 {
+        panic!("Release me {i}");
+    }
+    unsafe { ez_jni::__throw::run_with_jnienv_helper(attach_to_jvm(), false, |_| {
+        panic_with_jni(i + 1);
+    }).0.unwrap_err() };
+    if i > 0 {
+        panic!("Release me {i}");
+    }
 }
 
-// fn panic_with_jni(i: usize) {
-//     if i == 5 {
-//         panic!("Release me {i}");
-//     }
-//     unsafe { ez_jni::__throw::run_with_jnienv_helper::<()>(get_env(), false, |_| {
-//         panic_with_jni(i + 1);
-//     }).0.unwrap_err() };
-//     if i > 0 {
-//         panic!("Release me {i}");
-//     }
-// }
+#[test]
+fn run_with_jni_recursion_multithreaded() {
+    // Use a Barrier to start executing on both threads at the EXACT same time.
+    // Barrier is set to 3 because we have 2 spawned threads + the main thread
+    let barrier = Arc::new(Barrier::new(3));
+    let t1_barrier = barrier.clone();
+    let t2_barrier = barrier.clone();
 
-// #[test]
-// fn run_with_jni_recursion() {
-//     panic_with_jni(0);
-// }
+    let t1 = std::thread::spawn(move || {
+        t1_barrier.wait();
+        panic_with_jni(0)
+    });
+    let t2 = std::thread::spawn(move || {
+        t2_barrier.wait();
+        panic_with_jni(0)
+    });
 
-// #[test]
-// fn run_with_jni_recursion_multithreaded() {
-//     // TODO: These should execute at the exact same time (maybe set a timer?)
-//     let t1 = std::thread::spawn(|| panic_with_jni(0));
-//     let t2 = std::thread::spawn(|| panic_with_jni(0));
-//     t1.join().unwrap();
-//     t2.join().unwrap();
-// }
+    barrier.wait();
+    t1.join().unwrap();
+    t2.join().unwrap();
+}
