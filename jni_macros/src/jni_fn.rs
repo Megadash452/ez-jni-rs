@@ -184,8 +184,13 @@ impl JniFn {
             },
             Return::Result { arrow, result, ty, err_class } => {
                 let rust_ty = rust_type_tokens(ty);
-                let err_type = Class::from_rust_type(ClassRustType::JThrowable, err_class.span())
-                    .type_tokens(false, false, Some(lifetime.clone()));
+                let err_type = if err_class.is_throwable().is_ok() {
+                    // For jni_fn that return Result<T, Throwable/Exception>, they should return the real Error type of ez_jnj::JavaException.
+                    quote_spanned! {err_class.span()=> ::ez_jni::JavaException }
+                } else {
+                    Class::from_rust_type(ClassRustType::JThrowable, err_class.span())
+                        .type_tokens(false, false, Some(lifetime.clone()))
+                };
                 quote! { #arrow #result<#rust_ty, #err_type> }
             }
         };

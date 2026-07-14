@@ -177,7 +177,7 @@ jni_fn! { me.test.Native =>
     }
 
     pub fn native_test_result_propagation<'local>() -> Result<(), Exception> {
-        Err("Goodbye, World")?;
+        Err("Goodbye, World!")?;
         Ok(())
     }
 }

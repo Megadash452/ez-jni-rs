@@ -1,41 +1,54 @@
 use jni::objects::{GlobalRef, JClass};
 use nonempty::nonempty;
-use std::{fmt::{Debug, Display}, io, ops::Deref, sync::OnceLock};
+use std::{borrow::Cow, cell::OnceCell, fmt::{Debug, Display}, io, ops::Deref, str::FromStr, sync::OnceLock};
 use ez_jni_macros::new;
-use crate::{__throw::{Location, backtrace::{Backtrace, inject_backtrace}}, error::PanicError, utils::{JniResultExt as _, ResultExt as _, get_class, get_object_class_name}};
-
+use crate::{__throw::{Location, backtrace::{Backtrace, inject_backtrace}}, error::{MethodCallError, PanicError}, utils::{JniResultExt as _, ResultExt as _, get_class, get_object_class_name}};
 use super::*;
 
 /// A wrapper around a [`GlobalRef`] of a [`JThrowable`] that implements the useful error traits.
 ///
 /// Contains the **Class path** and the exception **message**.
 pub struct JavaException {
-    exception: GlobalRef,
-    class: String,
+    object: GlobalRef,
+    class: OnceCell<Cow<'static, str>>,
     /// Some (very rare!) exception classes leave the **message** as `null`.
     /// In the rare case this happens, the **message** must be wrapped with [`Option`].
     /// 
     /// Use [`Self::message()`] to get a default string.
-    message: Option<String>,
+    message: OnceCell<Option<String>>,
 }
 impl JavaException {
     pub const RUST_PANIC_CLASS: &str = "me/ezjni/RustPanic";
 
     /// The Exception object.
-    pub fn object(&self) -> &GlobalRef { &self.exception }
+    pub fn object(&self) -> &JThrowable<'static> { <&JThrowable>::from(self.object.as_obj()) }
     /// The **Class Path** of the Exception Object.
-    pub fn class(&self) -> &str { &self.class }
+    pub fn class(&self) -> &str {
+        self.class.get_or_init(|| {
+            let env = crate::utils::get_env();
+            Cow::Owned(get_object_class_name(self.object.as_obj(), env))
+        })
+    }
     /// The **message** obtained from the Exception.
     /// 
-    /// If the **message** is null, returns the **class name**.
+    /// If the **message** is `null`, returns the **class name**.
     pub fn message(&self) -> &str {
-        match &self.message {
+        match self._message() {
             Some(msg) => msg,
-            None => &self.class,
+            None => self.class(),
         }
     }
+    /// Returns the message as an [`Option`], rather than always returning a value, like in the public version of this fn.
+    fn _message(&self) -> Option<&str> {
+        self.message.get_or_init(|| {
+            let env = crate::utils::get_env();
+            call!(env=> { self.object.as_obj() }.getMessage() -> Option<String>)
+        })
+        .as_ref()
+        .map(String::as_str)
+    }
 
-    /// Like [`Self::from_object()`], but allows any [] objects.
+    /// Like [`Self::from_object()`], but allows any [`Throwable`][JThrowable] objects.
     /// 
     /// This function does *not* do any checks on its own,
     /// and will `panic!` if something is wrong.
@@ -44,9 +57,11 @@ impl JavaException {
     #[doc(hidden)]
     pub(crate) fn from_throwable(object: &JThrowable<'_>, env: &mut JNIEnv<'_>) -> Self {
         Self {
-            class: get_object_class_name(object, env),
-            message: call!(env=> object.getMessage() -> Option<String>),
-            exception: env.new_global_ref(&object)
+            // Leave class and message uninitialized to save unnecessary work,
+            // because the class and/or message data won't necessarily be accessed.
+            class: OnceCell::new(),
+            message: OnceCell::new(),
+            object: env.new_global_ref(&object)
                 .catch(env)
                 .unwrap_jni(),
         }
@@ -63,7 +78,7 @@ impl JavaException {
     /// > This is to accurately capture the location where the `panic!` was triggered.
     /// 
     /// `panic!s` if a JNI error occurs (e.g. could not find RustPanic class).
-    pub(crate) fn new_rust_panic<'local>(location: impl Into<Location>, message: String, cause: Option<Self>, env: &mut JNIEnv<'local>) -> Self {
+    pub(crate) fn new_rust_panic(location: impl Into<Location>, message: String, cause: Option<Self>, env: &mut JNIEnv<'_>) -> Self {
         let location = location.into();
         let (file, line, col) = (location.file, location.line, location.col);
 
@@ -94,9 +109,9 @@ impl JavaException {
         inject_backtrace(&exception, Backtrace::force_capture().as_ref(), env);
 
         Self {
-            class: Self::RUST_PANIC_CLASS.to_string(),
-            message: Some(message),
-            exception: env.new_global_ref(&exception)
+            class: OnceCell::from(Cow::Borrowed(Self::RUST_PANIC_CLASS)),
+            message: OnceCell::from(Some(message)),
+            object: env.new_global_ref(&exception)
                 .catch(env)
                 .unwrap_jni(),
         }
@@ -114,26 +129,59 @@ impl JavaException {
             .unwrap_jni()
     }
 }
+impl FromObject<'_> for JavaException {
+    fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
+        if object.is_null() {
+            return Err(FromObjectError::Null);
+        }
+
+        // Check that Object is an Exception
+        if !env.is_instance_of(object, <Self as Class>::class()).catch(env)? {
+            return Err(FromObjectError::ClassMismatch {
+                obj_class: get_object_class_name(object, env),
+                target_classes: nonempty![<Self as Class>::class().to_string()],
+            });
+        }
+
+        Ok(Self {
+            class: OnceCell::new(),
+            message: OnceCell::new(),
+            object: env.new_global_ref(&object)
+                .catch(env)?,
+        })
+    }
+}
+impl ToObject for JavaException {
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+        env.new_local_ref(self.object())
+            .catch(env)
+            .unwrap_jni()
+    }
+}
 impl AsRef<JObject<'static>> for JavaException {
+    #[inline(always)]
     fn as_ref(&self) -> &JObject<'static> {
-        self.exception.as_ref()
+        self.object.as_obj()
     }
 }
 impl AsRef<JThrowable<'static>> for JavaException {
+    #[inline(always)]
     fn as_ref(&self) -> &JThrowable<'static> {
-        <&JThrowable>::from(self.exception.as_obj())
+        self.object()
     }
 }
 impl Deref for JavaException {
     type Target = JThrowable<'static>;
 
+    #[inline(always)]
     fn deref(&self) -> &Self::Target {
         self.as_ref()
     }
 }
 impl Into<GlobalRef> for JavaException {
+    #[inline(always)]
     fn into(self) -> GlobalRef {
-        self.exception
+        self.object
     }
 }
 impl PanicError for JavaException {
@@ -145,50 +193,94 @@ impl PanicError for JavaException {
 impl std::error::Error for JavaException {}
 impl Display for JavaException {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.message {
-            Some(msg) => write!(f, "{}: {msg}", self.class),
-            None => write!(f, "{}", self.class)
+        match self._message() {
+            Some(msg) => write!(f, "{}: {msg}", self.class()),
+            None => write!(f, "{}", self.class())
         }
     }
 }
 impl Debug for JavaException {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("JavaException")
-            .field("exception", &self.exception.as_raw())
-            .field("class", &self.class)
-            .field("message", &self.message)
+            .field("exception", &self.object().as_raw())
+            .field("class", &self.class())
+            .field("message", &self._message())
             .finish()
     }
 }
-impl FromObject<'_> for JavaException {
-    fn from_object_env(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
-        if object.is_null() {
-            return Err(FromObjectError::Null);
-        }
+impl FromStr for JavaException {
+    // TODO: use ToObjectError when that is implemented.
+    type Err = MethodCallError;
 
-        let class = get_object_class_name(object, env);
-
-        // Check that Object is an Exception
-        if !env.is_instance_of(object, <Self as Class>::class()).catch(env)? {
-            return Err(FromObjectError::ClassMismatch {
-                obj_class: class,
-                target_classes: nonempty![<Self as Class>::class().to_string()],
-            });
-        }
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let env = crate::utils::get_env();
+        let exception_class = <JavaException as Class>::class();
 
         Ok(Self {
-            class,
-            message: call!(env=> object.getMessage() -> Option<String>),
-            exception: env.new_global_ref(&object)
-                .catch(env)?,
+            object: {
+                let class = get_class(&exception_class, env)
+                    .map_err(MethodCallError::from)?;
+                let obj = new!(?, env => class(String(s)))?;
+                env.new_global_ref(obj)
+                    .catch(env)
+                    .map_err(MethodCallError::from)?
+            },
+            class: OnceCell::from(exception_class),
+            message: OnceCell::from(Some(s.to_string())),
         })
     }
 }
-impl ToObject for JavaException {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        env.new_local_ref(&self.exception)
-            .catch(env)
-            .unwrap_jni()
+impl From<&str> for JavaException {
+    fn from(value: &str) -> Self {
+        <Self as FromStr>::from_str(value).unwrap_jni()
+    }
+}
+impl From<&String> for JavaException {
+    #[inline(always)]
+    fn from(value: &String) -> Self {
+        <Self as From<&str>>::from(value)
+    }
+}
+impl From<String> for JavaException {
+    #[inline(always)]
+    fn from(value: String) -> Self {
+        <Self as From<&str>>::from(&value)
+    }
+}
+impl From<&dyn std::error::Error> for JavaException {
+    #[inline(always)]
+    fn from(value: &dyn std::error::Error) -> Self {
+        <Self as From<String>>::from(value.to_string())
+    }
+}
+impl From<Box<dyn std::error::Error>> for JavaException {
+    #[inline(always)]
+    fn from(value: Box<dyn std::error::Error>) -> Self {
+        <Self as From<&dyn std::error::Error>>::from(value.as_ref())
+    }
+}
+impl From<JObject<'_>> for JavaException {
+    #[inline(always)]
+    fn from(value: JObject<'_>) -> Self {
+        <Self as FromObject<'_>>::from_object(&value).unwrap_jni()
+    }
+}
+impl From<&JObject<'_>> for JavaException {
+    #[inline(always)]
+    fn from(value: &JObject<'_>) -> Self {
+        <Self as FromObject<'_>>::from_object(value).unwrap_jni()
+    }
+}
+impl From<JThrowable<'_>> for JavaException {
+    #[inline(always)]
+    fn from(value: JThrowable<'_>) -> Self {
+        <Self as FromObject<'_>>::from_object(&value).unwrap_jni()
+    }
+}
+impl From<&JThrowable<'_>> for JavaException {
+    #[inline(always)]
+    fn from(value: &JThrowable<'_>) -> Self {
+        <Self as FromObject<'_>>::from_object(value).unwrap_jni()
     }
 }
 

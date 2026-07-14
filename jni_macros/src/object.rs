@@ -74,7 +74,7 @@ pub fn derive_enum(enm: syn::ItemEnum) -> syn::Result<TokenStream> {
     // Types that implement FromObject are also given a Class implementation.
     // However, for enums this is optional because only the variants need to specify a class.
     let base_class_impl = enm.class.as_ref()
-        .map(Class::to_string)
+        .map(Class::to_jni_class_path)
         .map(|class| quote! {
             impl #enm_generics ::ez_jni::Class for #enm_ident #enm_generics {
                 #[inline(always)]
