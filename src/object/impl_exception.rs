@@ -152,10 +152,10 @@ impl FromObject<'_> for JavaException {
     }
 }
 impl ToObject for JavaException {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
         env.new_local_ref(self.object())
             .catch(env)
-            .unwrap_jni()
+            .map_err(ToObjectError::from)
     }
 }
 impl AsRef<JObject<'static>> for JavaException {
@@ -334,7 +334,8 @@ impl FromObject<'_> for std::io::Error {
         }
 
         // Get message after checking class
-        let msg = call!(env=> object.getMessage() -> String);
+        let msg = call!(env, ?=> object.getMessage() -> String)
+            .map_err(FromObjectError::from)?;
 
         for &(class, error_kind) in MAP {
             if env.is_instance_of(object, class).catch(env)? {
@@ -347,7 +348,7 @@ impl FromObject<'_> for std::io::Error {
     }
 }
 impl ToObject for std::io::Error {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
         static MAP: &[(io::ErrorKind, &str)] = &[
             (io::ErrorKind::NotFound, "java/io/FileNotFoundException"),
             (io::ErrorKind::NotFound, "java/nio/file/NoSuchFileException"),
@@ -376,10 +377,11 @@ impl ToObject for std::io::Error {
             .find(|(err, _)| self.kind() == *err)
             .map(|(_, class)| *class)
             .unwrap_or(IO_ERROR_BASE_PATH);
-        let class = get_class(class, env).unwrap_jni();
-        // TODO: return ToObjectError
+        let class = get_class(class, env)
+            .map_err(ToObjectError::from)?;
 
-        new!(env=> class(String(self.to_string())))
+        new!(env, ?=> class(String(self.to_string())))
+            .map_err(ToObjectError::from)
     }
 }
 
@@ -391,7 +393,8 @@ impl FromObject<'_> for Box<dyn std::error::Error> {
     }
 }
 impl ToObject for dyn std::error::Error {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        new!(env=> java.lang.Exception(String(self.to_string())))
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
+        new!(env, ?=> java.lang.Exception(String(self.to_string())))
+            .map_err(ToObjectError::from)
     }
 }

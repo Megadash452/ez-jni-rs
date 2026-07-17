@@ -3,13 +3,13 @@ use std::mem::MaybeUninit;
 
 use jni::{objects::{AutoLocal, JObject, JObjectArray, JPrimitiveArray}, sys::jsize, JNIEnv};
 use nonempty::nonempty;
-use crate::{FromObject, Primitive, error::FromObjectError, utils::{JniResultExt as _, get_object_class_name}};
+use crate::{FromObject, Primitive, error::{FromObjectError, ToObjectError}, utils::{JniResultExt as _, get_object_class_name}};
 
 /// Create a Java **Array** from a Rust [slice](https://doc.rust-lang.org/std/primitive.slice.html),
 /// where the element `T` is a [`Primitive`].
 /// 
 /// This funciton automatically handles the conversion between the *Rust type* and the *Java type* (e.g. bool -> u8).
-pub(crate) fn create_java_prim_array<'local, T>(slice: &[T], env: &mut JNIEnv<'local>) -> JObject<'local>
+pub(crate) fn create_java_prim_array<'local, T>(slice: &[T], env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError>
 where T: Primitive {
     let slice = match T::CONVERT_RUST_TO_JAVA {
         // If the type declares that it requires a conversion between itself and its Java Type,
@@ -24,13 +24,13 @@ where T: Primitive {
     // Allocate the array
     let array = T::array_alloc(slice.len() as jsize, env)
         .catch(env)
-        .unwrap_or_else(|err| panic!("Failed to create {} Array: {err}", T::JNAME));
+        .map_err(|err| ToObjectError::from_jni_with_msg(format!("Failed to allocate {} Array Object", T::JNAME), err))?;
     // Fill the Array
     T::array_filler(&array, slice, env)
         .catch(env)
-        .unwrap_or_else(|err| panic!("Error filling {} Array: {err}", T::JNAME));
+        .map_err(|err| ToObjectError::from_jni_with_msg(format!("Error filling {} Array Object", T::JNAME), err))?;
 
-    array.into()
+    Ok(array.into())
 }
 
 /// Get a Rust [`Vec`] from a Java **Array**, where the element `T` is a *primitive*.
@@ -157,24 +157,24 @@ where T: FromObject<'local> {
 /// If the *Rust Type* should be converted before being added to the *Java Array*
 /// (e.g. the slice is `String`, so it must be converted to `JObject`),
 /// then use [`create_object_array_converted()`] instead.
-pub fn create_object_array<'local, 'obj>(items: &[impl AsRef<JObject<'obj>>], elem_class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
+pub fn create_object_array<'local, 'obj>(items: &[impl AsRef<JObject<'obj>>], elem_class: &str, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
     // Allocate the array
     let array = env.new_object_array(
         items.len() as jsize,
         elem_class, // elem_class MUST be passed here, or else the created Object will have an invalid class when queried.
-        JObject::null()
+        JObject::null(),
     )
         .catch(env)
-        .unwrap_or_else(|err| panic!("Failed to create Java Object array: {err}"));
+        .map_err(|err| ToObjectError::from_jni_with_msg("Failed to create Java Object array", err))?;
 
     // Fill the array
     for (i, element) in items.iter().enumerate() {
         env.set_object_array_element(&array, i as jsize, element)
             .catch(env)
-            .unwrap_or_else(|err| panic!("Failed to set the value of Object array at index {i}:\n    {err}"));
+            .map_err(|err| ToObjectError::from_jni_with_msg(format!("Failed to set the value of Object array at index {i}"), err))?;
     }
 
-    array.into()
+    Ok(array.into())
 }
 /// Like [`create_object_array()`], but performs **conversion** on each element of the **slice*
 /// before they are added to the *Java Array*.
@@ -184,19 +184,22 @@ pub fn create_object_array<'local, 'obj>(items: &[impl AsRef<JObject<'obj>>], el
 /// which allocates new object references, without unnecessary leakage.
 pub fn create_object_array_converted<'local, T>(
     slice: &[T],
-    elem_conversion: impl for<'other> Fn(&T, &mut JNIEnv<'other>) -> JObject<'other>, // I don't understand why I can't use 'local here, but random lifetime works :/
+    elem_conversion: impl for<'other> Fn(&T, &mut JNIEnv<'other>) -> Result<JObject<'other>, ToObjectError>, // I don't understand why I can't use 'local here, but random lifetime works :/
     elem_class: &str,
     env: &mut JNIEnv<'local>
-) -> JObject<'local> {
+) -> Result<JObject<'local>, ToObjectError> {
     // Push a new Local Frame because the elem_conversion will need to create new Objects that should be dropped when this call finishes.
-    env.with_local_frame_returning_local(slice.len() as i32, |env| -> Result<JObject, jni::errors::Error> {
+    env.with_local_frame_returning_local(slice.len() as i32, |env| -> Result<JObject, ToObjectError> {
         let items = slice.iter()
             .map(#[inline] |t| elem_conversion(t, env))
-            .collect::<Box<[_]>>(); // Must collect in box to consume iterator, which holds a refernce to env
-        Ok(create_object_array(&items, elem_class, env))
+            .enumerate()
+            .map(|(i, result)| result.map_err(|err| (i, err)))
+            // Must collect in box to consume iterator, which holds a refernce to env
+            .collect::<Result<Box<[_]>, _>>()
+            .map_err(|(index, err)| ToObjectError::ArrayElement { index, error: Box::new(err) })?;
+        
+        create_object_array(&items, elem_class, env)
     })
-        .catch(env)
-        .unwrap_or_else(|err| panic!("Failed to create new local frame: {err}"))
 }
 
 pub(crate) fn box_to_array<T: Sized, const N: usize>(slice: Box<[T]>) -> Result<[T; N], FromObjectError> {

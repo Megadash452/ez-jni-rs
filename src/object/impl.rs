@@ -6,7 +6,7 @@ use super::*;
 impl<T> ToObject for &T
 where T: ToObject {
     #[inline(always)]
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
         <T as ToObject>::to_object_env(self, env)
     }
 }
@@ -27,10 +27,10 @@ where T: FromObject<'local> {
 impl<T> ToObject for Option<T>
 where T: ToObject {
     #[inline(always)]
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
         match self {
             Some(t) => t.to_object_env(env),
-            None => JObject::null()
+            None => Ok(JObject::null())
         }
     }
 }
@@ -79,28 +79,40 @@ where Box<[T]>: for<'a, 'obj> FromObject<'local> {
 impl<T> ToObject for [T]
 where T: ToObject + Class + Sized {
     #[inline(always)]
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
         T::__to_array_object(self, env, crate::private::SealedMethod)
     }
 }
 impl<T> ToObject for &[T]
 where [T]: ToObject {
     #[inline(always)]
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
         <[T] as ToObject>::to_object_env(&self, env)
     }
 }
 impl<const N: usize, T> ToObject for [T; N]
 where [T]: ToObject {
     #[inline(always)]
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
         <[T] as ToObject>::to_object_env(self.as_ref(), env)
     }
 }
 
 // ---
 
-// TODO: Support Box for any type
+impl<'local, T> FromObject<'local> for Box<T>
+where T: FromObject<'local> {
+    fn from_object_env(object: &JObject<'_>, env: &mut JNIEnv<'local>) -> Result<Self, FromObjectError> {
+        Ok(Box::new(<T as FromObject>::from_object_env(object, env)?))
+    }
+}
+impl<T> ToObject for Box<T>
+where T: ToObject {
+    #[inline(always)]
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
+        <T as ToObject>::to_object_env(self, env)
+    }
+}
 
 // TODO: Support Callbacks
 
@@ -110,31 +122,29 @@ impl FromObject<'_> for String {
     fn from_object_env(object: &JObject, env: &mut JNIEnv) -> Result<Self, FromObjectError> {
         check_object_class(object, &Self::class(), env)?;
         // Already checked that it is java.lang.String and is not NULL
-        Ok(unsafe {
-            env.get_string_unchecked(object.into())
-                .catch(env)
-                .unwrap_or_else(|err| panic!("ENV error while getting String: {err}"))
-                .into()
-        })
+        unsafe { env.get_string_unchecked(object.into()) }
+            .catch(env)
+            .map(String::from)
+            .map_err(FromObjectError::from)
     }
 }
 impl ToObject for String {
     #[inline(always)]
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
         <str as ToObject>::to_object_env(self, env)
     }
 }
 impl ToObject for str {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
         env.new_string(self)
             .catch(env)
-            .unwrap_or_else(|err| panic!("Error converting Rust string to Java String: {err}"))
-            .into()
+            .map(JObject::from)
+            .map_err(ToObjectError::from)
     }
 }
 impl ToObject for &str {
     #[inline(always)]
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
         <str as ToObject>::to_object_env(self, env)
     }
 }
@@ -144,7 +154,8 @@ impl ToObject for &str {
 impl FromObject<'_> for i8 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         check_object_class(object, &Self::class(), env)?;
-        Ok(call!(env=> object.byteValue() -> byte))
+        call!(env, ?=> object.byteValue() -> byte)
+            .map_err(FromObjectError::from)
     }
     #[inline(always)]
     fn __from_array_object(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>, _: SealedMethod) -> Result<Box<[Self]>, FromObjectError> {
@@ -152,18 +163,20 @@ impl FromObject<'_> for i8 {
     }
 }
 impl ToObject for i8 {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        call!(env=> static java.lang.Byte.valueOf(byte(*self)) -> java.lang.Byte)
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
+        call!(env, ?=> static java.lang.Byte.valueOf(byte(*self)) -> java.lang.Byte)
+            .map_err(ToObjectError::from)
     }
     #[inline(always)]
-    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>, _: SealedMethod) -> JObject<'local> {
+    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>, _: SealedMethod) -> Result<JObject<'local>, ToObjectError> {
         create_java_prim_array(slice, env)
     }
 }
 impl FromObject<'_> for i16 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         check_object_class(object, &Self::class(), env)?;
-        Ok(call!(env=> object.shortValue() -> short))
+        call!(env, ?=> object.shortValue() -> short)
+            .map_err(FromObjectError::from)
     }
     #[inline(always)]
     fn __from_array_object(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>, _: SealedMethod) -> Result<Box<[Self]>, FromObjectError> {
@@ -171,18 +184,20 @@ impl FromObject<'_> for i16 {
     }
 }
 impl ToObject for i16 {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        call!(env=> static java.lang.Short.valueOf(short(*self)) -> java.lang.Short)
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
+        call!(env, ?=> static java.lang.Short.valueOf(short(*self)) -> java.lang.Short)
+            .map_err(ToObjectError::from)
     }
     #[inline(always)]
-    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>, _: SealedMethod) -> JObject<'local> {
+    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>, _: SealedMethod) -> Result<JObject<'local>, ToObjectError> {
         create_java_prim_array(slice, env)
     }
 }
 impl FromObject<'_> for i32 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         check_object_class(object, &Self::class(), env)?;
-        Ok(call!(env=> object.intValue() -> int))
+        call!(env, ?=> object.intValue() -> int)
+            .map_err(FromObjectError::from)
     }
     #[inline(always)]
     fn __from_array_object(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>, _: SealedMethod) -> Result<Box<[Self]>, FromObjectError> {
@@ -190,18 +205,20 @@ impl FromObject<'_> for i32 {
     }
 }
 impl ToObject for i32 {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        call!(env=> static java.lang.Integer.valueOf(int(*self)) -> java.lang.Integer)
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
+        call!(env, ?=> static java.lang.Integer.valueOf(int(*self)) -> java.lang.Integer)
+            .map_err(ToObjectError::from)
     }
     #[inline(always)]
-    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>, _: SealedMethod) -> JObject<'local> {
+    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>, _: SealedMethod) -> Result<JObject<'local>, ToObjectError> {
         create_java_prim_array(slice, env)
     }
 }
 impl FromObject<'_> for i64 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         check_object_class(object, &Self::class(), env)?;
-        Ok(call!(env=> object.longValue() -> long))
+        call!(env, ?=> object.longValue() -> long)
+            .map_err(FromObjectError::from)
     }
     #[inline(always)]
     fn __from_array_object(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>, _: SealedMethod) -> Result<Box<[Self]>, FromObjectError> {
@@ -209,18 +226,20 @@ impl FromObject<'_> for i64 {
     }
 }
 impl ToObject for i64 {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        call!(env=> static java.lang.Long.valueOf(long(*self)) -> java.lang.Long)
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
+        call!(env, ?=> static java.lang.Long.valueOf(long(*self)) -> java.lang.Long)
+            .map_err(ToObjectError::from)
     }
     #[inline(always)]
-    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>, _: SealedMethod) -> JObject<'local> {
+    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>, _: SealedMethod) -> Result<JObject<'local>, ToObjectError> {
         create_java_prim_array(slice, env)
     }
 }
 impl FromObject<'_> for f32 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         check_object_class(object, &Self::class(), env)?;
-        Ok(call!(env=> object.floatValue() -> float))
+        call!(env, ?=> object.floatValue() -> float)
+            .map_err(FromObjectError::from)
     }
     #[inline(always)]
     fn __from_array_object(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>, _: SealedMethod) -> Result<Box<[Self]>, FromObjectError> {
@@ -228,18 +247,20 @@ impl FromObject<'_> for f32 {
     }
 }
 impl ToObject for f32 {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        call!(env=> static java.lang.Float.valueOf(float(*self)) -> java.lang.Float)
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
+        call!(env, ?=> static java.lang.Float.valueOf(float(*self)) -> java.lang.Float)
+            .map_err(ToObjectError::from)
     }
     #[inline(always)]
-    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>, _: SealedMethod) -> JObject<'local> {
+    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>, _: SealedMethod) -> Result<JObject<'local>, ToObjectError> {
         create_java_prim_array(slice, env)
     }
 }
 impl FromObject<'_> for f64 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         check_object_class(object, &Self::class(), env)?;
-        Ok(call!(env=> object.doubleValue() -> double))
+        call!(env, ?=> object.doubleValue() -> double)
+            .map_err(FromObjectError::from)
     }
     #[inline(always)]
     fn __from_array_object(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>, _: SealedMethod) -> Result<Box<[Self]>, FromObjectError> {
@@ -247,11 +268,12 @@ impl FromObject<'_> for f64 {
     }
 }
 impl ToObject for f64 {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        call!(env=> static java.lang.Double.valueOf(double(*self)) -> java.lang.Double)
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
+        call!(env, ?=> static java.lang.Double.valueOf(double(*self)) -> java.lang.Double)
+            .map_err(ToObjectError::from)
     }
     #[inline(always)]
-    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>, _: SealedMethod) -> JObject<'local> {
+    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>, _: SealedMethod) -> Result<JObject<'local>, ToObjectError> {
         create_java_prim_array(slice, env)
     }
 }
@@ -260,7 +282,8 @@ impl ToObject for f64 {
 impl FromObject<'_> for u8 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         check_object_class(object, &Self::class(), env)?;
-        Ok(call!(env=> object.byteValue() -> u8))
+        call!(env, ?=> object.byteValue() -> u8)
+            .map_err(FromObjectError::from)
     }
     #[inline(always)]
     fn __from_array_object(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>, _: SealedMethod) -> Result<Box<[Self]>, FromObjectError> {
@@ -268,18 +291,20 @@ impl FromObject<'_> for u8 {
     }
 }
 impl ToObject for u8 {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        call!(env=> static java.lang.Byte.valueOf(u8(*self)) -> java.lang.Byte)
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
+        call!(env, ?=> static java.lang.Byte.valueOf(u8(*self)) -> java.lang.Byte)
+            .map_err(ToObjectError::from)
     }
     #[inline(always)]
-    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>, _: SealedMethod) -> JObject<'local> {
+    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>, _: SealedMethod) -> Result<JObject<'local>, ToObjectError> {
         create_java_prim_array(slice, env)
     }
 }
 impl FromObject<'_> for u16 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         check_object_class(object, &Self::class(), env)?;
-        Ok(call!(env=> object.shortValue() -> u16))
+        call!(env, ?=> object.shortValue() -> u16)
+            .map_err(FromObjectError::from)
     }
     #[inline(always)]
     fn __from_array_object(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>, _: SealedMethod) -> Result<Box<[Self]>, FromObjectError> {
@@ -287,18 +312,20 @@ impl FromObject<'_> for u16 {
     }
 }
 impl ToObject for u16 {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        call!(env=> static java.lang.Short.valueOf(u16(*self)) -> java.lang.Short)
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
+        call!(env, ?=> static java.lang.Short.valueOf(u16(*self)) -> java.lang.Short)
+            .map_err(ToObjectError::from)
     }
     #[inline(always)]
-    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>, _: SealedMethod) -> JObject<'local> {
+    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>, _: SealedMethod) -> Result<JObject<'local>, ToObjectError> {
         create_java_prim_array(slice, env)
     }
 }
 impl FromObject<'_> for u32 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         check_object_class(object, &Self::class(), env)?;
-        Ok(call!(env=> object.intValue() -> u32))
+        call!(env, ?=> object.intValue() -> u32)
+            .map_err(FromObjectError::from)
     }
     #[inline(always)]
     fn __from_array_object(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>, _: SealedMethod) -> Result<Box<[Self]>, FromObjectError> {
@@ -306,18 +333,20 @@ impl FromObject<'_> for u32 {
     }
 }
 impl ToObject for u32 {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        call!(env=> static java.lang.Integer.valueOf(u32(*self)) -> java.lang.Integer)
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
+        call!(env, ?=> static java.lang.Integer.valueOf(u32(*self)) -> java.lang.Integer)
+            .map_err(ToObjectError::from)
     }
     #[inline(always)]
-    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>, _: SealedMethod) -> JObject<'local> {
+    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>, _: SealedMethod) -> Result<JObject<'local>, ToObjectError> {
         create_java_prim_array(slice, env)
     }
 }
 impl FromObject<'_> for u64 {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         check_object_class(object, &Self::class(), env)?;
-        Ok(call!(env=> object.longValue() -> u64))
+        call!(env, ?=> object.longValue() -> u64)
+            .map_err(FromObjectError::from)
     }
     #[inline(always)]
     fn __from_array_object(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>, _: SealedMethod) -> Result<Box<[Self]>, FromObjectError> {
@@ -325,11 +354,12 @@ impl FromObject<'_> for u64 {
     }
 }
 impl ToObject for u64 {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        call!(env=> static java.lang.Long.valueOf(u64(*self)) -> java.lang.Long)
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
+        call!(env, ?=> static java.lang.Long.valueOf(u64(*self)) -> java.lang.Long)
+            .map_err(ToObjectError::from)
     }
     #[inline(always)]
-    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>, _: SealedMethod) -> JObject<'local> {
+    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>, _: SealedMethod) -> Result<JObject<'local>, ToObjectError> {
         create_java_prim_array(slice, env)
     }
 }
@@ -339,7 +369,8 @@ impl ToObject for u64 {
 impl FromObject<'_> for bool {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         check_object_class(object, &Self::class(), env)?;
-        Ok(call!(env=> object.booleanValue() -> boolean))
+        call!(env, ?=> object.booleanValue() -> boolean)
+            .map_err(FromObjectError::from)
     }
     #[inline(always)]
     fn __from_array_object(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>, _: SealedMethod) -> Result<Box<[Self]>, FromObjectError> {
@@ -347,11 +378,12 @@ impl FromObject<'_> for bool {
     }
 }
 impl ToObject for bool {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        call!(env=> static java.lang.Boolean.valueOf(boolean(*self)) -> java.lang.Boolean)
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
+        call!(env, ?=> static java.lang.Boolean.valueOf(boolean(*self)) -> java.lang.Boolean)
+            .map_err(ToObjectError::from)
     }
     #[inline(always)]
-    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>, _: SealedMethod) -> JObject<'local> {
+    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>, _: SealedMethod) -> Result<JObject<'local>, ToObjectError> {
         create_java_prim_array(slice, env)
     }
 }
@@ -359,7 +391,8 @@ impl ToObject for bool {
 impl FromObject<'_> for char {
     fn from_object_env(object: &JObject, env: &mut JNIEnv<'_>) -> Result<Self, FromObjectError> {
         check_object_class(object, &Self::class(), env)?;
-        Ok(call!(env=> object.charValue() -> char))
+        call!(env, ?=> object.charValue() -> char)
+            .map_err(FromObjectError::from)
     }
     #[inline(always)]
     fn __from_array_object(object: &'_ JObject<'_>, env: &mut JNIEnv<'_>, _: SealedMethod) -> Result<Box<[Self]>, FromObjectError> {
@@ -367,11 +400,12 @@ impl FromObject<'_> for char {
     }
 }
 impl ToObject for char {
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
-        call!(env=> static java.lang.Character.valueOf(char(*self)) -> java.lang.Character)
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
+        call!(env, ?=> static java.lang.Character.valueOf(char(*self)) -> java.lang.Character)
+            .map_err(ToObjectError::from)
     }
     #[inline(always)]
-    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>, _: SealedMethod) -> JObject<'local> {
+    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>, _: SealedMethod) -> Result<JObject<'local>, ToObjectError> {
         create_java_prim_array(slice, env)
     }
 }

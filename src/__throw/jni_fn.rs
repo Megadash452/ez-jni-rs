@@ -1,6 +1,6 @@
 use super::*;
 use std::{backtrace::Backtrace as StdBacktrace, marker::PhantomData, panic::{AssertUnwindSafe, UnwindSafe}, sync::{Mutex, MutexGuard}};
-use crate::{JavaException, LOCAL_JNIENV_STACK, ToObject, utils::{JniResultExt as _, get_env}};
+use crate::{JavaException, LOCAL_JNIENV_STACK, utils::{JniResultExt as _, get_env}};
 
 /// Runs a Rust function and returns its value, catching any `panics!` and throwing them as *Java Exceptions*.
 /// Specifically, this will throw a `me.marti.ezjni.RustPanic` exception.
@@ -281,9 +281,8 @@ fn throw_panic(panic: JniRunPanic, env: JNIEnv<'_>) {
 
         // Convert a plain-text String message panic into an exception.
         let exception = JavaException::new_rust_panic(panic.location, panic_msg.to_string(), None, env);
-        let object = JThrowable::from(exception.to_object_env(env));
         // Finally, throw the new Exception.
-        env.throw(object).unwrap();
+        env.throw(exception.object()).unwrap();
     });
 
     stack_env.pop();

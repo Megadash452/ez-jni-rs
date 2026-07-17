@@ -125,7 +125,7 @@ impl Type {
             Self::Assertive(InnerType::Object(class))
             | Self::Option { ty: InnerType::Object(class), .. }
             if class.rust_type() == ClassRustType::String => return quote_spanned! {value.span()=>
-                ::jni::objects::JValueGen::borrow(&::ez_jni::ToJValue::to_jvalue_env(::std::convert::AsRef::<str>::as_ref(&(#value)), env))
+                ::jni::objects::JValueGen::borrow(&::ez_jni::ToJValue::to_jvalue_env(::std::convert::AsRef::<str>::as_ref(&(#value)), env).unwrap_jni())
             },
             // Force conversion with `ToObject` instead of `ToJValue` if the Type is a Object.
             Self::Assertive(InnerType::Object(class))
@@ -138,7 +138,7 @@ impl Type {
             _ => self.type_tokens(true, false, None),
         };
         // use the ToJValue implementation
-        quote_spanned! {value.span()=> ::jni::objects::JValueGen::borrow(&<#ty as ::ez_jni::ToJValue>::to_jvalue_env((#value).borrow(), env)) }
+        quote_spanned! {value.span()=> ::jni::objects::JValueGen::borrow(&<#ty as ::ez_jni::ToJValue>::to_jvalue_env((#value).borrow(), env).unwrap_jni()) }
     }
 
     /// Convert a *Java `void`* value to a *Rust Unit `()`* value.
@@ -530,7 +530,7 @@ impl ArrayType {
                         ::std::convert::AsRef::<[_]>::as_ref(&(#value)),
                         #base_elem_class,
                     ),
-                env)
+                env).unwrap_jni()
             }
         } else if self.manually_converted_to_java() {
             // Convert elements using the Type's Conversion.
@@ -543,7 +543,7 @@ impl ArrayType {
         } else {
             let ty = self.ty.type_tokens(true, true, None);
             quote_spanned! {value.span()=>
-                ::ez_jni::ToObject::to_object_env(::std::convert::AsRef::<[#ty]>::as_ref(&(#value)), env)
+                ::ez_jni::ToObject::to_object_env(::std::convert::AsRef::<[#ty]>::as_ref(&(#value)), env).unwrap_jni()
             }
         }
     }

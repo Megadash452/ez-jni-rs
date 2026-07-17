@@ -4,7 +4,7 @@ pub(crate) mod array;
 
 use jni::{objects::{JObject, JThrowable}, JNIEnv};
 use ez_jni_macros::call;
-use crate::{Class, error::FromObjectError, private::SealedMethod, utils::{create_object_array_converted, get_env, get_object_array_converted}};
+use crate::{Class, error::{FromObjectError, ToObjectError}, private::SealedMethod, utils::{create_object_array_converted, get_env, get_object_array_converted}};
 
 #[doc(hidden)]
 pub use r#impl::FromObjectOwned;
@@ -106,11 +106,11 @@ where Self: Sized + 'local {
 pub trait ToObject {
     /// Create an instance of a Class by constructing an object from data in a *Rust struct*.
     /// 
-    /// Will [`panic!`] if any of the underlying JNI calls fail.
+    /// Returns [`ToObjectError`] if any of the underlying JNI calls fail.
     /// 
     /// Automatically captures the [`JNIEnv`] from the local stack.
     /// To pass in your own [`JNIEnv`], see [`ToObject::to_object_env`].
-    fn to_object<'local>(&self) -> JObject<'local> {
+    fn to_object<'local>(&self) -> Result<JObject<'local>, ToObjectError> {
         self.to_object_env(get_env::<'_, 'local>())
     }
     /// Same as [`to_object`][ToObject::to_object], but does not capture the [`JNIEnv`] automatically; the caller must provide it themselves.
@@ -120,7 +120,7 @@ pub trait ToObject {
     /// For jni macros, the env can be specified with this syntax: `macro!(env=> ...)`.
     /// 
     /// Only implement *this* method for the trait.
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local>;
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError>;
 
     /// This method contains the underlying implementation of `ToObject` for `[T]`.
     /// 
@@ -128,7 +128,7 @@ pub trait ToObject {
     /// The only types that can override it are primitives.
     #[doc(hidden)]
     #[inline(always)]
-    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>, _: SealedMethod) -> JObject<'local>
+    fn __to_array_object<'local>(slice: &[Self], env: &mut JNIEnv<'local>, _: SealedMethod) -> Result<JObject<'local>, ToObjectError>
     where Self: Class + Sized {
         create_object_array_converted(slice, Self::to_object_env, &Self::class(), env)
     }

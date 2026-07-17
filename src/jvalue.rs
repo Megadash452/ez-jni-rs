@@ -1,6 +1,6 @@
 use std::fmt::Display;
 use jni::{objects::{JValue, JValueGen, JValueOwned}, JNIEnv};
-use crate::{FromObject, ObjectArray, Primitive, ToObject, error::FromJValueError, utils::get_env};
+use crate::{FromObject, ObjectArray, Primitive, ToObject, error::{FromJValueError, ToObjectError}, utils::get_env};
 use crate::object::array::ObjectArrayElement;
 
 /// Get a **Rust** value from a **Java** value.
@@ -45,11 +45,11 @@ where Self: Sized + 'local {
 pub trait ToJValue {
     /// Convert a **Rust** value to a **Java** value.
     /// 
-    /// Will [`panic!`] if any of the underlying JNI calls fail.
+    /// Returns [`ToObjectError`] if the target [`JValue`] is [`JObject`][jni::objects::JObject] and if its conversion fails.
     /// 
     /// Automatically captures the [`JNIEnv`] from the local stack.
     /// To pass in your own [`JNIEnv`], see [`ToJValue::to_jvalue_env`].
-    fn to_jvalue<'local>(&self) -> JValueOwned<'local> {
+    fn to_jvalue<'local>(&self) -> Result<JValueOwned<'local>, ToObjectError> {
         self.to_jvalue_env(get_env::<'_, 'local>())
     }
     /// Same as [`to_jvalue`][ToJValue::to_jvalue], but does not capture the [`JNIEnv`] automatically; the caller must provide it themselves.
@@ -59,7 +59,7 @@ pub trait ToJValue {
     /// For jni macros, the env can be specified with this syntax: `macro!(env=> ...)`.
     /// 
     /// Only implement *this* method for the trait.
-    fn to_jvalue_env<'local>(&self, env: &mut JNIEnv<'local>) -> JValueOwned<'local>;
+    fn to_jvalue_env<'local>(&self, env: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, ToObjectError>;
 }
 
 #[derive(Debug)]
@@ -147,8 +147,8 @@ impl FromJValue<'_> for () {
 }
 impl ToJValue for () {
     #[inline]
-    fn to_jvalue_env<'local>(&self, _: &mut JNIEnv<'local>) -> JValueOwned<'local> {
-        JValueGen::Void
+    fn to_jvalue_env<'local>(&self, _: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, ToObjectError> {
+        Ok(JValueGen::Void)
     }
 }
 
@@ -167,8 +167,8 @@ impl FromJValue<'_> for bool {
 }
 impl ToJValue for bool {
     #[inline]
-    fn to_jvalue_env<'local>(&self, _: &mut JNIEnv<'local>) -> JValueOwned<'local> {
-        JValueGen::Bool(*self as jni::sys::jboolean)
+    fn to_jvalue_env<'local>(&self, _: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, ToObjectError> {
+        Ok(JValueGen::Bool(*self as jni::sys::jboolean))
     }
 }
 
@@ -187,8 +187,8 @@ impl FromJValue<'_> for char {
     }
 }
 impl ToJValue for char {
-    fn to_jvalue_env<'local>(&self, _: &mut JNIEnv<'local>) -> JValueOwned<'local> {
-        JValueGen::Char(crate::utils::char_to_jchar(*self))
+    fn to_jvalue_env<'local>(&self, _: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, ToObjectError> {
+        Ok(JValueGen::Char(crate::utils::char_to_jchar(*self)))
     }
 }
 
@@ -211,8 +211,8 @@ macro_rules! map_primitive_impl {
         }
         impl ToJValue for $ty {
             #[inline]
-            fn to_jvalue_env<'local>(&self, _: &mut JNIEnv<'local>) -> JValueOwned<'local> {
-                ::jni::objects::JValueGen::$jvariant(*self as ::jni::sys::$jty)
+            fn to_jvalue_env<'local>(&self, _: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, ToObjectError> {
+                Ok(::jni::objects::JValueGen::$jvariant(*self as ::jni::sys::$jty))
             }
         }
     };
@@ -250,15 +250,15 @@ macro_rules! impl_from_jvalue_env {
 }
 macro_rules! impl_to_jvalue_env {
     () => {
-        fn to_jvalue_env<'local>(&self, env: &mut JNIEnv<'local>) -> JValueOwned<'local> {
-            ::jni::objects::JValueGen::Object(self.to_object_env(env))
+        fn to_jvalue_env<'local>(&self, env: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, ToObjectError> {
+            Ok(::jni::objects::JValueGen::Object(self.to_object_env(env)?))
         }
     };
 }
 
 impl<T> ToJValue for &T
 where T: ToJValue {
-    fn to_jvalue_env<'local>(&self, env: &mut JNIEnv<'local>) -> JValueOwned<'local> {
+    fn to_jvalue_env<'local>(&self, env: &mut JNIEnv<'local>) -> Result<JValueOwned<'local>, ToObjectError> {
         <T as ToJValue>::to_jvalue_env(self, env)
     }
 }

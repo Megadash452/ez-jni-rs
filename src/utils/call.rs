@@ -198,7 +198,7 @@ fn call_helper<'local, T>(
             match err {
                 JniError::Jni(jni::errors::Error::MethodNotFound { name, sig })
                     => Err(MethodCallError::MethodNotFound(MethodNotFoundError::new(target_class, name, &sig))),
-                JniError::Jni(error) => Err(MethodCallError::Unknown { error: JniError::Jni(error) }),
+                JniError::Jni(error) => Err(MethodCallError::Unknown(JniError::Jni(error))),
                 JniError::Exception(exception) => {
                     if exception.is_instance_of(MethodNotFoundError::ERROR_CLASS)
                     || exception.is_instance_of(MethodNotFoundError::EXCEPTION_CLASS) {
@@ -214,7 +214,7 @@ fn call_helper<'local, T>(
                         }))
                     } else if is_error(&exception, env) {
                         // Classes that represent a JVM Error should be returned as a JNI MethodCallError.
-                        Err(MethodCallError::Unknown { error: JniError::Exception(exception) })
+                        Err(MethodCallError::Unknown(JniError::Exception(exception)))
                     } else {
                         // All other Exception classes are returned directly,
                         // treating it like the JNI call succeeded, but the method itself did not.
@@ -412,7 +412,7 @@ pub(super) fn field_helper<'local>(
                 },
                 // If the error is FieldNotFound or MethodNotFound here it is not because field_op() or method_op() themselves failed,
                 // but because some other method called by those caused it to fail.
-                error => FieldError::Unknown { error },
+                error => FieldError::Unknown(error),
             }
         });
 

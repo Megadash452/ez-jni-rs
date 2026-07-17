@@ -1,5 +1,5 @@
 use jni::{JNIEnv, objects::{GlobalRef, JClass, JObject, JString, JThrowable}};
-use crate::{error::FromObjectError, utils::{JniResultExt as _, ResultExt as _, box_to_array, create_object_array_converted, get_object_array_owned}};
+use crate::{error::{FromObjectError, ToObjectError}, utils::{JniResultExt as _, box_to_array, create_object_array_converted, get_object_array_owned}};
 use super::ObjectArray;
 
 // This pattern allows renaming ToObject2 to Seal to make it clear to the user.
@@ -29,18 +29,18 @@ trait ToObject2 {
     /// **class** refers to the class of `Self`;
     /// it is an *array  class* if `Self` is an *Array Type* (e.g. `[T]`),
     /// or a *base component class* if `Self` is an *Object Reference*.
-    fn to_object<'local>(&self, class: &str, env: &mut JNIEnv<'local>) -> JObject<'local>;
+    fn to_object<'local>(&self, class: &str, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError>;
 }
 
 /// A trait that allows converting a Rust `slice` to a *Java Object*.
 pub(super) trait ToArrayObject: Sized {
-    fn to_array_object<'local>(slice: &[Self], class: &str, env: &mut JNIEnv<'local>) -> JObject<'local>;
+    fn to_array_object<'local>(slice: &[Self], class: &str, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError>;
 }
 
 impl<T> ToArrayObject for T
 where T: ToObject2 {
     #[inline(always)]
-    fn to_array_object<'local>(slice: &[Self], class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
+    fn to_array_object<'local>(slice: &[Self], class: &str, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
         <[T] as ToObject2>::to_object(slice, class, env)
     }
 }
@@ -65,11 +65,11 @@ macro_rules! impl_obj_array {
         }
         impl<'obj> ToObject2 for $ty {
             #[inline(always)]
-            fn to_object<'local>(&self, _: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
+            fn to_object<'local>(&self, _: &str, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
                 // Can create a new_local_ref because this is done inside a local frame
                 env.new_local_ref(self)
                     .catch(env)
-                    .unwrap_jni()
+                    .map_err(ToObjectError::from)
             }
         }
     };
@@ -91,11 +91,11 @@ impl<'local> FromObject2<'local> for GlobalRef {
 }
 impl ToObject2 for GlobalRef {
     #[inline(always)]
-    fn to_object<'local>(&self, _: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
+    fn to_object<'local>(&self, _: &str, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
         // Can create a new_local_ref because this is done inside a local frame
         env.new_local_ref(self)
             .catch(env)
-            .unwrap_jni()
+            .map_err(ToObjectError::from)
     }
 }
 
@@ -120,10 +120,10 @@ where T: FromObject2<'local> {
 impl<T> ToObject2 for Option<T>
 where T: ToObject2 {
     #[inline(always)]
-    fn to_object<'local>(&self, class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
+    fn to_object<'local>(&self, class: &str, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
         match self {
             Some(t) => T::to_object(t, class, env),
-            None => JObject::null(),
+            None => Ok(JObject::null()),
         }
     }
 }
@@ -138,7 +138,7 @@ where T: ObjectArrayElement {
 impl<T> ToObject2 for &T
 where T: ToObject2 {
     #[inline(always)]
-    fn to_object<'local>(&self, class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
+    fn to_object<'local>(&self, class: &str, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
         <T as ToObject2>::to_object(self, class, env)
     }
 }
@@ -219,7 +219,7 @@ where T: ObjectArrayElement + 'local,
 impl<T> ToObject2 for [T]
 where T: ToObject2 {
     #[inline(always)]
-    fn to_object<'local>(&self, class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
+    fn to_object<'local>(&self, class: &str, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
         let elem_class = take_array_class_bracket(class);
         create_object_array_converted(self, |elem, env| {
             <T as ToObject2>::to_object(elem, elem_class, env)
@@ -229,28 +229,28 @@ where T: ToObject2 {
 impl<T> ToObject2 for Box<[T]>
 where T: ToObject2 {
     #[inline(always)]
-    fn to_object<'local>(&self, class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
+    fn to_object<'local>(&self, class: &str, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
         <[T] as ToObject2>::to_object(&self, class, env)
     }
 }
 impl<T> ToObject2 for Vec<T>
 where T: ToObject2 {
     #[inline(always)]
-    fn to_object<'local>(&self, class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
+    fn to_object<'local>(&self, class: &str, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
         <[T] as ToObject2>::to_object(&self, class, env)
     }
 }
 impl<T> ToObject2 for &[T]
 where T: ToObject2 {
     #[inline(always)]
-    fn to_object<'local>(&self, class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
+    fn to_object<'local>(&self, class: &str, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
         <[T] as ToObject2>::to_object(self, class, env)
     }
 }
 impl<const N: usize, T> ToObject2 for [T; N]
 where [T]: ToObject2 {
     #[inline(always)]
-    fn to_object<'local>(&self, class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
+    fn to_object<'local>(&self, class: &str, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
         <[T] as ToObject2>::to_object(self, class, env)
     }
 }
@@ -258,7 +258,7 @@ impl<T, Array> ToObject2 for ObjectArray<T, Array>
 where T: ObjectArrayElement,
   Array: AsRef<[T]>,
 {
-    fn to_object<'local>(&self, class: &str, env: &mut JNIEnv<'local>) -> JObject<'local> {
+    fn to_object<'local>(&self, class: &str, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
         if class != self.base_elem_class() {
             panic!("The expected class (\"{class}\") did not match the ObjectArray's stored class (\"{}\")", self.base_elem_class())
         }

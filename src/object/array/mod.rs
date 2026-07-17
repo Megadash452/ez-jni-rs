@@ -174,7 +174,7 @@ where T: ObjectArrayElement,
   Array: AsRef<[T]>,
 {
     #[inline(always)]
-    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> JObject<'local> {
+    fn to_object_env<'local>(&self, env: &mut JNIEnv<'local>) -> Result<JObject<'local>, ToObjectError> {
         let array_class = gen_array_class(T::get_dimensions_count() + 1, self.base_elem_class());
         <T as element::ToArrayObject>::to_array_object(self.array.as_ref(), &array_class, env)
     }
