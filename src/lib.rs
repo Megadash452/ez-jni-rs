@@ -55,7 +55,7 @@ extern crate self as ez_jni;
 pub use object::*;
 pub use jvalue::*;
 pub use types::*;
-pub use ez_jni_macros::{jni_fn, call, new, field, class, singleton, FromObject, println, eprintln};
+pub use ez_jni_macros::{jni_fn, call, new, field, class, singleton, FromObject};
 pub(crate) use ez_jni_macros::compile_java_class;
 
 use std::{cell::RefCell, collections::LinkedList};

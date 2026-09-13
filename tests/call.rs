@@ -1,6 +1,6 @@
 mod common;
 
-use ez_jni::{JavaException, ObjectArray, call, class, eprintln, error::{FieldError, FromObjectError, GetClassError, MethodCallError}, field, new, println, singleton, utils::test_with_jnienv};
+use ez_jni::{JavaException, ObjectArray, call, class, error::{FieldError, FromObjectError, GetClassError, MethodCallError}, field, new, singleton, utils::test_with_jnienv};
 use jni::objects::{JClass, JObject, JString, JThrowable};
 
 use crate::common::fail_with;
@@ -520,10 +520,3 @@ fn manual_call_error_handling() { test_with_jnienv(|| {
     // Singleton class
     let _: Result<JObject<'_>, MethodCallError> = singleton!(? => me.test.Test$Singleton);
 }) }
-
-#[test]
-fn print() {
-    // This test will NOT run in the android environment, so it is impossible to test if the call to android.util.Log will be successful.
-    println!("Hello, World!");
-    eprintln!("Hello, World!");
-}

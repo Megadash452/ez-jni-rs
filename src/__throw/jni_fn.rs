@@ -68,7 +68,7 @@ pub struct JniRunPanic {
 pub unsafe fn run_with_jnienv_helper<'local, R: Sized>(
     mut env: JNIEnv<'local>,
     integration_test: bool,
-    f: impl FnOnce(&mut JNIEnv<'local>) -> R + UnwindSafe
+    f: impl FnOnce(&mut JNIEnv<'local>) -> R + UnwindSafe,
 ) -> (Result<R, JniRunPanic>, JNIEnv<'local>) {
     thread_local! {
         static PANIC_LOCATION: RefCell<Option<Location>> = const { RefCell::new(None) };
@@ -77,6 +77,11 @@ pub unsafe fn run_with_jnienv_helper<'local, R: Sized>(
     // FIXME: I may have a HUGE race condition in this function (tee-hee 🤭)
     // Sometimes the PANIC_LOCATION is reported as not set, and the program aborts
 
+    cfg_if::cfg_if! {
+        if #[cfg(target_os = "android")] {
+            crate::utils::log::start_logger();
+        }
+    }
     INTEGRATION_TEST.set(integration_test);
 
     // Set panic hook to grab [`PANIC_LOCATION`] data.

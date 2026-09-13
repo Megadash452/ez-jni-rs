@@ -1,16 +1,18 @@
+mod array;
 mod call;
 #[doc(hidden)]
+pub(crate) mod log;
+#[doc(hidden)]
 mod object;
-mod array;
-use std::fmt::Display;
 
+use std::fmt::Display;
+use jni::{JNIEnv, objects::JObject};
+use crate::{LOCAL_JNIENV_STACK, call, error::{JniError, PanicError}, private::Sealed};
+
+pub use array::*;
 pub use call::*;
 #[doc(hidden)]
 pub use object::*;
-pub use array::*;
-
-use jni::{JNIEnv, objects::JObject};
-use crate::{LOCAL_JNIENV_STACK, call, error::{JniError, PanicError}, private::Sealed};
 
 pub use nonempty::{NonEmpty, nonempty};
 #[doc(hidden)]

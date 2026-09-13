@@ -8,7 +8,6 @@ mod private;
 use call::{ConstructorCall, FieldCall, MethodCall};
 use either::Either;
 use proc_macro::TokenStream;
-use quote::quote;
 use syn::{parse::Parser, LitStr, Token};
 use utils::{item_from_derive_input, SynResultExt as _};
 
@@ -372,66 +371,6 @@ pub fn from_object(input: TokenStream) -> TokenStream {
         Either::Left(st) => object::derive_struct(st),
         Either::Right(enm) => object::derive_enum(enm),
     }.unwrap_tokens()
-}
-
-/// Print output. See [`std::println!`].
-/// 
-/// In Android, printing to `STDOUT` does not work because apparently it redirects to `/dev/null`.
-/// This macro will instead crate a String and send it to `android.util.Log`.
-/// 
-/// The caller must use this macro from a JNI context.
-/// That is, this must be called from a [`jni_fn!`],
-/// or a function called from a [`jni_fn!`].
-/// 
-/// Use this macro instead of [`std::println!`] everywhere.
-/// 
-/// See also [`eprintln!`].
-#[proc_macro]
-pub fn println(input: TokenStream) -> TokenStream {
-    let input = proc_macro2::TokenStream::from(input);
-    let string = if input.is_empty() {
-        quote!("".to_string())
-    } else {
-        input.clone()
-    };
-    
-    quote!{ ::ez_jni::utils::cfg_if::cfg_if! {
-        if #[cfg(target_os = "android")] {
-            ::ez_jni::utils::__println(format!(#input))
-        } else {
-            ::std::println!(#string)
-        }
-    } }.into()
-}
-
-/// Print error. See [`std::eprintln!`].
-/// 
-/// In Android, printing to `STDERR` does not work because apparently it redirects to `/dev/null`.
-/// This macro will instead crate a String and send it to `android.util.Log`.
-/// 
-/// The caller must use this macro from a JNI context.
-/// That is, this must be called from a [`jni_fn!`],
-/// or a function called from a [`jni_fn!`].
-/// 
-/// Use this macro instead of [`std::eprintln!`] everywhere.
-/// 
-/// See also [`println!`].
-#[proc_macro]
-pub fn eprintln(input: TokenStream) -> TokenStream {
-    let input = proc_macro2::TokenStream::from(input);
-    let string = if input.is_empty() {
-        quote!("".to_string())
-    } else {
-        input.clone()
-    };
-    
-    quote!{ ::ez_jni::utils::cfg_if::cfg_if! {
-        if #[cfg(target_os = "android")] {
-            ::ez_jni::utils::__eprintln(format!(#input))
-        } else {
-            ::std::eprintln!(#string)
-        }
-    } }.into()
 }
 
 /// Parse anything :/
